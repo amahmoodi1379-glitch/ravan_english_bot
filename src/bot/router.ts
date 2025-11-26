@@ -47,8 +47,8 @@ import {
   handleStatsCallback,
   handleSetDisplayNameCommand
 } from "./handlers/profile";
-// NEW IMPORTS
 import { startReflectionForUser, handleReflectionAnswer } from "./handlers/reflection";
+import { CB_PREFIX } from "../config/constants"; // Import added
 
 export interface TelegramUser {
   id: number;
@@ -97,37 +97,44 @@ export async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Pr
 async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
 
-  if (data.startsWith("leitner:")) {
+  // Leitner (l:...)
+  if (data.startsWith(`${CB_PREFIX.LEITNER}:`)) {
     await handleLeitnerCallback(env, callbackQuery);
     return;
   }
 
-  if (data.startsWith("reading:text:")) {
+  // Reading Text Selection (rt:...)
+  if (data.startsWith(`${CB_PREFIX.READING_TEXT}:`)) {
     await handleReadingTextChosen(env, callbackQuery);
     return;
   }
 
-  if (data.startsWith("reading:ans:")) {
+  // Reading Answer (ra:...)
+  if (data.startsWith(`${CB_PREFIX.READING_ANSWER}:`)) {
     await handleReadingAnswerCallback(env, callbackQuery);
     return;
   }
 
-  if (data.startsWith("duel:")) {
+  // Duel (d:...)
+  if (data.startsWith(`${CB_PREFIX.DUEL}:`)) {
     await handleDuelAnswerCallback(env, callbackQuery);
     return;
   }
 
-  if (data.startsWith("lb:")) {
+  // Leaderboard (lb:...)
+  if (data.startsWith(`${CB_PREFIX.LEADERBOARD}:`)) {
     await handleLeaderboardCallback(env, callbackQuery);
     return;
   }
 
-  if (data.startsWith("avatar:")) {
+  // Avatar (av:...)
+  if (data.startsWith(`${CB_PREFIX.AVATAR}:`)) {
     await handleAvatarCallback(env, callbackQuery);
     return;
   }
 
-  if (data.startsWith("stats:")) {
+  // Stats (st:...)
+  if (data.startsWith(`${CB_PREFIX.STATS}:`)) {
     await handleStatsCallback(env, callbackQuery);
     return;
   }
@@ -144,7 +151,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // اولویت ۱: دستورهای خاص (/start, /setname)
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);
     return;
@@ -155,8 +161,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // اولویت ۲: دکمه‌های منو
-  // منوی اصلی
   if (text === MAIN_MENU_BUTTON_TRAINING) {
     await sendMessage(
       env,
@@ -180,7 +184,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // منوی تمرین‌ها
   if (text === TRAINING_MENU_BUTTON_LEITNER) {
     await startLeitnerForUser(env, update);
     return;
@@ -189,7 +192,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     await startReadingMenuForUser(env, update);
     return;
   }
-  // NEW: هندل کردن دکمه Reflection
   if (text === TRAINING_MENU_BUTTON_REFLECTION) {
     await startReflectionForUser(env, update);
     return;
@@ -204,7 +206,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // منوی رقابت‌ها و پروفایل ...
   if (text === COMP_MENU_BUTTON_DUEL_EASY) {
     await startDuelEasyForUser(env, update);
     return;
@@ -230,13 +231,11 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // اولویت ۳: بررسی اینکه آیا متن ارسالی، جواب تمرین Reflection است؟
   const wasReflection = await handleReflectionAnswer(env, update, text);
   if (wasReflection) {
-    return; // پیام هندل شد
+    return; 
   }
 
-  // اگر هیچکدام نبود
   await sendMessage(
     env,
     chatId,
