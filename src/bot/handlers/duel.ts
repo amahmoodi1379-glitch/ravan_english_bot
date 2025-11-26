@@ -18,7 +18,7 @@ import {
   maybeFinalizeMatch
 } from "../../db/duels";
 import { addXpForDuelMatch } from "../../db/xp";
-import { CB_PREFIX } from "../../config/constants"; // Import added
+import { CB_PREFIX } from "../../config/constants";
 
 export async function startDuelEasyForUser(env: Env, update: TelegramUpdate): Promise<void> {
   await startDuelForUser(env, update, "easy");
@@ -128,25 +128,26 @@ async function sendNextDuelQuestion(
     return false;
   }
 
+  // تغییر UI: گزینه‌ها در متن
+  const messageText = 
+    `❓ <b>${q.question_text}</b>\n\n` +
+    `1️⃣ ${q.option_a}\n` +
+    `2️⃣ ${q.option_b}\n` +
+    `3️⃣ ${q.option_c}\n` +
+    `4️⃣ ${q.option_d}`;
+
   const replyMarkup = {
     inline_keyboard: [
       [
-        // d:<duelId>:<qId>:A
-        { text: q.option_a, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:A` }
-      ],
-      [
-        { text: q.option_b, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:B` }
-      ],
-      [
-        { text: q.option_c, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:C` }
-      ],
-      [
-        { text: q.option_d, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:D` }
+        { text: "1", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:A` },
+        { text: "2", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:B` },
+        { text: "3", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:C` },
+        { text: "4", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:D` }
       ]
     ]
   };
 
-  await sendMessage(env, chatId, q.question_text, { reply_markup: replyMarkup });
+  await sendMessage(env, chatId, messageText, { reply_markup: replyMarkup });
   return true;
 }
 
@@ -154,7 +155,6 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
   const data = callbackQuery.data ?? "";
   const parts = data.split(":"); 
   
-  // d:<duelId>:<qId>:<opt>
   if (parts.length !== 4 || parts[0] !== CB_PREFIX.DUEL) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -202,8 +202,17 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
 
   await answerCallbackQuery(env, callbackQuery.id);
 
-  const correctText = getOptionText(q, q.correct_option);
-  const chosenText = getOptionText(q, chosenOption);
+  const getOptionNumber = (letter: string): string => {
+    switch (letter) {
+      case "A": return "1";
+      case "B": return "2";
+      case "C": return "3";
+      case "D": return "4";
+      default: return "";
+    }
+  };
+  const correctNum = getOptionNumber(q.correct_option);
+  const correctText = q[`option_${q.correct_option.toLowerCase()}` as keyof typeof q]; // trick to get text
 
   let replyText: string;
   if (isCorrect) {
@@ -212,10 +221,11 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
       `کلمه: <b>${q.english}</b>\n` +
       `معنی: <b>${q.persian}</b>`;
   } else {
+    const chosenNum = getOptionNumber(chosenOption);
     replyText =
       `جوابت درست نبود ❌\n\n` +
-      `جواب انتخابی تو: <b>${chosenText || "-"}</b>\n` +
-      `✅ جواب صحیح: <b>${correctText}</b>\n` +
+      `جواب تو: <b>${chosenNum}</b>\n` +
+      `✅ جواب صحیح: گزینه <b>${correctNum}</b> (${correctText})\n` +
       `کلمه: <b>${q.english}</b>\n` +
       `معنی: <b>${q.persian}</b>`;
   }
@@ -267,19 +277,6 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     const xp = await addXpForDuelMatch(env, player2.id, finalMatch.id, player2Correct, totalQuestions, result);
     const text = buildDuelSummaryText(result, player2Correct, player1Correct, totalQuestions, xp, player1);
     await sendMessage(env, player2.telegram_id, text);
-  }
-}
-
-function getOptionText(
-  q: { option_a: string; option_b: string; option_c: string; option_d: string },
-  letter: string
-): string {
-  switch (letter) {
-    case "A": return q.option_a;
-    case "B": return q.option_b;
-    case "C": return q.option_c;
-    case "D": return q.option_d;
-    default: return "";
   }
 }
 
