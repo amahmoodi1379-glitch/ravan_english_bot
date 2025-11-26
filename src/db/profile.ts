@@ -123,107 +123,93 @@ export async function getUserActivityStats(
   let leitnerQuestions = 0;
   let readingSets = 0;
   let duels = 0;
-  const reflections = 0; // فعلاً بعد از پیاده‌سازی برداشت از متن پر می‌کنیم
+  let reflections = 0;
 
   if (!sinceExpr) {
-    // all time
+    // --- حالت کلی (All Time) ---
+    
+    // 1. XP کل
     const xpRow = await queryOne<{ xp: number | null }>(
       env,
-      `
-      SELECT xp_total AS xp
-      FROM users
-      WHERE id = ?
-      `,
+      `SELECT xp_total AS xp FROM users WHERE id = ?`,
       [userId]
     );
     xp = xpRow?.xp ?? 0;
 
+    // 2. لایتنر
     const lRow = await queryOne<{ cnt: number }>(
       env,
-      `
-      SELECT COUNT(*) AS cnt
-      FROM user_word_question_history
-      WHERE user_id = ?
-        AND context = 'leitner'
-      `,
+      `SELECT COUNT(*) AS cnt FROM user_word_question_history WHERE user_id = ? AND context = 'leitner'`,
       [userId]
     );
     leitnerQuestions = lRow?.cnt ?? 0;
 
+    // 3. درک مطلب
     const rRow = await queryOne<{ cnt: number }>(
       env,
-      `
-      SELECT COUNT(*) AS cnt
-      FROM reading_sessions
-      WHERE user_id = ?
-        AND status = 'completed'
-      `,
+      `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed'`,
       [userId]
     );
     readingSets = rRow?.cnt ?? 0;
 
+    // 4. دوئل
     const dRow = await queryOne<{ cnt: number }>(
       env,
-      `
-      SELECT COUNT(*) AS cnt
-      FROM duel_matches
-      WHERE status = 'completed'
-        AND (player1_id = ? OR player2_id = ?)
-      `,
+      `SELECT COUNT(*) AS cnt FROM duel_matches WHERE status = 'completed' AND (player1_id = ? OR player2_id = ?)`,
       [userId, userId]
     );
     duels = dRow?.cnt ?? 0;
+
+    // 5. برداشت از متن (Reflection) - NEW
+    const refRow = await queryOne<{ cnt: number }>(
+      env,
+      `SELECT COUNT(*) AS cnt FROM reflection_sessions WHERE user_id = ? AND ai_score IS NOT NULL`,
+      [userId]
+    );
+    reflections = refRow?.cnt ?? 0;
+
   } else {
+    // --- حالت بازه زمانی (Day / Week / Month) ---
+
+    // 1. XP در بازه
     const xpRow = await queryOne<{ xp: number | null }>(
       env,
-      `
-      SELECT COALESCE(SUM(xp_delta), 0) AS xp
-      FROM activity_log
-      WHERE user_id = ?
-        AND created_at >= ${sinceExpr}
-      `,
+      `SELECT COALESCE(SUM(xp_delta), 0) AS xp FROM activity_log WHERE user_id = ? AND created_at >= ${sinceExpr}`,
       [userId]
     );
     xp = xpRow?.xp ?? 0;
 
+    // 2. لایتنر در بازه
     const lRow = await queryOne<{ cnt: number }>(
       env,
-      `
-      SELECT COUNT(*) AS cnt
-      FROM user_word_question_history
-      WHERE user_id = ?
-        AND context = 'leitner'
-        AND answered_at >= ${sinceExpr}
-      `,
+      `SELECT COUNT(*) AS cnt FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at >= ${sinceExpr}`,
       [userId]
     );
     leitnerQuestions = lRow?.cnt ?? 0;
 
+    // 3. درک مطلب در بازه
     const rRow = await queryOne<{ cnt: number }>(
       env,
-      `
-      SELECT COUNT(*) AS cnt
-      FROM reading_sessions
-      WHERE user_id = ?
-        AND status = 'completed'
-        AND completed_at >= ${sinceExpr}
-      `,
+      `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed' AND completed_at >= ${sinceExpr}`,
       [userId]
     );
     readingSets = rRow?.cnt ?? 0;
 
+    // 4. دوئل در بازه
     const dRow = await queryOne<{ cnt: number }>(
       env,
-      `
-      SELECT COUNT(*) AS cnt
-      FROM duel_matches
-      WHERE status = 'completed'
-        AND completed_at >= ${sinceExpr}
-        AND (player1_id = ? OR player2_id = ?)
-      `,
+      `SELECT COUNT(*) AS cnt FROM duel_matches WHERE status = 'completed' AND completed_at >= ${sinceExpr} AND (player1_id = ? OR player2_id = ?)`,
       [userId, userId]
     );
     duels = dRow?.cnt ?? 0;
+
+    // 5. برداشت از متن در بازه - NEW
+    const refRow = await queryOne<{ cnt: number }>(
+      env,
+      `SELECT COUNT(*) AS cnt FROM reflection_sessions WHERE user_id = ? AND ai_score IS NOT NULL AND created_at >= ${sinceExpr}`,
+      [userId]
+    );
+    reflections = refRow?.cnt ?? 0;
   }
 
   return {
