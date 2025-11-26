@@ -1,7 +1,7 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute } from "./client";
-import { generateWordQuestionsWithGemini } from "../ai/gemini"; // اضافه شد
-import { insertWordQuestions } from "./word_questions"; // اضافه شد
+import { generateWordQuestionsWithGemini } from "../ai/gemini";
+import { insertWordQuestions } from "./word_questions";
 
 export type DuelDifficulty = "easy" | "hard";
 
@@ -171,7 +171,6 @@ export async function ensureDuelQuestions(
       : "AND level BETWEEN 1 AND 4";
 
   for (let idx = 1; idx <= QUESTION_COUNT; idx++) {
-    // 1. انتخاب یک واژه تصادفی مناسب سطح
     const wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
       env,
       `
@@ -186,10 +185,9 @@ export async function ensureDuelQuestions(
 
     if (!wordRow) {
       console.error("No active words found for duel generation!");
-      break; 
+      break;
     }
 
-    // 2. تلاش برای پیدا کردن سوال موجود
     let qRow = await queryOne<{ id: number }>(
       env,
       `
@@ -202,10 +200,8 @@ export async function ensureDuelQuestions(
       [wordRow.id]
     );
 
-    // 3. اگر سوالی نبود، بساز
     if (!qRow) {
       try {
-        // ساخت سوال با استایل رندوم (چون دوئل است، استایل متنوع جذاب‌تر است)
         const styles = ["fa_meaning", "en_definition", "synonym", "antonym"];
         const randomStyle = styles[Math.floor(Math.random() * styles.length)];
 
@@ -215,7 +211,7 @@ export async function ensureDuelQuestions(
           persian: wordRow.persian,
           level: wordRow.level,
           questionStyle: randomStyle,
-          count: 1 
+          count: 1
         });
 
         if (aiQuestions.length > 0) {
@@ -232,7 +228,6 @@ export async function ensureDuelQuestions(
             }))
           );
 
-          // دوباره تلاش برای گرفتن سوال (الان باید باشد)
           qRow = await queryOne<{ id: number }>(
             env,
             `
@@ -246,13 +241,8 @@ export async function ensureDuelQuestions(
       }
     }
 
-    if (!qRow) {
-      // اگر باز هم سوالی نبود، از خیر این واژه می‌گذریم و سراغ بعدی می‌رویم
-      // (یا می‌توان حلقه را تکرار کرد، اما برای جلوگیری از لوپ بی‌نهایت فعلاً break می‌کنیم)
-      continue; 
-    }
+    if (!qRow) continue;
 
-    // 4. ثبت سوال برای این دوئل
     await execute(
       env,
       `
@@ -412,6 +402,7 @@ export async function getUserCorrectCountInMatch(
 }
 
 // اگر هر دو بازیکن همه سوال‌ها را پاسخ داده باشند، مچ را نهایی کن
+// FIX: جلوگیری از Race Condition با چک کردن تعداد ردیف‌های تغییر یافته
 export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<DuelFinalizeResult | null> {
   let match = await getDuelMatchById(env, duelId);
   if (!match) return null;
@@ -453,7 +444,8 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
 
   const now = new Date().toISOString();
 
-  await execute(
+  // Atomic Update: فقط اگر status هنوز completed نیست، آن را completed کن
+  const result = await execute(
     env,
     `
     UPDATE duel_matches
@@ -464,10 +456,18 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
       winner_user_id = ?,
       is_draw = ?,
       completed_at = ?
-    WHERE id = ?
+    WHERE id = ? AND status != 'completed'
     `,
     [player1Correct, player2Correct, winnerUserId, isDraw, now, duelId]
   );
+
+  // چک می‌کنیم آیا ردیفی تغییر کرد؟
+  // result.meta.changes تعداد ردیف‌های تغییر یافته را می‌دهد
+  if (result?.meta?.changes === 0) {
+    // اگر 0 بود، یعنی یک نفر دیگر درست قبل از ما وضعیت را به completed تغییر داده است.
+    // پس ما کاری نمی‌کنیم و null برمی‌گردانیم تا دوباره XP ندهیم.
+    return null;
+  }
 
   match = await getDuelMatchById(env, duelId);
   if (!match) throw new Error("Duel match disappeared after finalize");
