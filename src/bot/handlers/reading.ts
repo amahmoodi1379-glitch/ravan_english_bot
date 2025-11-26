@@ -190,9 +190,19 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     return;
   }
 
-  const sent = await sendNextReadingQuestion(env, user, freshSession, chatId);
+ const sent = await sendNextReadingQuestion(env, user, freshSession, chatId);
   if (!sent) {
-    await sendReadingSummary(env, user, freshSession, chatId);
+    // چک می‌کنیم که آیا واقعاً تست تموم شده یا ارور پیش اومده
+    const stats = await getSessionStats(env, freshSession.id);
+    const limit = freshSession.num_questions || 3;
+
+    if (stats.total >= limit) {
+      // تعداد سوالات تکمیل شده، پس نتیجه رو نشون بده
+      await sendReadingSummary(env, user, freshSession, chatId);
+    } else {
+      // هنوز به حد نصاب نرسیده ولی سوالی نیومد (ارور هوش مصنوعی)
+      await sendMessage(env, chatId, "متاسفانه در تولید سوال بعدی مشکلی پیش آمد. لطفاً کمی بعد تلاش کنید ❗️");
+    }
   }
 }
 
