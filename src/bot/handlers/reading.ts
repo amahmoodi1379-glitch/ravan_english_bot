@@ -2,7 +2,7 @@ import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
-import { getAllActiveReadingTexts } from "../../db/texts";
+import { getAllActiveReadingTexts, getReadingTextById } from "../../db/texts"; // getReadingTextById اضافه شد
 import {
   createReadingSession,
   getReadingSessionById,
@@ -11,11 +11,13 @@ import {
   recordAnswerAndUpdateSession,
   getSessionStats,
   markSessionCompleted,
+  insertTextQuestions, // اضافه شد
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
 import { queryAll, queryOne, execute } from "../../db/client";
 import { addXpForReadingSession } from "../../db/xp";
+import { generateReadingQuestionsWithGemini } from "../../ai/gemini"; // اضافه شد
 
 
 interface SummaryQuestionRow {
@@ -84,22 +86,21 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 
   const user = await getOrCreateUser(env, tgUser);
 
+  // ایجاد سشن جدید
   const session = await createReadingSession(env, user.id, textId);
 
   await answerCallbackQuery(env, callbackQuery.id);
-
   await sendMessage(env, chatId, "تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   if (!sent) {
-    await sendMessage(env, chatId, "برای این متن فعلاً سوالی در سیستم ثبت نشده ❗️");
+    await sendMessage(env, chatId, "مشکلی در دریافت سوال پیش آمد ❗️");
   }
 }
 
 // کاربر به یک سوال جواب داده
 export async function handleReadingAnswerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
-  // reading:ans:<sessionId>:<questionId>:<option>
   const parts = data.split(":");
   if (parts.length !== 5) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -186,14 +187,52 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   }
 }
 
-// ارسال سوال بعدی؛ اگر سوالی نبود، false برمی‌گردانیم
+// ارسال سوال بعدی؛ اگر سوالی نبود، سعی می‌کند بسازد
 async function sendNextReadingQuestion(
   env: Env,
   user: DbUser,
   session: ReadingSession,
   chatId: number
 ): Promise<boolean> {
-  const question = await getNextQuestionForSession(env, session, user.id);
+  // ۱. تلاش اول برای گرفتن سوال
+  let question = await getNextQuestionForSession(env, session, user.id);
+
+  // ۲. اگر سوالی نبود (یا همه تکراری بودند)، باید بسازیم
+  if (!question) {
+    // چک کنیم که آیا سشن تمام شده؟ (یعنی کاربر ۳ تا سوالش رو جواب داده؟)
+    const stats = await getSessionStats(env, session.id);
+    if (stats.total >= (session.num_questions || 3)) {
+      // سشن تمام شده، دیگر سوال نمی‌خواهیم
+      return false;
+    }
+
+    // سشن تمام نشده ولی سوال نداریم → تولید خودکار
+    await sendMessage(env, chatId, "⏳ در حال خواندن متن و طراحی سوالات جدید...");
+
+    const textRow = await getReadingTextById(env, session.text_id);
+    if (textRow && textRow.body_en) {
+      try {
+        const aiQuestions = await generateReadingQuestionsWithGemini(env, textRow.body_en, 3);
+        if (aiQuestions.length > 0) {
+          await insertTextQuestions(
+            env,
+            session.text_id,
+            aiQuestions.map(q => ({
+              questionText: q.question,
+              options: q.options,
+              correctIndex: q.correctIndex,
+              explanation: q.explanation
+            }))
+          );
+          // تلاش مجدد برای گرفتن سوال
+          question = await getNextQuestionForSession(env, session, user.id);
+        }
+      } catch (e) {
+        console.error("Error auto-generating reading questions", e);
+      }
+    }
+  }
+
   if (!question) {
     return false;
   }
@@ -251,13 +290,8 @@ async function sendReadingSummary(
     [session.id]
   );
 
-  // محاسبه XP طبق قانون:
-  // هر پاسخ درست: +15
-  // اگر 3 از 3 → +10 بونوس
-  // اگر 2 از 3 → +5 بونوس
   const totalXp = await addXpForReadingSession(env, user.id, session.id, correct, total);
 
-  // ذخیره xp_gained در جدول reading_sessions
   if (totalXp > 0) {
     await execute(
       env,
