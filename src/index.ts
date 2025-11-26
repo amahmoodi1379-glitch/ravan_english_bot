@@ -2,6 +2,8 @@ import { Env } from "./types";
 import { handleTelegramUpdate, TelegramUpdate } from "./bot/router";
 import { queryAll, queryOne, execute } from "./db/client";
 import { getAllActiveReadingTexts } from "./db/texts";
+import { generateWordQuestionsWithGemini } from "./ai/gemini";
+import { insertWordQuestions } from "./db/word_questions";
 
 function htmlResponse(html: string, status: number = 200): Response {
   return new Response(html, {
@@ -50,8 +52,12 @@ async function parseForm(request: Request): Promise<URLSearchParams> {
 function renderAdminLayout(title: string, content: string, section: string = ""): string {
   const nav = `
     <nav style="margin-bottom: 16px;">
-      <a href="/admin/words" style="margin-right: 8px;${section === "words" ? " font-weight:bold;" : ""}">واژه‌ها</a>
-      <a href="/admin/texts" style="margin-right: 8px;${section === "texts" ? " font-weight:bold;" : ""}">متن‌ها</a>
+      <a href="/admin/words" style="margin-right: 8px;${
+        section === "words" ? " font-weight:bold;" : ""
+      }">واژه‌ها</a>
+      <a href="/admin/texts" style="margin-right: 8px;${
+        section === "texts" ? " font-weight:bold;" : ""
+      }">متن‌ها</a>
       <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;
@@ -71,7 +77,7 @@ function renderAdminLayout(title: string, content: string, section: string = "")
     input[type="text"], input[type="number"], input[type="password"], textarea, select {
       width:100%; padding:6px 8px; margin:4px 0 10px; border-radius:6px; border:1px solid #ccc; font-size:13px;
     }
-    textarea { min-height:160px; font-family:inherit; }
+    textarea { min_height:160px; font-family:inherit; }
     button { padding:6px 12px; border-radius:6px; border:none; background:#2563eb; color:#fff; cursor:pointer; font-size:13px; }
     button.secondary { background:#6b7280; }
     .actions a { margin-right:6px; font-size:12px; }
@@ -350,7 +356,86 @@ export default {
       return htmlResponse(renderAdminLayout("ویرایش واژه", content, "words"));
     }
 
-    // Admin: ذخیره واژه (ایجاد یا ویرایش)
+    // Admin: ساخت سوال با AI برای یک واژه
+    if (request.method === "GET" && url.pathname === "/admin/words/generate-questions") {
+      if (!isAdminAuthed(request)) {
+        return redirect("/admin");
+      }
+
+      const idParam = url.searchParams.get("id");
+      const id = idParam ? Number(idParam) : 0;
+      if (!id) {
+        return htmlResponse("شناسه واژه نامعتبر است.", 400);
+      }
+
+      const word = await queryOne<any>(
+        env,
+        `
+        SELECT id, english, persian, level
+        FROM words
+        WHERE id = ?
+        `,
+        [id]
+      );
+
+      if (!word) {
+        return htmlResponse("واژه پیدا نشد.", 404);
+      }
+
+      const level = Number(word.level || 1);
+      const styles = [
+        "fa_meaning",
+        "en_definition",
+        "word_from_definition",
+        "synonym",
+        "antonym",
+        "fa_to_en"
+      ];
+
+      let totalCreated = 0;
+
+      for (const style of styles) {
+        try {
+          const generated = await generateWordQuestionsWithGemini({
+            env,
+            english: word.english,
+            persian: word.persian,
+            level,
+            questionStyle: style,
+            count: 2
+          });
+
+          if (generated.length > 0) {
+            await insertWordQuestions(
+              env,
+              word.id,
+              generated.map((g) => ({
+                wordId: word.id,
+                questionText: g.question,
+                options: g.options,
+                correctIndex: g.correctIndex,
+                explanation: g.explanation,
+                questionStyle: style
+              }))
+            );
+            totalCreated += generated.length;
+          }
+        } catch (err) {
+          console.error("AI generation failed for style", style, err);
+        }
+      }
+
+      const content = `
+        <p>تعداد <b>${totalCreated}</b> سوال جدید با کمک AI برای واژه‌ی <b>${escapeHtml(
+        word.english
+      )}</b> ساخته شد.</p>
+        <p><a href="/admin/words/edit?id=${word.id}">برگشت به ویرایش واژه</a></p>
+        <p><a href="/admin/words">برگشت به لیست واژه‌ها</a></p>
+      `;
+      return htmlResponse(renderAdminLayout("نتیجه ساخت سوال با AI", content, "words"));
+    }
+
+    // Admin: ذخیره واژه
     if (request.method === "POST" && url.pathname === "/admin/words/save") {
       if (!isAdminAuthed(request)) {
         return redirect("/admin");
@@ -638,9 +723,16 @@ function renderWordForm(word: any, heading: string): string {
         فعال باشد
       </label>
 
-      <div style="margin-top:12px;">
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
         <button type="submit">ذخیره</button>
         <a href="/admin/words"><button type="button" class="secondary">انصراف</button></a>
+        ${
+          word.id
+            ? `<a href="/admin/words/generate-questions?id=${word.id}">
+                 <button type="button">ساخت سوال با AI</button>
+               </a>`
+            : ""
+        }
       </div>
     </form>
   `;
