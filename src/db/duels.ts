@@ -1,5 +1,7 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute } from "./client";
+import { generateWordQuestionsWithGemini } from "../ai/gemini"; // اضافه شد
+import { insertWordQuestions } from "./word_questions"; // اضافه شد
 
 export type DuelDifficulty = "easy" | "hard";
 
@@ -168,12 +170,12 @@ export async function ensureDuelQuestions(
       ? "AND level IN (1, 2)"
       : "AND level BETWEEN 1 AND 4";
 
-  // برای سادگی، حتی اگر فقط یک واژه داریم، می‌توانیم چند بار از همان استفاده کنیم
   for (let idx = 1; idx <= QUESTION_COUNT; idx++) {
-    const wordRow = await queryOne<{ id: number }>(
+    // 1. انتخاب یک واژه تصادفی مناسب سطح
+    const wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
       env,
       `
-      SELECT id
+      SELECT id, english, persian, level
       FROM words
       WHERE is_active = 1
         ${levelCond}
@@ -183,10 +185,12 @@ export async function ensureDuelQuestions(
     );
 
     if (!wordRow) {
-      break;
+      console.error("No active words found for duel generation!");
+      break; 
     }
 
-    const qRow = await queryOne<{ id: number }>(
+    // 2. تلاش برای پیدا کردن سوال موجود
+    let qRow = await queryOne<{ id: number }>(
       env,
       `
       SELECT id
@@ -198,10 +202,57 @@ export async function ensureDuelQuestions(
       [wordRow.id]
     );
 
+    // 3. اگر سوالی نبود، بساز
     if (!qRow) {
-      break;
+      try {
+        // ساخت سوال با استایل رندوم (چون دوئل است، استایل متنوع جذاب‌تر است)
+        const styles = ["fa_meaning", "en_definition", "synonym", "antonym"];
+        const randomStyle = styles[Math.floor(Math.random() * styles.length)];
+
+        const aiQuestions = await generateWordQuestionsWithGemini({
+          env,
+          english: wordRow.english,
+          persian: wordRow.persian,
+          level: wordRow.level,
+          questionStyle: randomStyle,
+          count: 1 
+        });
+
+        if (aiQuestions.length > 0) {
+          await insertWordQuestions(
+            env,
+            wordRow.id,
+            aiQuestions.map(q => ({
+              wordId: wordRow.id,
+              questionText: q.question,
+              options: q.options,
+              correctIndex: q.correctIndex,
+              explanation: q.explanation,
+              questionStyle: randomStyle
+            }))
+          );
+
+          // دوباره تلاش برای گرفتن سوال (الان باید باشد)
+          qRow = await queryOne<{ id: number }>(
+            env,
+            `
+            SELECT id FROM word_questions WHERE word_id = ? ORDER BY id DESC LIMIT 1
+            `,
+            [wordRow.id]
+          );
+        }
+      } catch (err) {
+        console.error("Failed to auto-generate duel question:", err);
+      }
     }
 
+    if (!qRow) {
+      // اگر باز هم سوالی نبود، از خیر این واژه می‌گذریم و سراغ بعدی می‌رویم
+      // (یا می‌توان حلقه را تکرار کرد، اما برای جلوگیری از لوپ بی‌نهایت فعلاً break می‌کنیم)
+      continue; 
+    }
+
+    // 4. ثبت سوال برای این دوئل
     await execute(
       env,
       `
@@ -431,4 +482,3 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
     match
   };
 }
-
