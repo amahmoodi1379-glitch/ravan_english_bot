@@ -134,7 +134,7 @@ async function pickQuestionForUserWord(
       q.correct_option,
       q.question_style,
       w.english,
-      w.persian
+      w.persian,
       w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
@@ -170,7 +170,7 @@ async function pickQuestionForUserWord(
       q.correct_option,
       q.question_style,
       w.english,
-      w.persian
+      w.persian,
       w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
@@ -199,7 +199,7 @@ async function pickQuestionForUserWord(
       q.correct_option,
       q.question_style,
       w.english,
-      w.persian
+      w.persian,
       w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
@@ -234,7 +234,7 @@ async function pickQuestionForUserWord(
       q.correct_option,
       q.question_style,
       w.english,
-      w.persian
+      w.persian,
       w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
@@ -294,7 +294,7 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       q.correct_option,
       q.question_style,
       w.english,
-      w.persian
+      w.persian,
       w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
