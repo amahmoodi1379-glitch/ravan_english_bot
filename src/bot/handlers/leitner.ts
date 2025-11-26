@@ -10,6 +10,8 @@ import {
   DbWord
 } from "../../db/leitner";
 import { addXpForLeitnerQuestion } from "../../db/xp";
+import { generateWordQuestionsWithGemini } from "../../ai/gemini";
+import { insertWordQuestions } from "../../db/word_questions";
 
 
 // شکل سوالی که برای لایتنر می‌گیریم (همراه با انگلیسی/فارسی واژه)
@@ -55,7 +57,6 @@ export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Pro
   await sendLeitnerQuestion(env, user, chatId);
 }
 
-// گرفتن و ارسال یک سوال لایتنر برای کاربر
 async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Promise<void> {
   // 1) انتخاب واژه‌ی بعدی برای این کاربر
   const word = await pickNextWordForUser(env, user.id);
@@ -70,14 +71,54 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   const stage = state.question_stage || 1;
   const desiredStyle = getQuestionStyleForStage(stage);
 
-  // 3) انتخاب سوال مناسب از بانک سوال‌ها (با توجه به style و تاریخچه‌ی کاربر)
-  const question = await pickQuestionForUserWord(env, user, word, desiredStyle);
+  // 3) انتخاب سوال مناسب از بانک سوال‌ها
+  let question = await pickQuestionForUserWord(env, user, word, desiredStyle);
+
+  // --- NEW: اگر سوالی پیدا نشد، همان لحظه بساز ---
+  if (!question) {
+    // یک پیام "در حال ساخت" بدهیم چون AI ممکن است چند ثانیه طول بکشد
+    await sendMessage(env, chatId, "⏳ در حال طراحی سوال جدید با هوش مصنوعی...");
+
+    try {
+      // درخواست به جمینای برای ساخت 2 سوال با استایل مورد نظر
+      const aiQuestions = await generateWordQuestionsWithGemini({
+        env,
+        english: word.english,
+        persian: word.persian,
+        level: word.level,
+        questionStyle: desiredStyle,
+        count: 2 
+      });
+
+      if (aiQuestions.length > 0) {
+        // ذخیره در دیتابیس
+        await insertWordQuestions(
+          env,
+          word.id,
+          aiQuestions.map((q) => ({
+            wordId: word.id,
+            questionText: q.question,
+            options: q.options,
+            correctIndex: q.correctIndex,
+            explanation: q.explanation,
+            questionStyle: desiredStyle
+          }))
+        );
+
+        // تلاش مجدد برای گرفتن سوال از دیتابیس
+        question = await pickQuestionForUserWord(env, user, word, desiredStyle);
+      }
+    } catch (error) {
+      console.error("Error auto-generating questions:", error);
+    }
+  }
+  // ---------------------------------------------
 
   if (!question) {
     await sendMessage(
       env,
       chatId,
-      `برای واژه‌ی <b>${word.english}</b> هنوز هیچ سوالی در بانک سوال‌ها وجود ندارد ❗️`
+      `برای واژه‌ی <b>${word.english}</b> هنوز هیچ سوالی در بانک سوال‌ها وجود ندارد و ساخت خودکار هم ناموفق بود ❗️`
     );
     return;
   }
