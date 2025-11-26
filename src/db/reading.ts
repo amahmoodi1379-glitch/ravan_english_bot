@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, execute } from "./client";
+import { queryOne, execute, queryAll } from "./client";
 
 export interface DbTextQuestion {
   id: number;
@@ -23,6 +23,14 @@ export interface ReadingSession {
   xp_gained: number;
   started_at: string;
   completed_at: string | null;
+}
+
+// ساختار ورودی برای اینسرت کردن سوال جدید
+export interface NewTextQuestionRow {
+  questionText: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
 }
 
 export async function createReadingSession(
@@ -161,30 +169,6 @@ export async function getNextQuestionForSession(
     [session.text_id, session.id]
   );
 
-  if (q) return q;
-
-  // 3) اگر هیچ سوالی نیست، آخرین تلاش: هر سوالی برای این متن
-  q = await queryOne<DbTextQuestion>(
-    env,
-    `
-    SELECT
-      q.id,
-      q.text_id,
-      q.question_text,
-      q.option_a,
-      q.option_b,
-      q.option_c,
-      q.option_d,
-      q.correct_option,
-      q.explanation_text
-    FROM text_questions q
-    WHERE q.text_id = ?
-    ORDER BY q.id
-    LIMIT 1
-    `,
-    [session.text_id]
-  );
-
   return q ?? null;
 }
 
@@ -274,4 +258,30 @@ export async function markSessionCompleted(env: Env, sessionId: number): Promise
     `,
     [now, sessionId]
   );
+}
+
+// --- تابع جدید برای ذخیره سوالات تولید شده ---
+export async function insertTextQuestions(
+  env: Env,
+  textId: number,
+  questions: NewTextQuestionRow[]
+): Promise<void> {
+  for (const q of questions) {
+    const opts = q.options.slice(0, 4);
+    while (opts.length < 4) opts.push("");
+    const [a, b, c, d] = opts;
+
+    const correctIndex = (q.correctIndex >= 0 && q.correctIndex <= 3) ? q.correctIndex : 0;
+    const correctLetter = ["A", "B", "C", "D"][correctIndex];
+
+    await execute(
+      env,
+      `
+      INSERT INTO text_questions
+        (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ai')
+      `,
+      [textId, q.questionText, a, b, c, d, correctLetter, q.explanation || null]
+    );
+  }
 }
