@@ -7,6 +7,11 @@ export interface AiGeneratedQuestion {
   explanation: string;
 }
 
+export interface AiReflectionResult {
+  score: number; // 0-10
+  feedback: string;
+}
+
 // لیست مدل‌ها برای تلاش (اولویت با مدل‌های جدیدتر)
 const MODELS_TO_TRY = [
   "gemini-1.5-flash-latest",
@@ -136,7 +141,7 @@ export async function generateWordQuestionsWithGemini(params: {
   return parseGeminiJson(raw, params.count);
 }
 
-// --- بخش جدید: درک مطلب (Reading) ---
+// --- بخش درک مطلب (Reading) ---
 
 export async function generateReadingQuestionsWithGemini(
   env: Env,
@@ -174,7 +179,6 @@ Return ONLY valid JSON in this exact format (no markdown, no extra text):
   return parseGeminiJson(raw, count);
 }
 
-// تابع کمکی برای پارس کردن JSON خروجی جمینای
 function parseGeminiJson(raw: string, limit: number): AiGeneratedQuestion[] {
   raw = raw.replace(/```json/g, "").replace(/```/g, "").trim();
 
@@ -209,4 +213,66 @@ function parseGeminiJson(raw: string, limit: number): AiGeneratedQuestion[] {
     if (result.length >= limit) break;
   }
   return result;
+}
+
+// --- بخش جدید: برداشت از متن (Reflection) ---
+
+export async function generateReflectionParagraph(
+  env: Env,
+  words: string[]
+): Promise<string> {
+  const wordsList = words.join(", ");
+  const prompt = `
+You are an English tutor. Write a short, engaging paragraph (about 60-100 words) suitable for an English learner.
+Try to include some of the following words naturally: ${wordsList}.
+If the list is empty, just write a general paragraph about "Daily Habits" or "Travel".
+The paragraph should be simple and clear.
+Return ONLY the paragraph text.
+`.trim();
+
+  return await callGemini(env, prompt);
+}
+
+export async function evaluateReflection(
+  env: Env,
+  sourceText: string,
+  userAnswer: string
+): Promise<AiReflectionResult> {
+  const prompt = `
+You are an English teacher evaluating a student's reflection.
+
+Source Text:
+"""
+${sourceText}
+"""
+
+Student's Reflection/Summary:
+"""
+${userAnswer}
+"""
+
+Task:
+1. Give a score from 0 to 10 based on how well the student understood the text and expressed their thoughts.
+2. Provide short feedback in Persian (Farsi). Point out any major grammar mistakes or praise good vocabulary. If it looks like a direct translation, mention it.
+
+Return ONLY valid JSON in this format:
+{
+  "score": 8,
+  "feedback": "..."
+}
+`.trim();
+
+  const raw = await callGemini(env, prompt);
+  const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+  
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      score: typeof parsed.score === 'number' ? parsed.score : 0,
+      feedback: typeof parsed.feedback === 'string' ? parsed.feedback : "بازخوردی ثبت نشد."
+    };
+  } catch (e) {
+    console.error("Failed to parse reflection evaluation:", cleaned);
+    return { score: 0, feedback: "خطا در دریافت بازخورد هوش مصنوعی." };
+  }
 }
