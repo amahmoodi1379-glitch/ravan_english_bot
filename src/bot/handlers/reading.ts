@@ -352,3 +352,4 @@ function getOptionTextForRow(row: SummaryQuestionRow, letter: string): string {
     default: return "";
   }
 }
+
