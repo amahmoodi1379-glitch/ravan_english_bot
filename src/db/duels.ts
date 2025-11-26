@@ -264,3 +264,21 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
     match
   };
 }
+
+// پاکسازی دوئل‌های قدیمی و گیرکرده
+export async function cleanupOldMatches(env: Env): Promise<void> {
+  // ۱. دوئل‌های در حال اجرا که بیشتر از ۲۴ ساعت طول کشیده‌اند را منقضی کن
+  await execute(
+    env,
+    `UPDATE duel_matches 
+     SET status = 'expired', completed_at = datetime('now') 
+     WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`
+  );
+  
+  // ۲. دوئل‌های در صف انتظار که بیشتر از ۳ روز مانده‌اند و کسی جوین نشده را حذف کن
+  await execute(
+    env,
+    `DELETE FROM duel_matches 
+     WHERE status = 'waiting' AND created_at < datetime('now', '-3 days')`
+  );
+}
