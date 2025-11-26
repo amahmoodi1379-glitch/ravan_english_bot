@@ -674,12 +674,11 @@ export default {
 
       return new Response("Not found", { status: 404 });
 
-    } catch (err: any) {
+ } catch (err: any) {
       console.error("Global Error:", err);
       return new Response("Internal Server Error", { status: 500 });
     }
-  }
-},
+  }, // <--- فقط یک کاما اینجا باید باشد
 
   // این بخش هر ساعت خودکار اجرا می‌شود
   async scheduled(event: any, env: Env, ctx: any): Promise<void> {
@@ -694,7 +693,6 @@ export default {
     })());
   }
 };
-
 function renderWordForm(word: any, heading: string): string {
   return `
     <h2>${escapeHtml(heading)}</h2>
