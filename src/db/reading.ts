@@ -1,6 +1,6 @@
-// ... (بخش‌های بالایی فایل تغییری نمی‌کند، فقط توابع پایین را اضافه/اصلاح کنید) ...
 import { Env } from "../types";
-import { queryOne, execute, queryAll, prepare } from "./client"; // Import prepare
+import { queryOne, execute, queryAll, prepare } from "./client";
+import { XP_VALUES } from "../config/constants";
 
 export interface DbTextQuestion {
   id: number;
@@ -33,7 +33,6 @@ export interface NewTextQuestionRow {
   explanation: string;
 }
 
-// ... (توابع createReadingSession, getReadingSessionById, getNextQuestionForSession مثل قبل بمانند) ...
 export async function createReadingSession(env: Env, userId: number, textId: number, numQuestions: number = 3): Promise<ReadingSession> {
   const now = new Date().toISOString();
   await execute(env, `INSERT INTO reading_sessions (user_id, text_id, status, num_correct, num_questions, xp_gained, started_at) VALUES (?, ?, 'in_progress', 0, ?, 0, ?)`, [userId, textId, numQuestions, now]);
@@ -64,7 +63,6 @@ export async function recordQuestionShown(env: Env, session: ReadingSession, use
   await execute(env, `INSERT INTO user_text_question_history (user_id, text_id, question_id, reading_session_id, shown_at) VALUES (?, ?, ?, ?, ?)`, [userId, session.text_id, questionId, session.id, now]);
 }
 
-// NEW: نسخه Prepare
 export function prepareRecordAnswer(
   env: Env,
   session: ReadingSession,
@@ -102,7 +100,6 @@ export function prepareRecordAnswer(
   return stmts;
 }
 
-// نسخه قدیمی (سازگاری)
 export async function recordAnswerAndUpdateSession(env: Env, session: ReadingSession, userId: number, questionId: number, isCorrect: boolean): Promise<void> {
   const stmts = prepareRecordAnswer(env, session, userId, questionId, isCorrect);
   await env.DB.batch(stmts);
@@ -118,7 +115,6 @@ export async function markSessionCompleted(env: Env, sessionId: number): Promise
   await execute(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, sessionId]);
 }
 
-// NEW: Prepare برای آپدیت XP سشن
 export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number): any {
   return prepare(
     env,
