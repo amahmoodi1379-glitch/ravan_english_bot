@@ -256,3 +256,34 @@ export async function updateSm2AndStageAfterAnswer(
     ]
   );
 }
+
+// NEW: نادیده گرفتن واژه (بلدم)
+export async function markWordAsIgnored(env: Env, userId: number, wordId: number): Promise<void> {
+  const now = new Date().toISOString();
+
+  // چک می‌کنیم رکورد هست یا نه
+  const row = await queryOne<{ id: number }>(
+    env,
+    "SELECT id FROM user_words_sm2 WHERE user_id = ? AND word_id = ?",
+    [userId, wordId]
+  );
+
+  if (row) {
+    await execute(
+      env,
+      "UPDATE user_words_sm2 SET ignored = 1, updated_at = ? WHERE id = ?",
+      [now, row.id]
+    );
+  } else {
+    // اگر هنوز رکوردی ساخته نشده بود، می‌سازیم و مستقیم ignored=1 می‌کنیم
+    await execute(
+      env,
+      `
+      INSERT INTO user_words_sm2
+        (user_id, word_id, interval_days, repetitions, ease_factor, next_review_date, question_stage, ignored, created_at)
+      VALUES (?, ?, 1, 0, 2.5, ?, 1, 1, ?)
+      `,
+      [userId, wordId, now, now]
+    );
+  }
+}
