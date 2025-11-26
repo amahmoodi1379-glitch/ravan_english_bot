@@ -47,6 +47,8 @@ import {
   handleStatsCallback,
   handleSetDisplayNameCommand
 } from "./handlers/profile";
+// NEW IMPORTS
+import { startReflectionForUser, handleReflectionAnswer } from "./handlers/reflection";
 
 export interface TelegramUser {
   id: number;
@@ -142,19 +144,19 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // تغییر نام با /setname
+  // اولویت ۱: دستورهای خاص (/start, /setname)
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);
     return;
   }
 
-  // /start
   if (text === "/start") {
     await handleStartCommand(env, update);
     return;
   }
 
-  // منوی اصلی: 🎯 تمرین‌ها
+  // اولویت ۲: دکمه‌های منو
+  // منوی اصلی
   if (text === MAIN_MENU_BUTTON_TRAINING) {
     await sendMessage(
       env,
@@ -164,31 +166,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     );
     return;
   }
-
-  // منوی تمرین‌ها: لایتنر
-  if (text === TRAINING_MENU_BUTTON_LEITNER) {
-    await startLeitnerForUser(env, update);
-    return;
-  }
-
-  // منوی تمرین‌ها: تست درک مطلب
-  if (text === TRAINING_MENU_BUTTON_READING) {
-    await startReadingMenuForUser(env, update);
-    return;
-  }
-
-  // منوی تمرین‌ها: برداشت از متن (فعلاً placeholder)
-  if (text === TRAINING_MENU_BUTTON_REFLECTION) {
-    await sendMessage(
-      env,
-      chatId,
-      "بخش 📝 برداشت از متن به زودی پیاده‌سازی می‌شه. فعلاً می‌تونی از لایتنر و تست درک مطلب استفاده کنی.",
-      { reply_markup: getTrainingMenuKeyboard() }
-    );
-    return;
-  }
-
-  // منوی رقابت‌ها
   if (text === MAIN_MENU_BUTTON_COMPETITIONS) {
     await sendMessage(
       env,
@@ -198,50 +175,25 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     );
     return;
   }
-
-  // رقابت‌ها: دوئل آسان
-  if (text === COMP_MENU_BUTTON_DUEL_EASY) {
-    await startDuelEasyForUser(env, update);
-    return;
-  }
-
-  // رقابت‌ها: دوئل سخت
-  if (text === COMP_MENU_BUTTON_DUEL_HARD) {
-    await startDuelHardForUser(env, update);
-    return;
-  }
-
-  // رقابت‌ها: لیدربورد
-  if (text === COMP_MENU_BUTTON_LEADERBOARD) {
-    await startLeaderboardMenu(env, update);
-    return;
-  }
-
-  // منوی اصلی: پروفایل و آمار
   if (text === MAIN_MENU_BUTTON_PROFILE) {
     await showProfileHome(env, update);
     return;
   }
 
-  // منوی پروفایل: تنظیمات
-  if (text === PROFILE_MENU_BUTTON_SETTINGS) {
-    await showProfileSettings(env, update);
+  // منوی تمرین‌ها
+  if (text === TRAINING_MENU_BUTTON_LEITNER) {
+    await startLeitnerForUser(env, update);
     return;
   }
-
-  // منوی پروفایل: آمار فعالیت
-  if (text === PROFILE_MENU_BUTTON_STATS) {
-    await startProfileStats(env, update);
+  if (text === TRAINING_MENU_BUTTON_READING) {
+    await startReadingMenuForUser(env, update);
     return;
   }
-
-  // منوی پروفایل: خلاصه پروفایل
-  if (text === PROFILE_MENU_BUTTON_SUMMARY) {
-    await showProfileSummary(env, update);
+  // NEW: هندل کردن دکمه Reflection
+  if (text === TRAINING_MENU_BUTTON_REFLECTION) {
+    await startReflectionForUser(env, update);
     return;
   }
-
-  // برگشت به منوی اصلی (از هر زیرمنو)
   if (text === TRAINING_MENU_BUTTON_BACK) {
     await sendMessage(
       env,
@@ -252,7 +204,39 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // سایر متن‌ها
+  // منوی رقابت‌ها و پروفایل ...
+  if (text === COMP_MENU_BUTTON_DUEL_EASY) {
+    await startDuelEasyForUser(env, update);
+    return;
+  }
+  if (text === COMP_MENU_BUTTON_DUEL_HARD) {
+    await startDuelHardForUser(env, update);
+    return;
+  }
+  if (text === COMP_MENU_BUTTON_LEADERBOARD) {
+    await startLeaderboardMenu(env, update);
+    return;
+  }
+  if (text === PROFILE_MENU_BUTTON_SETTINGS) {
+    await showProfileSettings(env, update);
+    return;
+  }
+  if (text === PROFILE_MENU_BUTTON_STATS) {
+    await startProfileStats(env, update);
+    return;
+  }
+  if (text === PROFILE_MENU_BUTTON_SUMMARY) {
+    await showProfileSummary(env, update);
+    return;
+  }
+
+  // اولویت ۳: بررسی اینکه آیا متن ارسالی، جواب تمرین Reflection است؟
+  const wasReflection = await handleReflectionAnswer(env, update, text);
+  if (wasReflection) {
+    return; // پیام هندل شد
+  }
+
+  // اگر هیچکدام نبود
   await sendMessage(
     env,
     chatId,
