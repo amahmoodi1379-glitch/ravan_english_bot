@@ -1,214 +1,179 @@
 import { Env } from "../types";
 
-export type QuestionStyle =
-  | "fa_meaning"
-  | "en_definition"
-  | "word_from_definition"
-  | "synonym"
-  | "antonym"
-  | "fa_to_en";
-
-export interface GeneratedWordQuestion {
-  question_text: string;
-  option_a: string;
-  option_b: string;
-  option_c: string;
-  option_d: string;
-  correct_option: "A" | "B" | "C" | "D";
+export interface AiGeneratedQuestion {
+  question: string;
+  options: string[]; // length = 4
+  correctIndex: number; // 0..3
   explanation: string;
-}
-
-interface DbWord {
-  id: number;
-  english: string;
-  persian: string;
-  level?: number;
-  lesson_name?: string | null;
-  synonyms?: string | null;
-  antonyms?: string | null;
-}
-
-function buildStyleInstruction(style: QuestionStyle, word: DbWord): string {
-  const base =
-    `You are an exam generator for Persian learners of English.\n` +
-    `Target word: "${word.english}". Persian meaning: "${word.persian}".\n`;
-
-  switch (style) {
-    case "fa_meaning":
-      return (
-        base +
-        `Create multiple-choice questions where the question shows the ENGLISH word, and 4 options are PERSIAN meanings.\n` +
-        `Only one Persian meaning is correct. The other options must be plausible but incorrect meanings in Persian.`
-      );
-    case "en_definition":
-      return (
-        base +
-        `Create multiple-choice questions where the question shows the ENGLISH word, and 4 options are SIMPLE ENGLISH definitions.\n` +
-        `Only one definition is correct. Other options are plausible but incorrect definitions.`
-      );
-    case "word_from_definition":
-      return (
-        base +
-        `Create multiple-choice questions where the question shows a SIMPLE ENGLISH DEFINITION, and the 4 options are ENGLISH WORDS.\n` +
-        `Only one option must be exactly the target word "${word.english}". The other options must be different words.`
-      );
-    case "synonym":
-      return (
-        base +
-        `Create multiple-choice questions where the question shows the ENGLISH word, and 4 options are ENGLISH synonyms / near-synonyms.\n` +
-        `Only one option is a good synonym for the target word. Other options must be different words.`
-      );
-    case "antonym":
-      return (
-        base +
-        `Create multiple-choice questions where the question shows the ENGLISH word, and 4 options are ENGLISH antonyms.\n` +
-        `Only one option is a good antonym. Other options must be different words.`
-      );
-    case "fa_to_en":
-      return (
-        base +
-        `Create multiple-choice questions where the question shows the PERSIAN meaning, and 4 options are ENGLISH words.\n` +
-        `Only one option is exactly the correct English word. Other options must be plausible but incorrect words.`
-      );
-  }
-}
-
-function buildWordPrompt(
-  word: DbWord,
-  style: QuestionStyle,
-  count: number
-): string {
-  const styleInstruction = buildStyleInstruction(style, word);
-
-  return (
-    styleInstruction +
-    `\n\nGenerate exactly ${count} questions.\n` +
-    `Return ONLY valid JSON, no extra text.\n` +
-    `The JSON must be an array of objects with this exact shape:\n` +
-    `[\n` +
-    `  {\n` +
-    `    "question_text": "string",\n` +
-    `    "option_a": "string",\n` +
-    `    "option_b": "string",\n` +
-    `    "option_c": "string",\n` +
-    `    "option_d": "string",\n` +
-    `    "correct_option": "A" | "B" | "C" | "D",\n` +
-    `    "explanation": "string"\n` +
-    `  }, ...\n` +
-    `]\n` +
-    `Make all text UTF-8 plain text, no markdown.`
-  );
 }
 
 async function callGemini(env: Env, prompt: string): Promise<string> {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not set in environment");
+    console.error("GEMINI_API_KEY is not set");
+    throw new Error("GEMINI_API_KEY is not set");
   }
 
   const url =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" +
     encodeURIComponent(apiKey);
 
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }]
-      }
-    ]
-  };
-
-  const res = await fetch(url, {
+  const resp = await fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [{ text: prompt }]
+        }
+      ]
+    })
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      "Gemini API error: " + res.status + " " + res.statusText + " – " + text
-    );
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error("Gemini HTTP error", resp.status, text);
+    throw new Error("Gemini HTTP error: " + resp.status);
   }
 
-  const data = await res.json();
+  const data = await resp.json();
+  const text =
+    data?.candidates?.[0]?.content?.parts?.[0]?.text ??
+    data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
-  const parts =
-    data?.candidates?.[0]?.content?.parts ??
-    data?.candidates?.[0]?.output_text ??
-    [];
-
-  let text = "";
-  if (Array.isArray(parts)) {
-    for (const p of parts) {
-      if (typeof p?.text === "string") {
-        text += p.text;
-      }
-    }
-  } else if (typeof parts === "string") {
-    text = parts;
+  if (typeof text !== "string") {
+    console.error("Gemini response has no text", JSON.stringify(data));
+    throw new Error("Gemini response has no text");
   }
 
   return text.trim();
 }
 
-function extractJsonArray(text: string): any[] {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Could not find JSON array in Gemini response");
-  }
-  const jsonStr = text.slice(start, end + 1);
-  return JSON.parse(jsonStr);
+function buildWordQuestionPrompt(params: {
+  english: string;
+  persian: string;
+  level: number;
+  questionStyle: string;
+  count: number;
+}): string {
+  const { english, persian, level, questionStyle, count } = params;
+
+  return `
+You are an expert English vocabulary quiz generator for Persian (Farsi) learners.
+
+Target word: "${english}"
+Main Persian meaning: "${persian}"
+Approximate difficulty level: ${level} (1 = very easy, 4 = hard).
+
+question_style = "${questionStyle}"
+Generate ${count} different multiple-choice questions for this word with exactly 4 options each.
+
+Styles rules:
+
+- "fa_meaning":
+  * Question text: in Persian, asking for the meaning of the English word "${english}".
+  * Options: 4 Persian meanings (short phrases). Exactly one is the correct meaning "${persian}", the others are plausible but wrong.
+
+- "en_definition":
+  * Question text: in Persian, asking something like "کدام تعریف برای واژه ${english} درست است؟".
+  * Options: 4 simple English definitions. Exactly one is correct.
+
+- "word_from_definition":
+  * Question text: a simple English definition.
+  * Options: 4 English words. Exactly one is the target word "${english}". Others are plausible but wrong.
+
+- "synonym":
+  * Question text: in Persian, asking for a synonym of "${english}".
+  * Options: 4 English words. Exactly one is a close synonym, others are plausible but wrong.
+
+- "antonym":
+  * Question text: in Persian, asking for an opposite/antonym of "${english}".
+  * Options: 4 English words. Exactly one is a good antonym, others are plausible but wrong.
+
+- "fa_to_en":
+  * Question text: show the Persian meaning "${persian}" and ask which English word matches it.
+  * Options: 4 English words. Exactly one is "${english}", others are plausible but wrong.
+
+For each question, also give a short explanation in Persian (why the correct answer is correct).
+
+Return ONLY valid JSON (no extra text, no markdown) in this exact format:
+
+{
+  "questions": [
+    {
+      "question": "...",
+      "options": ["...", "...", "...", "..."],
+      "correct_index": 0,
+      "explanation": "..."
+    }
+  ]
+}
+`.trim();
 }
 
-export async function generateWordQuestionsForStyle(
-  env: Env,
-  word: DbWord,
-  style: QuestionStyle,
-  count: number
-): Promise<GeneratedWordQuestion[]> {
-  const prompt = buildWordPrompt(word, style, count);
-  const raw = await callGemini(env, prompt);
+export async function generateWordQuestionsWithGemini(params: {
+  env: Env;
+  english: string;
+  persian: string;
+  level: number;
+  questionStyle: string;
+  count: number;
+}): Promise<AiGeneratedQuestion[]> {
+  const { env, english, persian, level, questionStyle, count } = params;
 
-  let arr: any[];
+  const prompt = buildWordQuestionPrompt({
+    english,
+    persian,
+    level,
+    questionStyle,
+    count
+  });
+
+  let raw = await callGemini(env, prompt);
+
+  // اگر مدل کدبلاک markdown برگردونه، پاکش می‌کنیم
+  raw = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  let parsed: any;
   try {
-    arr = extractJsonArray(raw);
-  } catch (e) {
-    console.error("Failed to parse Gemini JSON:", e, raw);
-    throw new Error("Failed to parse Gemini JSON");
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error("Failed to parse Gemini JSON:", raw);
+    throw err;
   }
 
-  const questions: GeneratedWordQuestion[] = [];
-  for (const item of arr) {
+  const list = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const result: AiGeneratedQuestion[] = [];
+
+  for (const q of list) {
     if (
-      !item ||
-      typeof item.question_text !== "string" ||
-      typeof item.option_a !== "string" ||
-      typeof item.option_b !== "string" ||
-      typeof item.option_c !== "string" ||
-      typeof item.option_d !== "string" ||
-      typeof item.correct_option !== "string"
+      !q ||
+      typeof q.question !== "string" ||
+      !Array.isArray(q.options) ||
+      q.options.length < 4
     ) {
       continue;
     }
-    const correct =
-      item.correct_option.toUpperCase() as GeneratedWordQuestion["correct_option"];
-    if (!["A", "B", "C", "D"].includes(correct)) continue;
+    const opts = q.options.slice(0, 4).map((o: any) => String(o));
+    let idx: number = 0;
+    if (typeof q.correct_index === "number") {
+      idx = q.correct_index;
+    } else if (typeof q.correctIndex === "number") {
+      idx = q.correctIndex;
+    }
+    if (idx < 0 || idx > 3) idx = 0;
 
-    questions.push({
-      question_text: item.question_text.trim(),
-      option_a: item.option_a.trim(),
-      option_b: item.option_b.trim(),
-      option_c: item.option_c.trim(),
-      option_d: item.option_d.trim(),
-      correct_option: correct,
-      explanation: (item.explanation || "").toString().trim()
+    result.push({
+      question: q.question,
+      options: opts,
+      correctIndex: idx,
+      explanation: typeof q.explanation === "string" ? q.explanation : ""
     });
+
+    if (result.length >= count) break;
   }
 
-  return questions;
+  return result;
 }
