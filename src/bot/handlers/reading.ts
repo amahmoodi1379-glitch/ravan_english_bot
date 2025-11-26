@@ -18,7 +18,7 @@ import {
 import { queryAll, queryOne, execute } from "../../db/client";
 import { addXpForReadingSession } from "../../db/xp";
 import { generateReadingQuestionsWithGemini } from "../../ai/gemini";
-import { CB_PREFIX, GAME_CONFIG } from "../../config/constants"; // Import added
+import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
 
 interface SummaryQuestionRow {
   question_text: string;
@@ -47,7 +47,6 @@ export async function startReadingMenuForUser(env: Env, update: TelegramUpdate):
 
   const inlineRows = texts.map(t => {
     const title = t.title.length > 40 ? t.title.slice(0, 37) + "..." : t.title;
-    // rt:<id>
     return [{ text: title, callback_data: `${CB_PREFIX.READING_TEXT}:${t.id}` }];
   });
 
@@ -64,7 +63,6 @@ export async function startReadingMenuForUser(env: Env, update: TelegramUpdate):
 export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":"); 
-  // rt:<id>
   if (parts.length !== 2 || parts[0] !== CB_PREFIX.READING_TEXT) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -89,6 +87,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   const session = await createReadingSession(env, user.id, textId, GAME_CONFIG.READING_QUESTION_COUNT);
 
   await answerCallbackQuery(env, callbackQuery.id);
+  // متن اصلی نمایش داده نمی‌شود
   await sendMessage(env, chatId, "تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
@@ -100,7 +99,6 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 export async function handleReadingAnswerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
-  // ra:<sessionId>:<questionId>:<option>
   if (parts.length !== 4 || parts[0] !== CB_PREFIX.READING_ANSWER) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -160,17 +158,26 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
   await answerCallbackQuery(env, callbackQuery.id);
 
-  const correctText = getOptionText(question, question.correct_option);
-  const chosenText = getOptionText(question, chosenOption);
+  const getOptionNumber = (letter: string): string => {
+    switch (letter) {
+      case "A": return "1";
+      case "B": return "2";
+      case "C": return "3";
+      case "D": return "4";
+      default: return "";
+    }
+  };
+  const correctNum = getOptionNumber(question.correct_option);
 
   let replyText: string;
   if (isCorrect) {
-    replyText = `آفرین! ✅ جواب درست بود.\n\n✅ جواب صحیح: <b>${correctText}</b>`;
+    replyText = `آفرین! ✅ جواب درست بود.\n\n✅ گزینه صحیح: <b>${correctNum}</b>`;
   } else {
+    const chosenNum = getOptionNumber(chosenOption);
     replyText =
       `جواب درست نبود ❌\n\n` +
-      `جواب انتخابی تو: <b>${chosenText || "-"}</b>\n` +
-      `✅ جواب صحیح: <b>${correctText}</b>`;
+      `جواب تو: <b>${chosenNum}</b>\n` +
+      `✅ جواب صحیح: <b>${correctNum}</b>`;
   }
 
   await sendMessage(env, chatId, replyText);
@@ -231,25 +238,26 @@ async function sendNextReadingQuestion(
 
   await recordQuestionShown(env, session, user.id, question.id);
 
+  // تغییر UI: گزینه‌ها در متن
+  const messageText = 
+    `❓ <b>${question.question_text}</b>\n\n` +
+    `1️⃣ ${question.option_a}\n` +
+    `2️⃣ ${question.option_b}\n` +
+    `3️⃣ ${question.option_c}\n` +
+    `4️⃣ ${question.option_d}`;
+
   const replyMarkup = {
     inline_keyboard: [
       [
-        // ra:<sessionId>:<questionId>:A
-        { text: question.option_a, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:A` }
-      ],
-      [
-        { text: question.option_b, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:B` }
-      ],
-      [
-        { text: question.option_c, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:C` }
-      ],
-      [
-        { text: question.option_d, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:D` }
+        { text: "1", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:A` },
+        { text: "2", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:B` },
+        { text: "3", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:C` },
+        { text: "4", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:D` }
       ]
     ]
   };
 
-  await sendMessage(env, chatId, question.question_text, { reply_markup: replyMarkup });
+  await sendMessage(env, chatId, messageText, { reply_markup: replyMarkup });
   return true;
 }
 
@@ -301,33 +309,22 @@ async function sendReadingSummary(
 
   if (totalXp > 0) {
     text += `\n⭐️ XP این ست: <b>${totalXp}</b>\n`;
-  } else {
-    text += `\nدر این ست XPیی نگرفتی.\n`;
   }
 
   if (rows.length > 0) {
     text += `\nپاسخنامه:\n`;
     rows.forEach((r, idx) => {
       const qNum = idx + 1;
+      const correctOptionNum = r.correct_option === "A" ? "1" : r.correct_option === "B" ? "2" : r.correct_option === "C" ? "3" : "4";
       const correctText = getOptionTextForRow(r, r.correct_option);
       const status = r.is_correct === 1 ? "✅" : "❌";
-      text += `\n${qNum}) ${status} جواب صحیح: <b>${correctText}</b>`;
+      text += `\n${qNum}) ${status} گزینه ${correctOptionNum}: <b>${correctText}</b>`;
     });
   }
 
   await markSessionCompleted(env, session.id);
 
   await sendMessage(env, chatId, text);
-}
-
-function getOptionText(question: DbTextQuestion, letter: string): string {
-  switch (letter) {
-    case "A": return question.option_a;
-    case "B": return question.option_b;
-    case "C": return question.option_c;
-    case "D": return question.option_d;
-    default: return "";
-  }
 }
 
 function getOptionTextForRow(row: SummaryQuestionRow, letter: string): string {
