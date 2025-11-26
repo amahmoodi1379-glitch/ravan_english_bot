@@ -190,9 +190,16 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     return;
   }
 
-  const isCorrect = chosenOption === q.correct_option;
+const isCorrect = chosenOption === q.correct_option;
 
-  await recordDuelAnswer(env, duelId, duelQuestionId, user.id, chosenOption, isCorrect);
+  try {
+    // تلاش برای ثبت جواب
+    await recordDuelAnswer(env, duelId, duelQuestionId, user.id, chosenOption, isCorrect);
+  } catch (e) {
+    // اگه ارور داد (یعنی قبلاً ثبت شده)، فقط لودینگ رو ببند و کار رو تموم کن
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
 
   await answerCallbackQuery(env, callbackQuery.id);
 
