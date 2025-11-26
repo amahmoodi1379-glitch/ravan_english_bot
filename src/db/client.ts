@@ -24,12 +24,13 @@ export async function queryAll<T>(
   return rows;
 }
 
-// اجرای کوئری بدون برگشت نتیجه
+// اجرای کوئری و بازگرداندن نتیجه (برای گرفتن تعداد تغییرات)
 export async function execute(
   env: Env,
   sql: string,
   params: any[] = []
-): Promise<void> {
+): Promise<any> {
   const stmt = env.DB.prepare(sql);
-  await stmt.bind(...params).run();
+  // متد run خروجی شامل meta.changes دارد
+  return await stmt.bind(...params).run();
 }
