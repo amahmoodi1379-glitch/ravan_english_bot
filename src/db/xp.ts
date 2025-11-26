@@ -1,6 +1,6 @@
 import { Env } from "../types";
-import { execute } from "./client";
-import { XP_VALUES } from "../config/constants"; // Import added
+import { prepare } from "./client";
+import { XP_VALUES } from "../config/constants";
 
 export type ActivityType =
   | "leitner_question"
@@ -8,19 +8,20 @@ export type ActivityType =
   | "duel_question"
   | "duel_match";
 
-export async function addXp(
+// بازگرداندن آرایه‌ای از دستورات (بدون اجرا)
+export function prepareAddXp(
   env: Env,
   userId: number,
   xpDelta: number,
   activityType: ActivityType,
   refId?: number,
   meta?: any
-): Promise<void> {
-  if (xpDelta <= 0) return;
+): any[] {
+  if (xpDelta <= 0) return [];
 
   const metaJson = meta ? JSON.stringify(meta) : null;
 
-  await execute(
+  const stmt1 = prepare(
     env,
     `
     UPDATE users
@@ -30,7 +31,7 @@ export async function addXp(
     [xpDelta, userId]
   );
 
-  await execute(
+  const stmt2 = prepare(
     env,
     `
     INSERT INTO activity_log (user_id, activity_type, ref_id, xp_delta, meta_json)
@@ -38,16 +39,26 @@ export async function addXp(
     `,
     [userId, activityType, refId ?? null, xpDelta, metaJson]
   );
+
+  return [stmt1, stmt2];
 }
 
-export async function addXpForLeitnerQuestion(
+// توابع قدیمی برای backward compatibility (اگر جایی هنوز استفاده می‌شود)
+export async function addXp(env: Env, userId: number, xpDelta: number, activityType: ActivityType, refId?: number, meta?: any): Promise<void> {
+  const stmts = prepareAddXp(env, userId, xpDelta, activityType, refId, meta);
+  if (stmts.length > 0) await env.DB.batch(stmts);
+}
+
+// --- توابع آماده‌ساز اختصاصی ---
+
+export function prepareXpForLeitner(
   env: Env,
   userId: number,
   wordId: number,
   wordLevel: number,
   isCorrect: boolean
-): Promise<void> {
-  if (!isCorrect) return;
+): any[] {
+  if (!isCorrect) return [];
 
   let xp = 0;
   switch (wordLevel) {
@@ -58,18 +69,17 @@ export async function addXpForLeitnerQuestion(
     default: xp = XP_VALUES.LEITNER_LEVEL_1;
   }
 
-  await addXp(env, userId, xp, "leitner_question", wordId, {
-    word_level: wordLevel
-  });
+  return prepareAddXp(env, userId, xp, "leitner_question", wordId, { word_level: wordLevel });
 }
 
-export async function addXpForReadingSession(
+// این تابع چون باید XP محاسبه شده را برگرداند (برای نمایش به کاربر)، همزمان محاسبه می‌کند و استیتمنت می‌دهد
+export function calculateAndPrepareXpForReading(
   env: Env,
   userId: number,
   sessionId: number,
   correct: number,
   total: number
-): Promise<number> {
+): { totalXp: number; stmts: any[] } {
   const xpPerQuestion = XP_VALUES.READING_QUESTION;
   const baseXp = correct * xpPerQuestion;
 
@@ -80,15 +90,22 @@ export async function addXpForReadingSession(
   }
 
   const totalXp = baseXp + bonus;
-  if (totalXp <= 0) return 0;
+  if (totalXp <= 0) return { totalXp: 0, stmts: [] };
 
-  await addXp(env, userId, totalXp, "reading_session", sessionId, {
+  const stmts = prepareAddXp(env, userId, totalXp, "reading_session", sessionId, {
     correct,
     total,
     xp_per_question: xpPerQuestion,
     bonus
   });
 
+  return { totalXp, stmts };
+}
+
+// برای Backward Compatibility نگه‌ش می‌داریم ولی در کد جدید استفاده نمی‌کنیم
+export async function addXpForReadingSession(env: Env, userId: number, sessionId: number, correct: number, total: number): Promise<number> {
+  const { totalXp, stmts } = calculateAndPrepareXpForReading(env, userId, sessionId, correct, total);
+  if (stmts.length > 0) await env.DB.batch(stmts);
   return totalXp;
 }
 
@@ -110,13 +127,14 @@ export async function addXpForDuelMatch(
   const totalXp = baseXp + bonus;
   if (totalXp <= 0) return 0;
 
-  await addXp(env, userId, totalXp, "duel_match", duelId, {
+  const stmts = prepareAddXp(env, userId, totalXp, "duel_match", duelId, {
     correct,
     total,
     result,
     xp_per_question: xpPerQuestion,
     bonus
   });
-
+  
+  if (stmts.length > 0) await env.DB.batch(stmts);
   return totalXp;
 }
