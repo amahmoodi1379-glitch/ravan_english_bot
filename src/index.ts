@@ -759,3 +759,4 @@ function renderTextForm(text: any, heading: string): string {
     </form>
   `;
 }
+
