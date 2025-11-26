@@ -2,6 +2,7 @@ import { Env } from "./types";
 import { handleTelegramUpdate, TelegramUpdate } from "./bot/router";
 import { queryAll, queryOne, execute } from "./db/client";
 import { getAllActiveReadingTexts } from "./db/texts";
+import { cleanupOldMatches } from "./db/duels";
 
 function htmlResponse(html: string, status: number = 200): Response {
   return new Response(html, {
@@ -677,6 +678,20 @@ export default {
       console.error("Global Error:", err);
       return new Response("Internal Server Error", { status: 500 });
     }
+  }
+},
+
+  // این بخش هر ساعت خودکار اجرا می‌شود
+  async scheduled(event: any, env: Env, ctx: any): Promise<void> {
+    ctx.waitUntil((async () => {
+      // ۱. پاکسازی دوئل‌های قدیمی
+      await cleanupOldMatches(env);
+      
+      // ۲. پاکسازی سشن‌های منقضی شده ادمین
+      await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
+      
+      console.log("Cleanup job completed.");
+    })());
   }
 };
 
