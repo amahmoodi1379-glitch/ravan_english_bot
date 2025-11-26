@@ -8,15 +8,13 @@ import {
   LeaderboardPeriod,
   LeaderboardRow
 } from "../../db/leaderboard";
+import { CB_PREFIX } from "../../config/constants"; // Import added
 
 function periodLabel(period: LeaderboardPeriod): string {
   switch (period) {
-    case "weekly":
-      return "هفتگی (۷ روز اخیر)";
-    case "monthly":
-      return "ماهانه (۳۰ روز اخیر)";
-    case "all_time":
-      return "کلی (همه‌ی زمان‌ها)";
+    case "weekly": return "هفتگی (۷ روز اخیر)";
+    case "monthly": return "ماهانه (۳۰ روز اخیر)";
+    case "all_time": return "کلی (همه‌ی زمان‌ها)";
   }
 }
 
@@ -31,9 +29,9 @@ export async function startLeaderboardMenu(env: Env, update: TelegramUpdate): Pr
 
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: "🏅 هفتگی", callback_data: "lb:weekly" }],
-      [{ text: "🥇 ماهانه", callback_data: "lb:monthly" }],
-      [{ text: "🏆 کلی", callback_data: "lb:all_time" }]
+      [{ text: "🏅 هفتگی", callback_data: `${CB_PREFIX.LEADERBOARD}:weekly` }],
+      [{ text: "🥇 ماهانه", callback_data: `${CB_PREFIX.LEADERBOARD}:monthly` }],
+      [{ text: "🏆 کلی", callback_data: `${CB_PREFIX.LEADERBOARD}:all_time` }]
     ]
   };
 
@@ -50,9 +48,10 @@ export async function handleLeaderboardCallback(
   callbackQuery: TelegramCallbackQuery
 ): Promise<void> {
   const data = callbackQuery.data ?? "";
-  const parts = data.split(":"); // lb:<period>
-
-  if (parts.length !== 2 || parts[0] !== "lb") {
+  const parts = data.split(":"); 
+  
+  // lb:<period>
+  if (parts.length !== 2 || parts[0] !== CB_PREFIX.LEADERBOARD) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
