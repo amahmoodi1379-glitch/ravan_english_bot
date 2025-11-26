@@ -30,7 +30,7 @@ export async function insertWordQuestions(
       env,
       `
       INSERT INTO word_questions
-        (word_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, question_style)
+        (word_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_style)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
