@@ -14,9 +14,9 @@ export interface AiReflectionResult {
 
 // لیست مدل‌ها برای تلاش (اولویت با مدل‌های جدیدتر)
 const MODELS_TO_TRY = [
-  "gemini-1.5-flash-latest",
-  "gemini-1.5-flash",
-  "gemini-pro"
+  "gemini-2.5-flash", // ✅ مدل جدید که شما تأیید کردید کار می‌کند
+  "gemini-1.5-flash-latest", 
+  "gemini-1.5-flash"
 ];
 
 async function callGemini(env: Env, prompt: string): Promise<string> {
