@@ -1,14 +1,13 @@
 import { Env } from "../types";
 import { execute } from "./client";
+import { XP_VALUES } from "../config/constants"; // Import added
 
-// نوع کلی فعالیت‌ها (بعداً می‌تونیم بیشترش کنیم)
 export type ActivityType =
   | "leitner_question"
   | "reading_session"
   | "duel_question"
   | "duel_match";
 
-// تابع عمومی اضافه کردن XP
 export async function addXp(
   env: Env,
   userId: number,
@@ -21,7 +20,6 @@ export async function addXp(
 
   const metaJson = meta ? JSON.stringify(meta) : null;
 
-  // آپدیت XP کلی کاربر
   await execute(
     env,
     `
@@ -32,7 +30,6 @@ export async function addXp(
     [xpDelta, userId]
   );
 
-  // ثبت در activity_log
   await execute(
     env,
     `
@@ -43,7 +40,6 @@ export async function addXp(
   );
 }
 
-// XP برای سوال لایتنر
 export async function addXpForLeitnerQuestion(
   env: Env,
   userId: number,
@@ -55,20 +51,11 @@ export async function addXpForLeitnerQuestion(
 
   let xp = 0;
   switch (wordLevel) {
-    case 1:
-      xp = 5;
-      break;
-    case 2:
-      xp = 8;
-      break;
-    case 3:
-      xp = 12;
-      break;
-    case 4:
-      xp = 16;
-      break;
-    default:
-      xp = 5; // اگر سطح ناشناخته بود، مثل سطح ۱
+    case 1: xp = XP_VALUES.LEITNER_LEVEL_1; break;
+    case 2: xp = XP_VALUES.LEITNER_LEVEL_2; break;
+    case 3: xp = XP_VALUES.LEITNER_LEVEL_3; break;
+    case 4: xp = XP_VALUES.LEITNER_LEVEL_4; break;
+    default: xp = XP_VALUES.LEITNER_LEVEL_1;
   }
 
   await addXp(env, userId, xp, "leitner_question", wordId, {
@@ -76,7 +63,6 @@ export async function addXpForLeitnerQuestion(
   });
 }
 
-// XP برای یک ست تست درک مطلب (3 سوال)
 export async function addXpForReadingSession(
   env: Env,
   userId: number,
@@ -84,13 +70,13 @@ export async function addXpForReadingSession(
   correct: number,
   total: number
 ): Promise<number> {
-  const xpPerQuestion = 15;
+  const xpPerQuestion = XP_VALUES.READING_QUESTION;
   const baseXp = correct * xpPerQuestion;
 
   let bonus = 0;
   if (total === 3) {
-    if (correct === 3) bonus = 10;
-    else if (correct === 2) bonus = 5;
+    if (correct === 3) bonus = XP_VALUES.READING_BONUS_PERFECT;
+    else if (correct === 2) bonus = XP_VALUES.READING_BONUS_GOOD;
   }
 
   const totalXp = baseXp + bonus;
@@ -106,7 +92,6 @@ export async function addXpForReadingSession(
   return totalXp;
 }
 
-// XP برای یک دوئل (۵ سوال)
 export async function addXpForDuelMatch(
   env: Env,
   userId: number,
@@ -115,12 +100,12 @@ export async function addXpForDuelMatch(
   total: number,
   result: "win" | "draw" | "lose"
 ): Promise<number> {
-  const xpPerQuestion = 10;
+  const xpPerQuestion = XP_VALUES.DUEL_QUESTION;
   const baseXp = correct * xpPerQuestion;
 
   let bonus = 0;
-  if (result === "win") bonus = 30;
-  else if (result === "draw") bonus = 10;
+  if (result === "win") bonus = XP_VALUES.DUEL_WIN_BONUS;
+  else if (result === "draw") bonus = XP_VALUES.DUEL_DRAW_BONUS;
 
   const totalXp = baseXp + bonus;
   if (totalXp <= 0) return 0;
