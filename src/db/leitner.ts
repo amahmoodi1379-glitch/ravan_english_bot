@@ -1,8 +1,7 @@
 import { Env } from "../types";
-import { queryOne, execute } from "./client";
+import { queryOne, execute, prepare } from "./client"; // Import prepare
 import { sm2 } from "../utils/sm2";
 
-// شکل واژه در دیتابیس
 export interface DbWord {
   id: number;
   english: string;
@@ -14,7 +13,6 @@ export interface DbWord {
   order_index: number;
 }
 
-// وضعیت SM2 و stage برای هر user-word
 export interface UserWordState {
   id: number;
   user_id: number;
@@ -29,9 +27,8 @@ export interface UserWordState {
   question_stage: number;
 }
 
-// انتخاب واژه‌ی بعدی برای یک کاربر (بر اساس SM2 و واژه‌های جدید)
 export async function pickNextWordForUser(env: Env, userId: number): Promise<DbWord | null> {
-  // 1) اول واژه‌هایی که موعد مرورشان رسیده
+  // 1) اولویت مرور
   const dueRow = await queryOne<{ word_id: number }>(
     env,
     `
@@ -53,7 +50,7 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
   if (dueRow) {
     wordId = dueRow.word_id;
   } else {
-    // 2) اگر چیزی برای مرور نیست، واژه‌ی جدیدی که هنوز برای این کاربر وارد SM2 نشده
+    // 2) واژه‌های جدید
     const newRow = await queryOne<{ id: number }>(
       env,
       `
@@ -73,7 +70,7 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
     if (newRow) {
       wordId = newRow.id;
     } else {
-      // 3) اگر نه واژه‌ی جدید هست و نه چیزی موعدش رسیده، کم‌کم زودترین موعد آینده را مرور می‌کنیم
+      // 3) پیش‌خوانی
       const anyRow = await queryOne<{ word_id: number }>(
         env,
         `
@@ -88,31 +85,19 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
         `,
         [userId]
       );
-
-      if (anyRow) {
-        wordId = anyRow.word_id;
-      }
+      if (anyRow) wordId = anyRow.word_id;
     }
   }
 
-  if (!wordId) {
-    return null;
-  }
+  if (!wordId) return null;
 
-  const word = await queryOne<DbWord>(
+  return await queryOne<DbWord>(
     env,
-    `
-    SELECT id, english, persian, level, lesson_name, synonyms, antonyms, order_index
-    FROM words
-    WHERE id = ?
-    `,
+    `SELECT * FROM words WHERE id = ?`,
     [wordId]
   );
-
-  return word ?? null;
 }
 
-// گرفتن یا ساختن رکورد SM2 برای یک user-word
 export async function getOrCreateUserWordState(
   env: Env,
   userId: number,
@@ -120,19 +105,13 @@ export async function getOrCreateUserWordState(
 ): Promise<UserWordState> {
   let state = await queryOne<UserWordState>(
     env,
-    `
-    SELECT *
-    FROM user_words_sm2
-    WHERE user_id = ? AND word_id = ?
-    `,
+    `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
     [userId, wordId]
   );
 
   if (state) return state;
 
   const nowIso = new Date().toISOString();
-
-  // اگر وجود نداشت، یک رکورد جدید می‌سازیم
   await execute(
     env,
     `
@@ -145,52 +124,44 @@ export async function getOrCreateUserWordState(
 
   state = await queryOne<UserWordState>(
     env,
-    `
-    SELECT *
-    FROM user_words_sm2
-    WHERE user_id = ? AND word_id = ?
-    `,
+    `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
     [userId, wordId]
   );
 
-  if (!state) {
-    throw new Error("Failed to create user_words_sm2 state");
-  }
-
+  if (!state) throw new Error("Failed to create user_words_sm2 state");
   return state;
 }
 
-// تابع کمکی برای اضافه کردن روز به یک تاریخ ISO
 function addDaysToIso(iso: string, days: number): string {
   const d = new Date(iso);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString();
 }
 
-// آپدیت SM2 و question_stage بعد از جواب
-export async function updateSm2AndStageAfterAnswer(
+// NEW: نسخه‌ی آماده‌ساز (Prepare) برای Batch
+export async function prepareUpdateSm2(
   env: Env,
   userId: number,
   wordId: number,
   isCorrect: boolean
-): Promise<void> {
+): Promise<any[]> {
+  // چون state را باید بخوانیم، نمی‌توانیم این بخش را کاملاً خالص کنیم،
+  // اما خواندن اشکالی ندارد، نوشتن مهم است که batch شود.
+  
   let state = await queryOne<UserWordState>(
     env,
-    `
-    SELECT *
-    FROM user_words_sm2
-    WHERE user_id = ? AND word_id = ?
-    `,
+    `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
     [userId, wordId]
   );
 
+  // اگر استیت نبود، باید بسازیمش. اینجا مجبوریم یک execute داشته باشیم 
+  // (چون id رکورد جدید را برای آپدیت نیاز داریم).
+  // اما چون این حالت نادره (معمولا getOrCreate قبلش صدا شده)، ریسک کمی داره.
   if (!state) {
     state = await getOrCreateUserWordState(env, userId, wordId);
   }
 
   const nowIso = new Date().toISOString();
-
-  // SM2: کیفیت را بر اساس درست/غلط تعیین می‌کنیم
   const quality = isCorrect ? 5 : 2;
 
   const sm2Result = sm2(
@@ -202,34 +173,20 @@ export async function updateSm2AndStageAfterAnswer(
     quality
   );
 
-  const newInterval = sm2Result.interval;
-  const newReps = sm2Result.repetition;
-  const newEf = sm2Result.ef;
-  const nextReviewIso = addDaysToIso(nowIso, newInterval);
+  const nextReviewIso = addDaysToIso(nowIso, sm2Result.interval);
 
-  // به‌روزرسانی question_stage طبق قانون تو
   let newStage = state.question_stage || 1;
   let newCorrectStreak = state.correct_streak || 0;
 
   if (!isCorrect) {
-    // هرجا غلط → stage = 1
     newStage = 1;
     newCorrectStreak = 0;
   } else {
     newCorrectStreak += 1;
-    if (newStage === 1) {
-      newStage = 2;
-    } else if (newStage === 2) {
-      newStage = 3;
-    } else if (newStage === 3) {
-      newStage = 4;
-    } else {
-      // stage 4 → همون 4 می‌مونه
-      newStage = 4;
-    }
+    if (newStage < 4) newStage++;
   }
 
-  await execute(
+  const stmt = prepare(
     env,
     `
     UPDATE user_words_sm2
@@ -244,9 +201,9 @@ export async function updateSm2AndStageAfterAnswer(
     WHERE id = ?
     `,
     [
-      newInterval,
-      newReps,
-      newEf,
+      sm2Result.interval,
+      sm2Result.repetition,
+      sm2Result.ef,
       nextReviewIso,
       nowIso,
       newCorrectStreak,
@@ -255,13 +212,18 @@ export async function updateSm2AndStageAfterAnswer(
       state.id
     ]
   );
+
+  return [stmt];
 }
 
-// NEW: نادیده گرفتن واژه (بلدم)
+// تابع قدیمی برای سازگاری
+export async function updateSm2AndStageAfterAnswer(env: Env, userId: number, wordId: number, isCorrect: boolean): Promise<void> {
+  const stmts = await prepareUpdateSm2(env, userId, wordId, isCorrect);
+  if (stmts.length > 0) await env.DB.batch(stmts);
+}
+
 export async function markWordAsIgnored(env: Env, userId: number, wordId: number): Promise<void> {
   const now = new Date().toISOString();
-
-  // چک می‌کنیم رکورد هست یا نه
   const row = await queryOne<{ id: number }>(
     env,
     "SELECT id FROM user_words_sm2 WHERE user_id = ? AND word_id = ?",
@@ -275,7 +237,6 @@ export async function markWordAsIgnored(env: Env, userId: number, wordId: number
       [now, row.id]
     );
   } else {
-    // اگر هنوز رکوردی ساخته نشده بود، می‌سازیم و مستقیم ignored=1 می‌کنیم
     await execute(
       env,
       `
