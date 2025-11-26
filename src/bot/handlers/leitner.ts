@@ -7,15 +7,14 @@ import {
   pickNextWordForUser,
   getOrCreateUserWordState,
   updateSm2AndStageAfterAnswer,
-  markWordAsIgnored, // اضافه شد
+  markWordAsIgnored,
   DbWord
 } from "../../db/leitner";
 import { addXpForLeitnerQuestion } from "../../db/xp";
 import { generateWordQuestionsWithGemini } from "../../ai/gemini";
 import { insertWordQuestions } from "../../db/word_questions";
+import { CB_PREFIX } from "../../config/constants"; // Import added
 
-
-// شکل سوالی که برای لایتنر می‌گیریم
 interface LeitnerQuestionRow {
   id: number;
   word_id: number;
@@ -31,33 +30,25 @@ interface LeitnerQuestionRow {
   level: number;
 }
 
-// مپ stage → question_style
 function getQuestionStyleForStage(stage: number): string {
   if (stage <= 1) return "fa_meaning";
   if (stage === 2) return "en_definition";
   if (stage === 3) return "word_from_definition";
-
-  // stage 4 → یکی از سه style پیشرفته به صورت تصادفی
   const advanced = ["synonym", "antonym", "fa_to_en"];
   const idx = Math.floor(Math.random() * advanced.length);
   return advanced[idx];
 }
 
-// شروع لایتنر وقتی کاربر دکمه 🎯 تمرین‌ها را می‌زند
 export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
   if (!message || !message.from) return;
-
   const chatId = message.chat.id;
   const tgUser = message.from;
-
   const user = await getOrCreateUser(env, tgUser);
   await sendLeitnerQuestion(env, user, chatId);
 }
 
-// گرفتن و ارسال یک سوال لایتنر برای کاربر
 async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Promise<void> {
-  // 1) انتخاب واژه‌ی بعدی برای این کاربر
   const word = await pickNextWordForUser(env, user.id);
 
   if (!word) {
@@ -65,15 +56,12 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     return;
   }
 
-  // 2) وضعیت SM2 و stage این واژه برای این کاربر
   const state = await getOrCreateUserWordState(env, user.id, word.id);
   const stage = state.question_stage || 1;
   const desiredStyle = getQuestionStyleForStage(stage);
 
-  // 3) انتخاب سوال مناسب از بانک سوال‌ها
   let question = await pickQuestionForUserWord(env, user, word, desiredStyle);
 
-  // اگر سوالی نبود، بسازیم
   if (!question) {
     await sendMessage(env, chatId, "⏳ در حال طراحی سوال جدید با هوش مصنوعی...");
     try {
@@ -99,7 +87,6 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
             questionStyle: desiredStyle
           }))
         );
-        // دوباره سعی کن سوال را بخوانی
         question = await pickQuestionForUserWord(env, user, word, desiredStyle);
       }
     } catch (error) {
@@ -118,7 +105,6 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
 
   const now = new Date().toISOString();
 
-  // 4) ثبت در تاریخچه
   await execute(
     env,
     `
@@ -129,15 +115,15 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     [user.id, question.word_id, question.id, now]
   );
 
-  // 5) ساخت inline keyboard
+  // ساخت دکمه‌ها با پیشوندهای کوتاه
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: question.option_a, callback_data: `leitner:${question.id}:A` }],
-      [{ text: question.option_b, callback_data: `leitner:${question.id}:B` }],
-      [{ text: question.option_c, callback_data: `leitner:${question.id}:C` }],
-      [{ text: question.option_d, callback_data: `leitner:${question.id}:D` }],
-      // دکمه جدید: بلدم
-      [{ text: "✅ بلدم (حذف از مرور)", callback_data: `leitner:ignore:${question.id}` }]
+      [{ text: question.option_a, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:A` }],
+      [{ text: question.option_b, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:B` }],
+      [{ text: question.option_c, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:C` }],
+      [{ text: question.option_d, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:D` }],
+      // lig = Leitner IGnore
+      [{ text: "✅ بلدم (حذف از مرور)", callback_data: `${CB_PREFIX.LEITNER_IGNORE}:${question.id}` }]
     ]
   };
 
@@ -148,14 +134,12 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   });
 }
 
-// انتخاب سوال برای یک (user, word)
 async function pickQuestionForUserWord(
   env: Env,
   user: DbUser,
   word: DbWord,
   desiredStyle: string
 ): Promise<LeitnerQuestionRow | null> {
-  // 1) سوال‌هایی با style مورد نظر که کاربر ندیده
   let q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -191,7 +175,6 @@ async function pickQuestionForUserWord(
 
   if (q) return q;
 
-  // 2) سوال با style مورد نظر (حتی اگر دیده)
   q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -220,7 +203,6 @@ async function pickQuestionForUserWord(
 
   if (q) return q;
 
-  // 3) هر سوالی که ندیده
   q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -255,7 +237,6 @@ async function pickQuestionForUserWord(
 
   if (q) return q;
 
-  // 4) هر سوالی
   q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -284,14 +265,13 @@ async function pickQuestionForUserWord(
   return q ?? null;
 }
 
-// هندل کردن کلیک روی گزینه‌های لایتنر
 export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
 
-  // فرمت جدید: leitner:ignore:<questionId>
-  if (parts.length === 3 && parts[1] === "ignore") {
-    const questionId = Number(parts[2]);
+  // فرمت جدید: lig:<questionId>
+  if (parts[0] === CB_PREFIX.LEITNER_IGNORE) {
+    const questionId = Number(parts[1]);
     if (!Number.isFinite(questionId)) {
       await answerCallbackQuery(env, callbackQuery.id);
       return;
@@ -306,7 +286,6 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     const tgUser = callbackQuery.from;
     const user = await getOrCreateUser(env, tgUser);
 
-    // پیدا کردن word_id از روی سوال
     const question = await queryOne<{ word_id: number; english: string }>(
       env,
       `
@@ -326,99 +305,95 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       await answerCallbackQuery(env, callbackQuery.id, "خطا در یافتن واژه");
     }
 
-    // سوال بعدی
     await sendLeitnerQuestion(env, user, chatId);
     return;
   }
 
-  // فرمت استاندارد: leitner:<questionId>:<option>
-  if (parts.length !== 3 || parts[0] !== "leitner") {
-    await answerCallbackQuery(env, callbackQuery.id);
-    return;
-  }
+  // فرمت جدید: l:<questionId>:<option>
+  if (parts[0] === CB_PREFIX.LEITNER) {
+    const questionId = Number(parts[1]);
+    const chosenOption = parts[2];
 
-  const questionId = Number(parts[1]);
-  const chosenOption = parts[2];
-
-  if (!Number.isFinite(questionId)) {
-    await answerCallbackQuery(env, callbackQuery.id);
-    return;
-  }
-
-  const message = callbackQuery.message;
-  if (!message) {
-    await answerCallbackQuery(env, callbackQuery.id);
-    return;
-  }
-  const chatId = message.chat.id;
-  const tgUser = callbackQuery.from;
-  const user = await getOrCreateUser(env, tgUser);
-
-  const question = await queryOne<LeitnerQuestionRow>(
-    env,
-    `
-    SELECT
-      q.id,
-      q.word_id,
-      q.question_text,
-      q.option_a,
-      q.option_b,
-      q.option_c,
-      q.option_d,
-      q.correct_option,
-      q.question_style,
-      w.english,
-      w.persian,
-      w.level
-    FROM word_questions q
-    JOIN words w ON q.word_id = w.id
-    WHERE q.id = ?
-    `,
-    [questionId]
-  );
-
-  if (!question) {
-    await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد ❗️");
-    return;
-  }
-
-  const isCorrect = chosenOption === question.correct_option;
-  const now = new Date().toISOString();
-
-  await execute(
-    env,
-    `
-      UPDATE user_word_question_history
-      SET is_correct = ?, answered_at = ?
-      WHERE user_id = ? AND question_id = ? AND context = 'leitner'
-    `,
-    [isCorrect ? 1 : 0, now, user.id, question.id]
-  );
-
-  await updateSm2AndStageAfterAnswer(env, user.id, question.word_id, isCorrect);
-  await addXpForLeitnerQuestion(env, user.id, question.word_id, question.level, isCorrect);
-
-  await answerCallbackQuery(env, callbackQuery.id);
-
-  const getOptionText = (letter: string): string => {
-    switch (letter) {
-      case "A": return question.option_a;
-      case "B": return question.option_b;
-      case "C": return question.option_c;
-      case "D": return question.option_d;
-      default: return "";
+    if (!Number.isFinite(questionId)) {
+      await answerCallbackQuery(env, callbackQuery.id);
+      return;
     }
-  };
 
-  const correctText = getOptionText(question.correct_option);
-  let replyText: string;
+    const message = callbackQuery.message;
+    if (!message) {
+      await answerCallbackQuery(env, callbackQuery.id);
+      return;
+    }
+    const chatId = message.chat.id;
+    const tgUser = callbackQuery.from;
+    const user = await getOrCreateUser(env, tgUser);
 
-  if (isCorrect) {
-    replyText = `آفرین! ✅ جواب درست بود.\n\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
-  } else {
-    replyText = `جوابت درست نبود ❌\n\nجواب صحیح: <b>${correctText}</b>\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
+    const question = await queryOne<LeitnerQuestionRow>(
+      env,
+      `
+      SELECT
+        q.id,
+        q.word_id,
+        q.question_text,
+        q.option_a,
+        q.option_b,
+        q.option_c,
+        q.option_d,
+        q.correct_option,
+        q.question_style,
+        w.english,
+        w.persian,
+        w.level
+      FROM word_questions q
+      JOIN words w ON q.word_id = w.id
+      WHERE q.id = ?
+      `,
+      [questionId]
+    );
+
+    if (!question) {
+      await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد ❗️");
+      return;
+    }
+
+    const isCorrect = chosenOption === question.correct_option;
+    const now = new Date().toISOString();
+
+    await execute(
+      env,
+      `
+        UPDATE user_word_question_history
+        SET is_correct = ?, answered_at = ?
+        WHERE user_id = ? AND question_id = ? AND context = 'leitner'
+      `,
+      [isCorrect ? 1 : 0, now, user.id, question.id]
+    );
+
+    await updateSm2AndStageAfterAnswer(env, user.id, question.word_id, isCorrect);
+    await addXpForLeitnerQuestion(env, user.id, question.word_id, question.level, isCorrect);
+
+    await answerCallbackQuery(env, callbackQuery.id);
+
+    const getOptionText = (letter: string): string => {
+      switch (letter) {
+        case "A": return question.option_a;
+        case "B": return question.option_b;
+        case "C": return question.option_c;
+        case "D": return question.option_d;
+        default: return "";
+      }
+    };
+
+    const correctText = getOptionText(question.correct_option);
+    let replyText: string;
+
+    if (isCorrect) {
+      replyText = `آفرین! ✅ جواب درست بود.\n\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
+    } else {
+      replyText = `جوابت درست نبود ❌\n\nجواب صحیح: <b>${correctText}</b>\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
+    }
+
+    await sendMessage(env, chatId, replyText);
+    await sendLeitnerQuestion(env, user, chatId);
   }
-
-  await sendMessage(env, chatId, replyText);
-  await sendLeitnerQuestion(env, user, chatId);
 }
