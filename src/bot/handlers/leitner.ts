@@ -13,7 +13,7 @@ import {
 import { addXpForLeitnerQuestion } from "../../db/xp";
 import { generateWordQuestionsWithGemini } from "../../ai/gemini";
 import { insertWordQuestions } from "../../db/word_questions";
-import { CB_PREFIX } from "../../config/constants"; // Import added
+import { CB_PREFIX } from "../../config/constants";
 
 interface LeitnerQuestionRow {
   id: number;
@@ -115,21 +115,27 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     [user.id, question.word_id, question.id, now]
   );
 
-  // ساخت دکمه‌ها با پیشوندهای کوتاه
+  // تغییر UI: گزینه‌ها در متن، دکمه‌ها فقط عدد
+  const messageText = 
+    `❓ <b>${question.question_text}</b>\n\n` +
+    `1️⃣ ${question.option_a}\n` +
+    `2️⃣ ${question.option_b}\n` +
+    `3️⃣ ${question.option_c}\n` +
+    `4️⃣ ${question.option_d}`;
+
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: question.option_a, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:A` }],
-      [{ text: question.option_b, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:B` }],
-      [{ text: question.option_c, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:C` }],
-      [{ text: question.option_d, callback_data: `${CB_PREFIX.LEITNER}:${question.id}:D` }],
-      // lig = Leitner IGnore
+      [
+        { text: "1", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:A` },
+        { text: "2", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:B` },
+        { text: "3", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:C` },
+        { text: "4", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:D` }
+      ],
       [{ text: "✅ بلدم (حذف از مرور)", callback_data: `${CB_PREFIX.LEITNER_IGNORE}:${question.id}` }]
     ]
   };
 
-  const text = `${question.question_text}`;
-
-  await sendMessage(env, chatId, text, {
+  await sendMessage(env, chatId, messageText, {
     reply_markup: replyMarkup
   });
 }
@@ -140,6 +146,7 @@ async function pickQuestionForUserWord(
   word: DbWord,
   desiredStyle: string
 ): Promise<LeitnerQuestionRow | null> {
+  // منطق انتخاب سوال (بدون تغییر)
   let q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -269,7 +276,6 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
 
-  // فرمت جدید: lig:<questionId>
   if (parts[0] === CB_PREFIX.LEITNER_IGNORE) {
     const questionId = Number(parts[1]);
     if (!Number.isFinite(questionId)) {
@@ -309,7 +315,6 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     return;
   }
 
-  // فرمت جدید: l:<questionId>:<option>
   if (parts[0] === CB_PREFIX.LEITNER) {
     const questionId = Number(parts[1]);
     const chosenOption = parts[2];
@@ -374,6 +379,16 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
 
     await answerCallbackQuery(env, callbackQuery.id);
 
+    // در پاسخ نهایی هم می‌توانیم شماره گزینه درست را بگوییم
+    const getOptionNumber = (letter: string): string => {
+      switch (letter) {
+        case "A": return "1";
+        case "B": return "2";
+        case "C": return "3";
+        case "D": return "4";
+        default: return "";
+      }
+    };
     const getOptionText = (letter: string): string => {
       switch (letter) {
         case "A": return question.option_a;
@@ -384,13 +399,14 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       }
     };
 
+    const correctNum = getOptionNumber(question.correct_option);
     const correctText = getOptionText(question.correct_option);
+    
     let replyText: string;
-
     if (isCorrect) {
       replyText = `آفرین! ✅ جواب درست بود.\n\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
     } else {
-      replyText = `جوابت درست نبود ❌\n\nجواب صحیح: <b>${correctText}</b>\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
+      replyText = `جوابت درست نبود ❌\n\nجواب صحیح: گزینه <b>${correctNum}</b> (${correctText})\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
     }
 
     await sendMessage(env, chatId, replyText);
