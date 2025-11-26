@@ -18,6 +18,7 @@ import {
   maybeFinalizeMatch
 } from "../../db/duels";
 import { addXpForDuelMatch } from "../../db/xp";
+import { CB_PREFIX } from "../../config/constants"; // Import added
 
 export async function startDuelEasyForUser(env: Env, update: TelegramUpdate): Promise<void> {
   await startDuelForUser(env, update, "easy");
@@ -36,11 +37,9 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
 
   const user = await getOrCreateUser(env, tgUser);
 
-  // سعی کن یک مچ منتظر حریف پیدا کنی
   let match = await findWaitingMatch(env, difficulty, user.id);
 
   if (!match) {
-    // مچ جدید بساز
     match = await createDuelMatch(env, difficulty, user.id);
     await ensureDuelQuestions(env, match.id, difficulty);
 
@@ -56,16 +55,14 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
 
     const introText =
       difficulty === "easy"
-        ? "یک دوئل آسان برات شروع شد. به ۵ سوال جواب بده؛ وقتی حریف پیدا بشه، نتیجه‌تون مقایسه می‌شه ⚔️"
-        : "یک دوئل سخت برات شروع شد. به ۵ سوال جواب بده؛ وقتی حریف پیدا بشه، نتیجه‌تون مقایسه می‌شه 🔥";
+        ? "یک دوئل آسان برات شروع شد. به سوال‌ها جواب بده؛ وقتی حریف پیدا بشه، نتیجه‌تون مقایسه می‌شه ⚔️"
+        : "یک دوئل سخت برات شروع شد. به سوال‌ها جواب بده؛ وقتی حریف پیدا بشه، نتیجه‌تون مقایسه می‌شه 🔥";
 
     await sendMessage(env, chatId, introText);
-
     await sendNextDuelQuestion(env, match.id, user, chatId);
     return;
   }
 
-  // اگر مچ پیدا شد و بازیکن دوم ندارد، واردش شو
   if (!match.player2_id) {
     match = await joinDuelMatch(env, match.id, user.id);
   }
@@ -89,7 +86,6 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
 
   await sendMessage(env, chatId, introText2);
 
-  // به بازیکن اول هم خبر بده (اگر خودش نباشد)
   const opponentId = match.player1_id === user.id ? match.player2_id : match.player1_id;
   if (opponentId) {
     const opp = await getUserById(env, opponentId);
@@ -103,11 +99,9 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
     }
   }
 
-  // برای کاربر فعلی هم سوال بعدی را بفرست
   await sendNextDuelQuestion(env, match.id, user, chatId);
 }
 
-// ارسال سوال بعدی برای یک بازیکن در یک دوئل
 async function sendNextDuelQuestion(
   env: Env,
   duelId: number,
@@ -137,28 +131,17 @@ async function sendNextDuelQuestion(
   const replyMarkup = {
     inline_keyboard: [
       [
-        {
-          text: q.option_a,
-          callback_data: `duel:${duelId}:${q.duel_question_id}:A`
-        }
+        // d:<duelId>:<qId>:A
+        { text: q.option_a, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:A` }
       ],
       [
-        {
-          text: q.option_b,
-          callback_data: `duel:${duelId}:${q.duel_question_id}:B`
-        }
+        { text: q.option_b, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:B` }
       ],
       [
-        {
-          text: q.option_c,
-          callback_data: `duel:${duelId}:${q.duel_question_id}:C`
-        }
+        { text: q.option_c, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:C` }
       ],
       [
-        {
-          text: q.option_d,
-          callback_data: `duel:${duelId}:${q.duel_question_id}:D`
-        }
+        { text: q.option_d, callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:D` }
       ]
     ]
   };
@@ -167,12 +150,12 @@ async function sendNextDuelQuestion(
   return true;
 }
 
-// هندل کردن کلیک روی گزینه‌های دوئل
 export async function handleDuelAnswerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
-  const parts = data.split(":"); // duel:<duelId>:<duelQuestionId>:<option>
-
-  if (parts.length !== 4 || parts[0] !== "duel") {
+  const parts = data.split(":"); 
+  
+  // d:<duelId>:<qId>:<opt>
+  if (parts.length !== 4 || parts[0] !== CB_PREFIX.DUEL) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
@@ -215,7 +198,6 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
 
   const isCorrect = chosenOption === q.correct_option;
 
-  // ثبت جواب
   await recordDuelAnswer(env, duelId, duelQuestionId, user.id, chosenOption, isCorrect);
 
   await answerCallbackQuery(env, callbackQuery.id);
@@ -248,14 +230,10 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     return;
   }
 
-  // کاربر همه سوال‌ها رو جواب داده
   const userCorrect = await getUserCorrectCountInMatch(env, duelId, user.id);
-
-  // سعی کن مچ رو نهایی کنی (اگر حریف هم تمام کرده باشد)
   const finalizeResult = await maybeFinalizeMatch(env, duelId);
 
   if (!finalizeResult) {
-    // هنوز حریف کارش را تمام نکرده
     const msg =
       `تو دوئل رو تموم کردی ✅\n` +
       `تعداد پاسخ‌های درست تو: <b>${userCorrect}</b> از <b>${totalQ}</b>\n` +
@@ -264,54 +242,30 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     return;
   }
 
-  // اگر اینجا هستیم، یعنی این بازیکن آخرین نفر بود و مچ کامل شد
-  const { totalQuestions, player1Correct, player2Correct, winnerUserId, isDraw, match: finalMatch } =
-    finalizeResult;
+  const { totalQuestions, player1Correct, player2Correct, winnerUserId, isDraw, match: finalMatch } = finalizeResult;
 
   const player1 = await getUserById(env, finalMatch.player1_id);
   const player2 = finalMatch.player2_id ? await getUserById(env, finalMatch.player2_id) : null;
 
   if (player1) {
     let result: "win" | "draw" | "lose" = "draw";
-    if (isDraw === 1) {
-      result = "draw";
-    } else if (winnerUserId === player1.id) {
-      result = "win";
-    } else {
-      result = "lose";
-    }
+    if (isDraw === 1) result = "draw";
+    else if (winnerUserId === player1.id) result = "win";
+    else result = "lose";
 
     const xp = await addXpForDuelMatch(env, player1.id, finalMatch.id, player1Correct, totalQuestions, result);
-    const text = buildDuelSummaryText(
-      result,
-      player1Correct,
-      player2Correct,
-      totalQuestions,
-      xp,
-      player2
-    );
+    const text = buildDuelSummaryText(result, player1Correct, player2Correct, totalQuestions, xp, player2);
     await sendMessage(env, player1.telegram_id, text);
   }
 
   if (player2) {
     let result: "win" | "draw" | "lose" = "draw";
-    if (isDraw === 1) {
-      result = "draw";
-    } else if (winnerUserId === player2.id) {
-      result = "win";
-    } else {
-      result = "lose";
-    }
+    if (isDraw === 1) result = "draw";
+    else if (winnerUserId === player2.id) result = "win";
+    else result = "lose";
 
     const xp = await addXpForDuelMatch(env, player2.id, finalMatch.id, player2Correct, totalQuestions, result);
-    const text = buildDuelSummaryText(
-      result,
-      player2Correct,
-      player1Correct,
-      totalQuestions,
-      xp,
-      player1
-    );
+    const text = buildDuelSummaryText(result, player2Correct, player1Correct, totalQuestions, xp, player1);
     await sendMessage(env, player2.telegram_id, text);
   }
 }
@@ -321,16 +275,11 @@ function getOptionText(
   letter: string
 ): string {
   switch (letter) {
-    case "A":
-      return q.option_a;
-    case "B":
-      return q.option_b;
-    case "C":
-      return q.option_c;
-    case "D":
-      return q.option_d;
-    default:
-      return "";
+    case "A": return q.option_a;
+    case "B": return q.option_b;
+    case "C": return q.option_c;
+    case "D": return q.option_d;
+    default: return "";
   }
 }
 
