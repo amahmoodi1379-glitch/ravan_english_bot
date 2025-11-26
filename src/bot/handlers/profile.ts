@@ -11,6 +11,7 @@ import {
   ActivityPeriod,
   ActivityStats
 } from "../../db/profile";
+import { CB_PREFIX } from "../../config/constants"; // Import added
 
 const AVATARS: { code: string; emoji: string; label: string }[] = [
   { code: "cat", emoji: "😺", label: "گربه" },
@@ -97,7 +98,8 @@ export async function showProfileSettings(env: Env, update: TelegramUpdate): Pro
     inlineRows.push(
       slice.map((a) => ({
         text: `${a.emoji} ${a.label}`,
-        callback_data: `avatar:${a.code}`
+        // av:<code>
+        callback_data: `${CB_PREFIX.AVATAR}:${a.code}`
       }))
     );
   }
@@ -116,7 +118,8 @@ export async function handleAvatarCallback(
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
 
-  if (parts.length !== 2 || parts[0] !== "avatar") {
+  // av:<code>
+  if (parts.length !== 2 || parts[0] !== CB_PREFIX.AVATAR) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
@@ -220,10 +223,11 @@ export async function startProfileStats(env: Env, update: TelegramUpdate): Promi
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: "امروز", callback_data: "stats:day" }],
-          [{ text: "۷ روز اخیر", callback_data: "stats:week" }],
-          [{ text: "۳۰ روز اخیر", callback_data: "stats:month" }],
-          [{ text: "همه‌ی زمان‌ها", callback_data: "stats:all" }]
+          // st:<period>
+          [{ text: "امروز", callback_data: `${CB_PREFIX.STATS}:day` }],
+          [{ text: "۷ روز اخیر", callback_data: `${CB_PREFIX.STATS}:week` }],
+          [{ text: "۳۰ روز اخیر", callback_data: `${CB_PREFIX.STATS}:month` }],
+          [{ text: "همه‌ی زمان‌ها", callback_data: `${CB_PREFIX.STATS}:all` }]
         ]
       }
     }
@@ -232,14 +236,10 @@ export async function startProfileStats(env: Env, update: TelegramUpdate): Promi
 
 function periodLabel(period: ActivityPeriod): string {
   switch (period) {
-    case "day":
-      return "امروز";
-    case "week":
-      return "۷ روز اخیر";
-    case "month":
-      return "۳۰ روز اخیر";
-    case "all":
-      return "همه‌ی زمان‌ها";
+    case "day": return "امروز";
+    case "week": return "۷ روز اخیر";
+    case "month": return "۳۰ روز اخیر";
+    case "all": return "همه‌ی زمان‌ها";
   }
 }
 
@@ -264,7 +264,8 @@ export async function handleStatsCallback(
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
 
-  if (parts.length !== 2 || parts[0] !== "stats") {
+  // st:<period>
+  if (parts.length !== 2 || parts[0] !== CB_PREFIX.STATS) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
