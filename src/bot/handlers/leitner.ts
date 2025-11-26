@@ -7,6 +7,7 @@ import {
   pickNextWordForUser,
   getOrCreateUserWordState,
   updateSm2AndStageAfterAnswer,
+  markWordAsIgnored, // اضافه شد
   DbWord
 } from "../../db/leitner";
 import { addXpForLeitnerQuestion } from "../../db/xp";
@@ -14,7 +15,7 @@ import { generateWordQuestionsWithGemini } from "../../ai/gemini";
 import { insertWordQuestions } from "../../db/word_questions";
 
 
-// شکل سوالی که برای لایتنر می‌گیریم (همراه با انگلیسی/فارسی واژه)
+// شکل سوالی که برای لایتنر می‌گیریم
 interface LeitnerQuestionRow {
   id: number;
   word_id: number;
@@ -27,7 +28,7 @@ interface LeitnerQuestionRow {
   question_style: string;
   english: string;
   persian: string;
-  level: number; // سطح واژه (۱ تا ۴)
+  level: number;
 }
 
 // مپ stage → question_style
@@ -50,19 +51,17 @@ export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Pro
   const chatId = message.chat.id;
   const tgUser = message.from;
 
-  // 1) کاربر را در دیتابیس ثبت/آپدیت می‌کنیم
   const user = await getOrCreateUser(env, tgUser);
-
-  // 2) یک سوال برایش می‌فرستیم
   await sendLeitnerQuestion(env, user, chatId);
 }
 
+// گرفتن و ارسال یک سوال لایتنر برای کاربر
 async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Promise<void> {
   // 1) انتخاب واژه‌ی بعدی برای این کاربر
   const word = await pickNextWordForUser(env, user.id);
 
   if (!word) {
-    await sendMessage(env, chatId, "فعلاً هیچ واژه‌ای برای تمرین در سیستم ثبت نشده ❗️");
+    await sendMessage(env, chatId, "فعلاً هیچ واژه‌ای برای تمرین در سیستم ثبت نشده (یا همه رو بلدی!) 👏");
     return;
   }
 
@@ -74,24 +73,20 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   // 3) انتخاب سوال مناسب از بانک سوال‌ها
   let question = await pickQuestionForUserWord(env, user, word, desiredStyle);
 
-  // --- NEW: اگر سوالی پیدا نشد، همان لحظه بساز ---
+  // اگر سوالی نبود، بسازیم
   if (!question) {
-    // یک پیام "در حال ساخت" بدهیم چون AI ممکن است چند ثانیه طول بکشد
     await sendMessage(env, chatId, "⏳ در حال طراحی سوال جدید با هوش مصنوعی...");
-
     try {
-      // درخواست به جمینای برای ساخت 2 سوال با استایل مورد نظر
       const aiQuestions = await generateWordQuestionsWithGemini({
         env,
         english: word.english,
         persian: word.persian,
         level: word.level,
         questionStyle: desiredStyle,
-        count: 2 
+        count: 2
       });
 
       if (aiQuestions.length > 0) {
-        // ذخیره در دیتابیس
         await insertWordQuestions(
           env,
           word.id,
@@ -104,15 +99,13 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
             questionStyle: desiredStyle
           }))
         );
-
-        // تلاش مجدد برای گرفتن سوال از دیتابیس
+        // دوباره سعی کن سوال را بخوانی
         question = await pickQuestionForUserWord(env, user, word, desiredStyle);
       }
     } catch (error) {
       console.error("Error auto-generating questions:", error);
     }
   }
-  // ---------------------------------------------
 
   if (!question) {
     await sendMessage(
@@ -125,7 +118,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
 
   const now = new Date().toISOString();
 
-  // 4) ثبت در تاریخچه که این سوال را نشان داده‌ایم
+  // 4) ثبت در تاریخچه
   await execute(
     env,
     `
@@ -136,13 +129,15 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     [user.id, question.word_id, question.id, now]
   );
 
-  // 5) ساخت inline keyboard برای گزینه‌ها
+  // 5) ساخت inline keyboard
   const replyMarkup = {
     inline_keyboard: [
       [{ text: question.option_a, callback_data: `leitner:${question.id}:A` }],
       [{ text: question.option_b, callback_data: `leitner:${question.id}:B` }],
       [{ text: question.option_c, callback_data: `leitner:${question.id}:C` }],
-      [{ text: question.option_d, callback_data: `leitner:${question.id}:D` }]
+      [{ text: question.option_d, callback_data: `leitner:${question.id}:D` }],
+      // دکمه جدید: بلدم
+      [{ text: "✅ بلدم (حذف از مرور)", callback_data: `leitner:ignore:${question.id}` }]
     ]
   };
 
@@ -153,14 +148,14 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   });
 }
 
-// انتخاب سوال برای یک (user, word) با در نظر گرفتن question_style و تاریخچه
+// انتخاب سوال برای یک (user, word)
 async function pickQuestionForUserWord(
   env: Env,
   user: DbUser,
   word: DbWord,
   desiredStyle: string
 ): Promise<LeitnerQuestionRow | null> {
-  // 1) سوال‌هایی با style مورد نظر که این کاربر در context='leitner' ندیده
+  // 1) سوال‌هایی با style مورد نظر که کاربر ندیده
   let q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -196,7 +191,7 @@ async function pickQuestionForUserWord(
 
   if (q) return q;
 
-  // 2) اگر سوال ندیده با این style نداریم، هر سوالی با این style (حتی دیده‌شده) را امتحان می‌کنیم
+  // 2) سوال با style مورد نظر (حتی اگر دیده)
   q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -225,7 +220,7 @@ async function pickQuestionForUserWord(
 
   if (q) return q;
 
-  // 3) اگر اصلاً سوالی با این style نیست، سعی می‌کنیم هر سوالی از این واژه که هنوز ندیده را بگیریم
+  // 3) هر سوالی که ندیده
   q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -260,7 +255,7 @@ async function pickQuestionForUserWord(
 
   if (q) return q;
 
-  // 4) آخرین تلاش: هر سوالی برای این واژه (حتی تکراری)
+  // 4) هر سوالی
   q = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -294,33 +289,71 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
 
+  // فرمت جدید: leitner:ignore:<questionId>
+  if (parts.length === 3 && parts[1] === "ignore") {
+    const questionId = Number(parts[2]);
+    if (!Number.isFinite(questionId)) {
+      await answerCallbackQuery(env, callbackQuery.id);
+      return;
+    }
+
+    const message = callbackQuery.message;
+    if (!message) {
+      await answerCallbackQuery(env, callbackQuery.id);
+      return;
+    }
+    const chatId = message.chat.id;
+    const tgUser = callbackQuery.from;
+    const user = await getOrCreateUser(env, tgUser);
+
+    // پیدا کردن word_id از روی سوال
+    const question = await queryOne<{ word_id: number; english: string }>(
+      env,
+      `
+      SELECT q.word_id, w.english
+      FROM word_questions q
+      JOIN words w ON w.id = q.word_id
+      WHERE q.id = ?
+      `,
+      [questionId]
+    );
+
+    if (question) {
+      await markWordAsIgnored(env, user.id, question.word_id);
+      await answerCallbackQuery(env, callbackQuery.id, "واژه حذف شد 👌");
+      await sendMessage(env, chatId, `واژه‌ی <b>${question.english}</b> از چرخه مرور حذف شد ✅`);
+    } else {
+      await answerCallbackQuery(env, callbackQuery.id, "خطا در یافتن واژه");
+    }
+
+    // سوال بعدی
+    await sendLeitnerQuestion(env, user, chatId);
+    return;
+  }
+
+  // فرمت استاندارد: leitner:<questionId>:<option>
   if (parts.length !== 3 || parts[0] !== "leitner") {
-    // داده‌ای که انتظارش را نداشتیم
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
 
   const questionId = Number(parts[1]);
-  const chosenOption = parts[2]; // 'A' | 'B' | 'C' | 'D'
+  const chosenOption = parts[2];
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
 
-  // باید حتماً کاربر و چت را داشته باشیم
-  const tgUser = callbackQuery.from;
   const message = callbackQuery.message;
   if (!message) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
   const chatId = message.chat.id;
-
-  // کاربر از دیتابیس
+  const tgUser = callbackQuery.from;
   const user = await getOrCreateUser(env, tgUser);
 
-  // سوال از دیتابیس
   const question = await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -346,14 +379,12 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
 
   if (!question) {
     await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد ❗️");
-    await sendMessage(env, chatId, "این سوال دیگر در سیستم وجود ندارد.");
     return;
   }
 
   const isCorrect = chosenOption === question.correct_option;
   const now = new Date().toISOString();
 
-  // به‌روزرسانی تاریخچه سوال
   await execute(
     env,
     `
@@ -364,34 +395,22 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     [isCorrect ? 1 : 0, now, user.id, question.id]
   );
 
-  // به‌روزرسانی SM2 و question_stage برای این واژه و کاربر
   await updateSm2AndStageAfterAnswer(env, user.id, question.word_id, isCorrect);
-  
-    // اضافه کردن XP بر اساس سطح واژه
   await addXpForLeitnerQuestion(env, user.id, question.word_id, question.level, isCorrect);
 
-
-  // پاسخ به callback تا لودینگ تلگرام متوقف شود
   await answerCallbackQuery(env, callbackQuery.id);
 
-  // متن گزینه‌ی درست را پیدا کنیم
   const getOptionText = (letter: string): string => {
     switch (letter) {
-      case "A":
-        return question.option_a;
-      case "B":
-        return question.option_b;
-      case "C":
-        return question.option_c;
-      case "D":
-        return question.option_d;
-      default:
-        return "";
+      case "A": return question.option_a;
+      case "B": return question.option_b;
+      case "C": return question.option_c;
+      case "D": return question.option_d;
+      default: return "";
     }
   };
 
   const correctText = getOptionText(question.correct_option);
-
   let replyText: string;
 
   if (isCorrect) {
@@ -401,7 +420,5 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
   }
 
   await sendMessage(env, chatId, replyText);
-
-  // برای راحتی، بلافاصله یک سوال دیگر هم می‌فرستیم
   await sendLeitnerQuestion(env, user, chatId);
 }
