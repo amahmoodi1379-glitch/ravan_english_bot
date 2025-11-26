@@ -14,8 +14,9 @@ async function callGemini(env: Env, prompt: string): Promise<string> {
     throw new Error("GEMINI_API_KEY is not set");
   }
 
+  // CHANGE: Changed model from "gemini-1.5-flash" to "gemini-1.5-flash-001"
   const url =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" +
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=" +
     encodeURIComponent(apiKey);
 
   const resp = await fetch(url, {
