@@ -1,0 +1,331 @@
+import { Env } from "../../types";
+import { TelegramUpdate, TelegramCallbackQuery } from "../router";
+import { sendMessage, answerCallbackQuery } from "../telegram-api";
+import { getProfileMenuKeyboard } from "../keyboards";
+import { getOrCreateUser } from "../../db/users";
+import {
+  getUserProfile,
+  updateDisplayName,
+  setAvatar,
+  getUserActivityStats,
+  ActivityPeriod,
+  ActivityStats
+} from "../../db/profile";
+
+const AVATARS: { code: string; emoji: string; label: string }[] = [
+  { code: "cat", emoji: "😺", label: "گربه" },
+  { code: "fox", emoji: "🦊", label: "روباه" },
+  { code: "owl", emoji: "🦉", label: "جغد" },
+  { code: "panda", emoji: "🐼", label: "پاندا" },
+  { code: "lion", emoji: "🦁", label: "شیر" },
+  { code: "robot", emoji: "🤖", label: "ربات" }
+];
+
+function getAvatarEmoji(code: string | null | undefined): string {
+  const found = AVATARS.find((a) => a.code === code);
+  return found ? found.emoji : "🙂";
+}
+
+function getAvatarLabel(code: string | null | undefined): string {
+  const found = AVATARS.find((a) => a.code === code);
+  return found ? found.label : "پیش‌فرض";
+}
+
+export async function showProfileHome(env: Env, update: TelegramUpdate): Promise<void> {
+  const message = update.message;
+  if (!message || !message.from) return;
+
+  const chatId = message.chat.id;
+  const tgUser = message.from;
+
+  const user = await getOrCreateUser(env, tgUser);
+  const profile = await getUserProfile(env, user.id);
+
+  const displayName =
+    profile?.display_name ||
+    user.first_name ||
+    user.username ||
+    `user_${user.id}`;
+
+  const xpTotal = profile?.xp_total ?? 0;
+  const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
+
+  const text =
+    `👤 پروفایل تو:\n\n` +
+    `نام نمایشی: <b>${displayName}</b>\n` +
+    `XP کلی: <b>${xpTotal}</b>\n` +
+    `آواتار فعلی: ${avatarEmoji}\n\n` +
+    `از منوی زیر یکی از گزینه‌های پروفایل رو انتخاب کن.`;
+
+  await sendMessage(env, chatId, text, {
+    reply_markup: getProfileMenuKeyboard()
+  });
+}
+
+export async function showProfileSettings(env: Env, update: TelegramUpdate): Promise<void> {
+  const message = update.message;
+  if (!message || !message.from) return;
+
+  const chatId = message.chat.id;
+  const tgUser = message.from;
+
+  const user = await getOrCreateUser(env, tgUser);
+  const profile = await getUserProfile(env, user.id);
+
+  const displayName =
+    profile?.display_name ||
+    user.first_name ||
+    user.username ||
+    `user_${user.id}`;
+
+  const remainingChanges = Math.max(0, 3 - (profile?.name_change_count ?? 0));
+  const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
+  const avatarLabel = getAvatarLabel(profile?.avatar_code);
+
+  const text =
+    `⚙️ تنظیمات پروفایل\n\n` +
+    `نام نمایشی فعلی: <b>${displayName}</b>\n` +
+    `تعداد تغییرات نام باقی‌مانده: <b>${remainingChanges}</b> از 3\n\n` +
+    `برای تغییر نام نمایشی، دستور زیر را ارسال کن:\n` +
+    `<code>/setname نام_جدید</code>\n\n` +
+    `آواتار فعلی: ${avatarEmoji} (${avatarLabel})\n` +
+    `برای تغییر آواتار، یکی از گزینه‌های زیر را انتخاب کن:`;
+
+  const inlineRows: any[][] = [];
+  for (let i = 0; i < AVATARS.length; i += 3) {
+    const slice = AVATARS.slice(i, i + 3);
+    inlineRows.push(
+      slice.map((a) => ({
+        text: `${a.emoji} ${a.label}`,
+        callback_data: `avatar:${a.code}`
+      }))
+    );
+  }
+
+  await sendMessage(env, chatId, text, {
+    reply_markup: {
+      inline_keyboard: inlineRows
+    }
+  });
+}
+
+export async function handleAvatarCallback(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery
+): Promise<void> {
+  const data = callbackQuery.data ?? "";
+  const parts = data.split(":");
+
+  if (parts.length !== 2 || parts[0] !== "avatar") {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const code = parts[1];
+  const avatar = AVATARS.find((a) => a.code === code);
+  if (!avatar) {
+    await answerCallbackQuery(env, callbackQuery.id, "آواتار نامعتبر است.");
+    return;
+  }
+
+  const message = callbackQuery.message;
+  if (!message) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const chatId = message.chat.id;
+  const tgUser = callbackQuery.from;
+  const user = await getOrCreateUser(env, tgUser);
+
+  await setAvatar(env, user.id, code);
+
+  await answerCallbackQuery(env, callbackQuery.id, "آواتار به‌روزرسانی شد ✅");
+
+  const text = `آواتارت تغییر کرد به ${avatar.emoji} ${avatar.label} ✅`;
+  await sendMessage(env, chatId, text, {
+    reply_markup: getProfileMenuKeyboard()
+  });
+}
+
+export async function handleSetDisplayNameCommand(
+  env: Env,
+  update: TelegramUpdate
+): Promise<void> {
+  const message = update.message;
+  if (!message || !message.from || !message.text) return;
+
+  const chatId = message.chat.id;
+  const tgUser = message.from;
+  const user = await getOrCreateUser(env, tgUser);
+
+  const fullText = message.text.trim();
+  const parts = fullText.split(" ");
+  const newName = parts.slice(1).join(" ").trim();
+
+  if (!newName) {
+    await sendMessage(
+      env,
+      chatId,
+      "برای تغییر نام، بعد از دستور /setname نام جدید رو بنویس.\nمثلاً:\n<code>/setname علی</code>"
+    );
+    return;
+  }
+
+  if (newName.length > 32) {
+    await sendMessage(env, chatId, "نام جدید خیلی طولانیه. حداکثر ۳۲ کاراکتر باشه.");
+    return;
+  }
+
+  const result = await updateDisplayName(env, user.id, newName);
+
+  if (!result.ok) {
+    if (result.reason === "limit") {
+      await sendMessage(
+        env,
+        chatId,
+        "دیگه نمی‌تونی نام نمایشی رو عوض کنی (حداکثر ۳ بار در طول عمر حساب)."
+      );
+    } else {
+      await sendMessage(env, chatId, "در تغییر نام مشکلی پیش اومد.");
+    }
+    return;
+  }
+
+  const remaining = result.remainingChanges ?? 0;
+
+  await sendMessage(
+    env,
+    chatId,
+    `نام نمایشی‌ات به <b>${newName}</b> تغییر کرد ✅\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b> از 3.`,
+    {
+      reply_markup: getProfileMenuKeyboard()
+    }
+  );
+}
+
+export async function startProfileStats(env: Env, update: TelegramUpdate): Promise<void> {
+  const message = update.message;
+  if (!message || !message.from) return;
+
+  const chatId = message.chat.id;
+  const tgUser = message.from;
+
+  await getOrCreateUser(env, tgUser);
+
+  await sendMessage(
+    env,
+    chatId,
+    "برای دیدن آمار فعالیت، بازه‌ی زمانی رو انتخاب کن:",
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "امروز", callback_data: "stats:day" }],
+          [{ text: "۷ روز اخیر", callback_data: "stats:week" }],
+          [{ text: "۳۰ روز اخیر", callback_data: "stats:month" }],
+          [{ text: "همه‌ی زمان‌ها", callback_data: "stats:all" }]
+        ]
+      }
+    }
+  );
+}
+
+function periodLabel(period: ActivityPeriod): string {
+  switch (period) {
+    case "day":
+      return "امروز";
+    case "week":
+      return "۷ روز اخیر";
+    case "month":
+      return "۳۰ روز اخیر";
+    case "all":
+      return "همه‌ی زمان‌ها";
+  }
+}
+
+function buildStatsText(stats: ActivityStats): string {
+  const label = periodLabel(stats.period);
+
+  let text =
+    `📈 آمار فعالیت تو در بازه ${label}:\n\n` +
+    `سوال‌های لایتنر: <b>${stats.leitner_questions}</b>\n` +
+    `ست‌های تست درک مطلب: <b>${stats.reading_sets}</b>\n` +
+    `دوئل‌ها: <b>${stats.duels}</b>\n` +
+    `تمرین‌های برداشت از متن: <b>${stats.reflections}</b>\n` +
+    `\nXP این بازه: <b>${stats.xp}</b>`;
+
+  return text;
+}
+
+export async function handleStatsCallback(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery
+): Promise<void> {
+  const data = callbackQuery.data ?? "";
+  const parts = data.split(":");
+
+  if (parts.length !== 2 || parts[0] !== "stats") {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const period = parts[1] as ActivityPeriod;
+  if (!["day", "week", "month", "all"].includes(period)) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const message = callbackQuery.message;
+  if (!message) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const chatId = message.chat.id;
+  const tgUser = callbackQuery.from;
+  const user = await getOrCreateUser(env, tgUser);
+
+  const stats = await getUserActivityStats(env, user.id, period);
+
+  await answerCallbackQuery(env, callbackQuery.id);
+
+  const text = buildStatsText(stats);
+  await sendMessage(env, chatId, text);
+}
+
+export async function showProfileSummary(env: Env, update: TelegramUpdate): Promise<void> {
+  const message = update.message;
+  if (!message || !message.from) return;
+
+  const chatId = message.chat.id;
+  const tgUser = message.from;
+
+  const user = await getOrCreateUser(env, tgUser);
+  const profile = await getUserProfile(env, user.id);
+
+  const displayName =
+    profile?.display_name ||
+    user.first_name ||
+    user.username ||
+    `user_${user.id}`;
+
+  const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
+  const xpTotal = profile?.xp_total ?? 0;
+
+  const createdAt = profile?.created_at ?? "";
+  const createdDate = createdAt ? createdAt.substring(0, 10) : "-";
+  const lastSeen = profile?.last_seen_at ?? "";
+  const lastSeenDate = lastSeen ? lastSeen.substring(0, 10) : "-";
+
+  const text =
+    `🪪 خلاصه پروفایل:\n\n` +
+    `نام نمایشی: <b>${displayName}</b>\n` +
+    `XP کلی: <b>${xpTotal}</b>\n` +
+    `آواتار: ${avatarEmoji}\n` +
+    `تاریخ عضویت (UTC): <b>${createdDate}</b>\n` +
+    `آخرین فعالیت ثبت‌شده (UTC): <b>${lastSeenDate}</b>`;
+
+  await sendMessage(env, chatId, text, {
+    reply_markup: getProfileMenuKeyboard()
+  });
+}
