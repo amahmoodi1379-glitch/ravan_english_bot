@@ -2,8 +2,6 @@ import { Env } from "./types";
 import { handleTelegramUpdate, TelegramUpdate } from "./bot/router";
 import { queryAll, queryOne, execute } from "./db/client";
 import { getAllActiveReadingTexts } from "./db/texts";
-import { generateWordQuestionsWithGemini } from "./ai/gemini";
-import { insertWordQuestions } from "./db/word_questions";
 
 function htmlResponse(html: string, status: number = 200): Response {
   return new Response(html, {
@@ -20,6 +18,7 @@ function redirect(location: string): Response {
 }
 
 function escapeHtml(str: string): string {
+  if (!str) return "";
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -75,17 +74,23 @@ function renderAdminLayout(title: string, content: string, section: string = "")
     th, td { border:1px solid #e0e0e0; padding:6px 8px; font-size:13px; text-align:right; }
     th { background:#fafafa; }
     input[type="text"], input[type="number"], input[type="password"], textarea, select {
-      width:100%; padding:6px 8px; margin:4px 0 10px; border-radius:6px; border:1px solid #ccc; font-size:13px;
+      width:100%; padding:6px 8px; margin:4px 0 10px; border-radius:6px; border:1px solid #ccc; font-size:13px; box-sizing: border-box;
     }
     textarea { min_height:160px; font-family:inherit; }
     button { padding:6px 12px; border-radius:6px; border:none; background:#2563eb; color:#fff; cursor:pointer; font-size:13px; }
     button.secondary { background:#6b7280; }
-    .actions a { margin-right:6px; font-size:12px; }
+    button.danger { background:#dc2626; }
+    .actions a { margin-right:6px; font-size:12px; text-decoration: none; color: #2563eb; }
     .badge { display:inline-block; padding:2px 6px; border-radius:999px; font-size:11px; background:#e5e7eb; }
     .badge.active { background:#dcfce7; color:#166534; }
     .badge.inactive { background:#fee2e2; color:#b91c1c; }
     .error { background:#fee2e2; color:#b91c1c; padding:8px 10px; border-radius:6px; margin-bottom:10px; font-size:13px; }
-    .top-row { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+    .top-row { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom: 10px;}
+    .q-box { border: 1px solid #eee; padding: 10px; border-radius: 8px; margin-bottom: 10px; background: #fafafa; }
+    .q-meta { font-size: 11px; color: #666; margin-bottom: 4px; }
+    .q-text { font-weight: bold; margin-bottom: 6px; }
+    .q-opt { font-size: 12px; margin-right: 10px; }
+    .q-correct { color: #166534; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -120,55 +125,6 @@ export default {
 
       ctx.waitUntil(handleTelegramUpdate(env, update));
       return new Response("OK", { status: 200 });
-    }
-
-    // Debug: words
-    if (request.method === "GET" && url.pathname === "/debug/db") {
-      try {
-        const words = await queryAll(
-          env,
-          "SELECT id, english, persian, level FROM words ORDER BY id LIMIT 20"
-        );
-        return new Response(JSON.stringify(words, null, 2), {
-          status: 200,
-          headers: { "content-type": "application/json; charset=utf-8" }
-        });
-      } catch (err: any) {
-        return new Response("DB error: " + String(err), { status: 500 });
-      }
-    }
-
-    // Debug: reading texts
-    if (request.method === "GET" && url.pathname === "/debug/reading-texts") {
-      try {
-        const texts = await getAllActiveReadingTexts(env);
-        return new Response(JSON.stringify(texts, null, 2), {
-          status: 200,
-          headers: { "content-type": "application/json; charset=utf-8" }
-        });
-      } catch (err: any) {
-        return new Response("Reading DB error: " + String(err), { status: 500 });
-      }
-    }
-
-    // Debug: users
-    if (request.method === "GET" && url.pathname === "/debug/users") {
-      try {
-        const users = await queryAll(
-          env,
-          `
-          SELECT id, telegram_id, display_name, xp_total
-          FROM users
-          ORDER BY id ASC
-          `
-        );
-        return new Response(JSON.stringify(users, null, 2), {
-          status: 200,
-          headers: { "content-type": "application/json; charset=utf-8" }
-        });
-      } catch (err: any) {
-        return new Response("Users DB error: " + String(err), { status: 500 });
-      }
     }
 
     // Admin: login page
@@ -263,6 +219,7 @@ export default {
               <td><span class="${badgeClass}">${badgeText}</span></td>
               <td class="actions">
                 <a href="/admin/words/edit?id=${w.id}">ویرایش</a>
+                <a href="/admin/words/questions?word_id=${w.id}">سوالات</a>
               </td>
             </tr>
           `;
@@ -271,10 +228,8 @@ export default {
 
       const content = `
         <div class="top-row">
-          <form method="get" action="/admin/words">
-            <input type="text" name="q" placeholder="جستجو بر اساس واژه / معنی / درس" value="${escapeHtml(
-              search
-            )}" />
+          <form method="get" action="/admin/words" style="flex:1; display:flex; gap:8px;">
+            <input type="text" name="q" placeholder="جستجو..." value="${escapeHtml(search)}" style="margin:0; max-width:200px;" />
             <button type="submit" class="secondary">جستجو</button>
           </form>
           <div>
@@ -303,6 +258,83 @@ export default {
       `;
 
       return htmlResponse(renderAdminLayout("مدیریت واژه‌ها", content, "words"));
+    }
+
+    // Admin: مدیریت سوالات یک واژه (NEW)
+    if (request.method === "GET" && url.pathname === "/admin/words/questions") {
+      if (!isAdminAuthed(request)) {
+        return redirect("/admin");
+      }
+
+      const wordIdParam = url.searchParams.get("word_id");
+      const wordId = wordIdParam ? Number(wordIdParam) : 0;
+      if (!wordId) return htmlResponse("شناسه واژه نامعتبر است.", 400);
+
+      const word = await queryOne<any>(env, "SELECT * FROM words WHERE id = ?", [wordId]);
+      if (!word) return htmlResponse("واژه پیدا نشد.", 404);
+
+      const questions = await queryAll<any>(
+        env, 
+        "SELECT * FROM word_questions WHERE word_id = ? ORDER BY id DESC", 
+        [wordId]
+      );
+
+      let questionsHtml = "";
+      if (questions.length === 0) {
+        questionsHtml = "<p>هنوز سوالی برای این واژه ثبت نشده است.</p>";
+      } else {
+        questionsHtml = questions.map((q: any) => {
+          const correctText = q[`option_${q.correct_option.toLowerCase()}`];
+          return `
+            <div class="q-box">
+              <div class="q-meta">
+                ID: ${q.id} | Style: ${q.question_style} | Source: ${q.source} | Created: ${q.created_at.substring(0, 10)}
+              </div>
+              <div class="q-text">${escapeHtml(q.question_text)}</div>
+              <div>
+                <span class="q-opt ${q.correct_option === 'A' ? 'q-correct' : ''}">A) ${escapeHtml(q.option_a)}</span>
+                <span class="q-opt ${q.correct_option === 'B' ? 'q-correct' : ''}">B) ${escapeHtml(q.option_b)}</span>
+                <span class="q-opt ${q.correct_option === 'C' ? 'q-correct' : ''}">C) ${escapeHtml(q.option_c)}</span>
+                <span class="q-opt ${q.correct_option === 'D' ? 'q-correct' : ''}">D) ${escapeHtml(q.option_d)}</span>
+              </div>
+              <div style="margin-top:8px; border-top:1px dashed #ddd; padding-top:6px; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:11px; color:#555;">توضیح: ${escapeHtml(q.explanation_text || "-")}</span>
+                <form method="post" action="/admin/words/questions/delete" onsubmit="return confirm('آیا مطمئنی؟');" style="margin:0;">
+                  <input type="hidden" name="id" value="${q.id}" />
+                  <input type="hidden" name="word_id" value="${wordId}" />
+                  <button type="submit" class="danger" style="padding:2px 8px; font-size:11px;">حذف</button>
+                </form>
+              </div>
+            </div>
+          `;
+        }).join("");
+      }
+
+      const content = `
+        <div style="margin-bottom:12px;">
+          <a href="/admin/words">← بازگشت به لیست واژه‌ها</a>
+        </div>
+        <h2>سوالات واژه‌ی: <span style="color:#2563eb;">${escapeHtml(word.english)}</span> (${escapeHtml(word.persian)})</h2>
+        ${questionsHtml}
+      `;
+
+      return htmlResponse(renderAdminLayout(`سوالات: ${word.english}`, content, "words"));
+    }
+
+    // Admin: حذف سوال (NEW)
+    if (request.method === "POST" && url.pathname === "/admin/words/questions/delete") {
+      if (!isAdminAuthed(request)) {
+        return redirect("/admin");
+      }
+      const form = await parseForm(request);
+      const id = Number(form.get("id"));
+      const wordId = Number(form.get("word_id"));
+
+      if (id) {
+        await execute(env, "DELETE FROM word_questions WHERE id = ?", [id]);
+      }
+
+      return redirect(`/admin/words/questions?word_id=${wordId}`);
     }
 
     // Admin: فرم ایجاد واژه جدید
@@ -354,85 +386,6 @@ export default {
 
       const content = renderWordForm(word, "ویرایش واژه");
       return htmlResponse(renderAdminLayout("ویرایش واژه", content, "words"));
-    }
-
-    // Admin: ساخت سوال با AI برای یک واژه
-    if (request.method === "GET" && url.pathname === "/admin/words/generate-questions") {
-      if (!isAdminAuthed(request)) {
-        return redirect("/admin");
-      }
-
-      const idParam = url.searchParams.get("id");
-      const id = idParam ? Number(idParam) : 0;
-      if (!id) {
-        return htmlResponse("شناسه واژه نامعتبر است.", 400);
-      }
-
-      const word = await queryOne<any>(
-        env,
-        `
-        SELECT id, english, persian, level
-        FROM words
-        WHERE id = ?
-        `,
-        [id]
-      );
-
-      if (!word) {
-        return htmlResponse("واژه پیدا نشد.", 404);
-      }
-
-      const level = Number(word.level || 1);
-      const styles = [
-        "fa_meaning",
-        "en_definition",
-        "word_from_definition",
-        "synonym",
-        "antonym",
-        "fa_to_en"
-      ];
-
-      let totalCreated = 0;
-
-      for (const style of styles) {
-        try {
-          const generated = await generateWordQuestionsWithGemini({
-            env,
-            english: word.english,
-            persian: word.persian,
-            level,
-            questionStyle: style,
-            count: 2
-          });
-
-          if (generated.length > 0) {
-            await insertWordQuestions(
-              env,
-              word.id,
-              generated.map((g) => ({
-                wordId: word.id,
-                questionText: g.question,
-                options: g.options,
-                correctIndex: g.correctIndex,
-                explanation: g.explanation,
-                questionStyle: style
-              }))
-            );
-            totalCreated += generated.length;
-          }
-        } catch (err) {
-          console.error("AI generation failed for style", style, err);
-        }
-      }
-
-      const content = `
-        <p>تعداد <b>${totalCreated}</b> سوال جدید با کمک AI برای واژه‌ی <b>${escapeHtml(
-        word.english
-      )}</b> ساخته شد.</p>
-        <p><a href="/admin/words/edit?id=${word.id}">برگشت به ویرایش واژه</a></p>
-        <p><a href="/admin/words">برگشت به لیست واژه‌ها</a></p>
-      `;
-      return htmlResponse(renderAdminLayout("نتیجه ساخت سوال با AI", content, "words"));
     }
 
     // Admin: ذخیره واژه
@@ -726,13 +679,6 @@ function renderWordForm(word: any, heading: string): string {
       <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
         <button type="submit">ذخیره</button>
         <a href="/admin/words"><button type="button" class="secondary">انصراف</button></a>
-        ${
-          word.id
-            ? `<a href="/admin/words/generate-questions?id=${word.id}">
-                 <button type="button">ساخت سوال با AI</button>
-               </a>`
-            : ""
-        }
       </div>
     </form>
   `;
