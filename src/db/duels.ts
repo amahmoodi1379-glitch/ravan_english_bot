@@ -16,8 +16,36 @@ const QUESTION_COUNT = 5;
 export async function getDuelMatchById(env: Env, id: number): Promise<DuelMatch | null> { return await queryOne<DuelMatch>(env, `SELECT * FROM duel_matches WHERE id = ?`, [id]); }
 export async function findWaitingMatch(env: Env, difficulty: DuelDifficulty, userId: number): Promise<DuelMatch | null> { return await queryOne<DuelMatch>(env, `SELECT * FROM duel_matches WHERE difficulty = ? AND status = 'waiting' AND player2_id IS NULL AND player1_id <> ? ORDER BY created_at ASC LIMIT 1`, [difficulty, userId]); }
 export async function createDuelMatch(env: Env, difficulty: DuelDifficulty, userId: number): Promise<DuelMatch> { const now = new Date().toISOString(); await execute(env, `INSERT INTO duel_matches (difficulty, status, player1_id, created_at, started_at) VALUES (?, 'waiting', ?, ?, ?)`, [difficulty, userId, now, now]); const m = await queryOne<DuelMatch>(env, `SELECT * FROM duel_matches WHERE player1_id = ? AND difficulty = ? ORDER BY id DESC LIMIT 1`, [userId, difficulty]); if (!m) throw new Error("Failed to create duel match"); return m; }
-export async function joinDuelMatch(env: Env, matchId: number, userId: number): Promise<DuelMatch> { const now = new Date().toISOString(); await execute(env, `UPDATE duel_matches SET player2_id = ?, status = 'in_progress', started_at = ? WHERE id = ?`, [userId, now, matchId]); const m = await getDuelMatchById(env, matchId); if (!m) throw new Error("Failed to join duel match"); return m; }
-export async function ensureDuelQuestions(env: Env, matchId: number, difficulty: DuelDifficulty): Promise<void> { /* ... کد قبلی ... */ 
+// ... (ایمپورت‌ها و بقیه توابع ثابت) ...
+
+export async function joinDuelMatch(
+  env: Env,
+  matchId: number,
+  userId: number
+): Promise<DuelMatch | null> {
+  const now = new Date().toISOString();
+
+  // Atomic Update: فقط اگر player2_id خالی است، آن را پر کن
+  const result = await execute(
+    env,
+    `
+    UPDATE duel_matches
+    SET player2_id = ?, status = 'in_progress', started_at = ?
+    WHERE id = ? AND player2_id IS NULL
+    `,
+    [userId, now, matchId]
+  );
+
+  // اگر هیچ ردیفی تغییر نکرد، یعنی یک نفر دیگر زودتر جوین شده
+  if (result?.meta?.changes === 0) {
+    return null;
+  }
+
+  const m = await getDuelMatchById(env, matchId);
+  if (!m) throw new Error("Failed to join duel match");
+  return m;
+}
+
   const countRow = await queryOne<{ cnt: number }>(env, `SELECT COUNT(*) AS cnt FROM duel_questions WHERE duel_id = ?`, [matchId]);
   if ((countRow?.cnt ?? 0) > 0) return;
   const levelCond = difficulty === "easy" ? "AND level IN (1, 2)" : "AND level BETWEEN 1 AND 4";
