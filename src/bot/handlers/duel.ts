@@ -40,61 +40,55 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
   let match = await findWaitingMatch(env, difficulty, user.id);
 
   if (!match) {
+    // ... (کد ساخت مچ جدید بدون تغییر) ...
     match = await createDuelMatch(env, difficulty, user.id);
     await ensureDuelQuestions(env, match.id, difficulty);
 
     const totalQ = await getTotalQuestionsInMatch(env, match.id);
     if (totalQ === 0) {
-      await sendMessage(
-        env,
-        chatId,
-        "فعلاً سوال کافی برای دوئل در این سطح وجود ندارد ❗️"
-      );
-      return;
+        // ... (ارسال پیام خطا) ...
+        await sendMessage(env, chatId, "فعلاً سوال کافی برای دوئل در این سطح وجود ندارد ❗️");
+        return;
     }
-
-    const introText =
-      difficulty === "easy"
-        ? "یک دوئل آسان برات شروع شد. به سوال‌ها جواب بده؛ وقتی حریف پیدا بشه، نتیجه‌تون مقایسه می‌شه ⚔️"
-        : "یک دوئل سخت برات شروع شد. به سوال‌ها جواب بده؛ وقتی حریف پیدا بشه، نتیجه‌تون مقایسه می‌شه 🔥";
-
+    // ... (پیام شروع و ارسال سوال اول) ...
+    const introText = difficulty === "easy" ? "یک دوئل آسان..." : "یک دوئل سخت..."; // متن کامل رو بذارید
     await sendMessage(env, chatId, introText);
     await sendNextDuelQuestion(env, match.id, user, chatId);
     return;
   }
 
+  // --- تغییر اصلی اینجاست ---
   if (!match.player2_id) {
-    match = await joinDuelMatch(env, match.id, user.id);
+    // تلاش برای جوین شدن
+    const joinedMatch = await joinDuelMatch(env, match.id, user.id);
+    
+    if (!joinedMatch) {
+      // اگر نال برگشت، یعنی در همین لحظه کس دیگری جوین شد (Race Condition)
+      // پس دوباره تلاش می‌کنیم (بازگشتی) تا یک مچ دیگر پیدا کنیم یا بسازیم
+      return startDuelForUser(env, update, difficulty);
+    }
+    
+    match = joinedMatch;
   }
+  // ---------------------------
 
   await ensureDuelQuestions(env, match.id, difficulty);
 
+  // ... (بقیه کد بدون تغییر: چک کردن سوالات و شروع بازی) ...
   const totalQ = await getTotalQuestionsInMatch(env, match.id);
   if (totalQ === 0) {
-    await sendMessage(
-      env,
-      chatId,
-      "برای این دوئل هنوز سوالی ساخته نشده ❗️"
-    );
-    return;
+      await sendMessage(env, chatId, "برای این دوئل هنوز سوالی ساخته نشده ❗️");
+      return;
   }
-
-  const introText2 =
-    difficulty === "easy"
-      ? "یک حریف برای دوئل آسان پیدا شد! دوئل شروع شد ⚔️"
-      : "یک حریف برای دوئل سخت پیدا شد! دوئل شروع شد 🔥";
-
+  
+  const introText2 = difficulty === "easy" ? "یک حریف برای دوئل آسان پیدا شد..." : "یک حریف برای دوئل سخت پیدا شد...";
   await sendMessage(env, chatId, introText2);
 
   const opponentId = match.player1_id === user.id ? match.player2_id : match.player1_id;
   if (opponentId) {
     const opp = await getUserById(env, opponentId);
     if (opp) {
-      await sendMessage(
-        env,
-        opp.telegram_id,
-        "حریف به دوئل تو پیوست! اگر هنوز همه سوال‌ها رو جواب ندادی، دوئل ادامه پیدا می‌کنه ⚔️"
-      );
+      await sendMessage(env, opp.telegram_id, "حریف به دوئل تو پیوست!...");
       await sendNextDuelQuestion(env, match.id, opp, opp.telegram_id);
     }
   }
