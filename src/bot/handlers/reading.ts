@@ -2,7 +2,7 @@ import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
-import { getAllActiveReadingTexts, getReadingTextById } from "../../db/texts"; // getReadingTextById اضافه شد
+import { getAllActiveReadingTexts, getReadingTextById } from "../../db/texts";
 import {
   createReadingSession,
   getReadingSessionById,
@@ -11,14 +11,14 @@ import {
   recordAnswerAndUpdateSession,
   getSessionStats,
   markSessionCompleted,
-  insertTextQuestions, // اضافه شد
+  insertTextQuestions,
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
 import { queryAll, queryOne, execute } from "../../db/client";
 import { addXpForReadingSession } from "../../db/xp";
-import { generateReadingQuestionsWithGemini } from "../../ai/gemini"; // اضافه شد
-
+import { generateReadingQuestionsWithGemini } from "../../ai/gemini";
+import { CB_PREFIX, GAME_CONFIG } from "../../config/constants"; // Import added
 
 interface SummaryQuestionRow {
   question_text: string;
@@ -30,7 +30,6 @@ interface SummaryQuestionRow {
   is_correct: number | null;
 }
 
-// شروع منوی انتخاب متن
 export async function startReadingMenuForUser(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
   if (!message || !message.from) return;
@@ -48,7 +47,8 @@ export async function startReadingMenuForUser(env: Env, update: TelegramUpdate):
 
   const inlineRows = texts.map(t => {
     const title = t.title.length > 40 ? t.title.slice(0, 37) + "..." : t.title;
-    return [{ text: title, callback_data: `reading:text:${t.id}` }];
+    // rt:<id>
+    return [{ text: title, callback_data: `${CB_PREFIX.READING_TEXT}:${t.id}` }];
   });
 
   const replyMarkup = { inline_keyboard: inlineRows };
@@ -61,16 +61,16 @@ export async function startReadingMenuForUser(env: Env, update: TelegramUpdate):
   );
 }
 
-// کاربر یک متن را انتخاب کرده
 export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
-  const parts = data.split(":"); // reading:text:<id>
-  if (parts.length !== 3) {
+  const parts = data.split(":"); 
+  // rt:<id>
+  if (parts.length !== 2 || parts[0] !== CB_PREFIX.READING_TEXT) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
 
-  const textId = Number(parts[2]);
+  const textId = Number(parts[1]);
   if (!Number.isFinite(textId)) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -86,8 +86,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 
   const user = await getOrCreateUser(env, tgUser);
 
-  // ایجاد سشن جدید
-  const session = await createReadingSession(env, user.id, textId);
+  const session = await createReadingSession(env, user.id, textId, GAME_CONFIG.READING_QUESTION_COUNT);
 
   await answerCallbackQuery(env, callbackQuery.id);
   await sendMessage(env, chatId, "تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
@@ -98,18 +97,18 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   }
 }
 
-// کاربر به یک سوال جواب داده
 export async function handleReadingAnswerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
-  if (parts.length !== 5) {
+  // ra:<sessionId>:<questionId>:<option>
+  if (parts.length !== 4 || parts[0] !== CB_PREFIX.READING_ANSWER) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
 
-  const sessionId = Number(parts[2]);
-  const questionId = Number(parts[3]);
-  const chosenOption = parts[4];
+  const sessionId = Number(parts[1]);
+  const questionId = Number(parts[2]);
+  const chosenOption = parts[3];
 
   if (!Number.isFinite(sessionId) || !Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -187,32 +186,26 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   }
 }
 
-// ارسال سوال بعدی؛ اگر سوالی نبود، سعی می‌کند بسازد
 async function sendNextReadingQuestion(
   env: Env,
   user: DbUser,
   session: ReadingSession,
   chatId: number
 ): Promise<boolean> {
-  // ۱. تلاش اول برای گرفتن سوال
   let question = await getNextQuestionForSession(env, session, user.id);
 
-  // ۲. اگر سوالی نبود (یا همه تکراری بودند)، باید بسازیم
   if (!question) {
-    // چک کنیم که آیا سشن تمام شده؟ (یعنی کاربر ۳ تا سوالش رو جواب داده؟)
     const stats = await getSessionStats(env, session.id);
     if (stats.total >= (session.num_questions || 3)) {
-      // سشن تمام شده، دیگر سوال نمی‌خواهیم
       return false;
     }
 
-    // سشن تمام نشده ولی سوال نداریم → تولید خودکار
     await sendMessage(env, chatId, "⏳ در حال خواندن متن و طراحی سوالات جدید...");
 
     const textRow = await getReadingTextById(env, session.text_id);
     if (textRow && textRow.body_en) {
       try {
-        const aiQuestions = await generateReadingQuestionsWithGemini(env, textRow.body_en, 3);
+        const aiQuestions = await generateReadingQuestionsWithGemini(env, textRow.body_en, GAME_CONFIG.READING_QUESTION_COUNT);
         if (aiQuestions.length > 0) {
           await insertTextQuestions(
             env,
@@ -224,7 +217,6 @@ async function sendNextReadingQuestion(
               explanation: q.explanation
             }))
           );
-          // تلاش مجدد برای گرفتن سوال
           question = await getNextQuestionForSession(env, session, user.id);
         }
       } catch (e) {
@@ -242,16 +234,17 @@ async function sendNextReadingQuestion(
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: question.option_a, callback_data: `reading:ans:${session.id}:${question.id}:A` }
+        // ra:<sessionId>:<questionId>:A
+        { text: question.option_a, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:A` }
       ],
       [
-        { text: question.option_b, callback_data: `reading:ans:${session.id}:${question.id}:B` }
+        { text: question.option_b, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:B` }
       ],
       [
-        { text: question.option_c, callback_data: `reading:ans:${session.id}:${question.id}:C` }
+        { text: question.option_c, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:C` }
       ],
       [
-        { text: question.option_d, callback_data: `reading:ans:${session.id}:${question.id}:D` }
+        { text: question.option_d, callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:D` }
       ]
     ]
   };
@@ -260,7 +253,6 @@ async function sendNextReadingQuestion(
   return true;
 }
 
-// خلاصه نتیجه و پاسخنامه
 async function sendReadingSummary(
   env: Env,
   user: DbUser,
@@ -328,33 +320,22 @@ async function sendReadingSummary(
   await sendMessage(env, chatId, text);
 }
 
-
 function getOptionText(question: DbTextQuestion, letter: string): string {
   switch (letter) {
-    case "A":
-      return question.option_a;
-    case "B":
-      return question.option_b;
-    case "C":
-      return question.option_c;
-    case "D":
-      return question.option_d;
-    default:
-      return "";
+    case "A": return question.option_a;
+    case "B": return question.option_b;
+    case "C": return question.option_c;
+    case "D": return question.option_d;
+    default: return "";
   }
 }
 
 function getOptionTextForRow(row: SummaryQuestionRow, letter: string): string {
   switch (letter) {
-    case "A":
-      return row.option_a;
-    case "B":
-      return row.option_b;
-    case "C":
-      return row.option_c;
-    case "D":
-      return row.option_d;
-    default:
-      return "";
+    case "A": return row.option_a;
+    case "B": return row.option_b;
+    case "C": return row.option_c;
+    case "D": return row.option_d;
+    default: return "";
   }
 }
