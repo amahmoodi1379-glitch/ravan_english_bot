@@ -7,6 +7,13 @@ export interface AiGeneratedQuestion {
   explanation: string;
 }
 
+// لیست مدل‌ها برای تلاش (اولویت با مدل‌های جدیدتر و سریع‌تر)
+const MODELS_TO_TRY = [
+  "gemini-1.5-flash-latest", // اولویت اول: آخرین نسخه فلش
+  "gemini-1.5-flash",        // اولویت دوم: نسخه استاندارد فلش
+  "gemini-pro"               // اولویت سوم: مدل پایدار قدیمی (سوپاپ اطمینان)
+];
+
 async function callGemini(env: Env, prompt: string): Promise<string> {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -14,42 +21,66 @@ async function callGemini(env: Env, prompt: string): Promise<string> {
     throw new Error("GEMINI_API_KEY is not set");
   }
 
-  // CHANGE: Changed model from "gemini-1.5-flash" to "gemini-1.5-flash-001"
-  const url =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=" +
-    encodeURIComponent(apiKey);
+  let lastError: any;
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [{ text: prompt }]
+  // تلاش برای مدل‌های مختلف به ترتیب
+  for (const model of MODELS_TO_TRY) {
+    try {
+      console.log(`Trying Gemini model: ${model}...`);
+      const url =
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=` +
+        encodeURIComponent(apiKey);
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: prompt }]
+            }
+          ]
+        })
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        // اگر خطا 404 بود یعنی مدل پیدا نشد، برو سراغ مدل بعدی
+        if (resp.status === 404) {
+          console.warn(`Model ${model} not found (404). Trying next...`);
+          lastError = new Error(`Gemini ${model} 404: ${text}`);
+          continue; 
         }
-      ]
-    })
-  });
+        // اگر خطای دیگری بود (مثل 500 یا 403)، شاید مشکل جدی باشد اما باز هم مدل بعدی را تست می‌کنیم
+        console.error(`Gemini HTTP error for ${model}`, resp.status, text);
+        lastError = new Error(`Gemini HTTP error: ${resp.status}`);
+        continue;
+      }
 
-  if (!resp.ok) {
-    const text = await resp.text();
-    console.error("Gemini HTTP error", resp.status, text);
-    throw new Error("Gemini HTTP error: " + resp.status);
+      const data = await resp.json();
+      const text =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text ??
+        data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+      if (typeof text !== "string") {
+        console.error(`Gemini response for ${model} has no text`, JSON.stringify(data));
+        lastError = new Error("Gemini response has no text");
+        continue;
+      }
+
+      // موفقیت!
+      return text.trim();
+
+    } catch (err) {
+      console.error(`Exception calling model ${model}:`, err);
+      lastError = err;
+    }
   }
 
-  const data = await resp.json();
-  const text =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text ??
-    data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-  if (typeof text !== "string") {
-    console.error("Gemini response has no text", JSON.stringify(data));
-    throw new Error("Gemini response has no text");
-  }
-
-  return text.trim();
+  // اگر همه مدل‌ها شکست خوردند
+  throw lastError || new Error("All Gemini models failed.");
 }
 
 function buildWordQuestionPrompt(params: {
