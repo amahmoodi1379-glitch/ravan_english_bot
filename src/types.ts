@@ -3,5 +3,6 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
   ADMIN_PASSWORD?: string;
-  DB: any; // دیتابیس D1 (الان برای راحتی any گذاشتیم)
+  GEMINI_API_KEY?: string;  // برای سوال‌سازی با جمینای
+  DB: any; // D1 Database
 }
