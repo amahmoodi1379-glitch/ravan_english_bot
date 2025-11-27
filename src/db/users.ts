@@ -10,6 +10,7 @@ export interface DbUser {
   last_name: string | null;
   display_name: string | null;
   xp_total: number;
+  is_approved: number; 
 }
 
 // ورودی ساده از تلگرام (فقط چیزهایی که لازم داریم)
