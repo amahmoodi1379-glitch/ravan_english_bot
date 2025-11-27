@@ -265,9 +265,9 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
   };
 }
 
-// پاکسازی دوئل‌های قدیمی و گیرکرده
+// پاکسازی دوئل‌های قدیمی و گیرکرده (نسخه اصلاح شده و بدون باگ)
 export async function cleanupOldMatches(env: Env): Promise<void> {
-  // ۱. دوئل‌های در حال اجرا که بیشتر از ۲۴ ساعت طول کشیده‌اند را منقضی کن
+  // ۱. دوئل‌های در حال اجرا که بیشتر از ۲۴ ساعت مانده‌اند -> منقضی کن
   await execute(
     env,
     `UPDATE duel_matches 
@@ -275,7 +275,30 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
      WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`
   );
   
-  // ۲. دوئل‌های در صف انتظار که بیشتر از ۳ روز مانده‌اند و کسی جوین نشده را حذف کن
+  // ۲. پاکسازی کامل دوئل‌های 'waiting' قدیمی (که هیچ‌وقت شروع نشدند)
+  // نکته مهم: اول باید سوالات و جواب‌های وابسته را پاک کنیم تا دیتابیس ارور ندهد
+  
+  // الف) حذف جواب‌های احتمالی (محض احتیاط)
+  await execute(
+    env,
+    `DELETE FROM duel_answers 
+     WHERE duel_id IN (
+       SELECT id FROM duel_matches 
+       WHERE status = 'waiting' AND created_at < datetime('now', '-3 days')
+     )`
+  );
+
+  // ب) حذف سوالات مربوط به آن دوئل‌ها
+  await execute(
+    env,
+    `DELETE FROM duel_questions 
+     WHERE duel_id IN (
+       SELECT id FROM duel_matches 
+       WHERE status = 'waiting' AND created_at < datetime('now', '-3 days')
+     )`
+  );
+
+  // ج) حالا که وابستگی‌ها پاک شد، خود مچ را پاک کن
   await execute(
     env,
     `DELETE FROM duel_matches 
