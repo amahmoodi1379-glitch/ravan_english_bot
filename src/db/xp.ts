@@ -138,3 +138,68 @@ export async function addXpForDuelMatch(
   if (stmts.length > 0) await env.DB.batch(stmts);
   return totalXp;
 }
+
+// چک کردن و آپدیت زنجیره (Streak)
+export async function checkAndUpdateStreak(env: Env, userId: number): Promise<string | null> {
+  const TARGET_DAILY_XP = 50; // هدف روزانه
+
+  // 1. محاسبه کل XP امروز کاربر
+  const row = await env.DB.prepare(`
+    SELECT SUM(xp_delta) as total
+    FROM activity_log
+    WHERE user_id = ? 
+      AND created_at >= date('now', 'start of day')
+  `).bind(userId).first();
+
+  const todayXp = (row?.total as number) || 0;
+
+  // اگر هنوز به هدف نرسیده، کاری نداریم
+  if (todayXp < TARGET_DAILY_XP) return null;
+
+  // 2. گرفتن وضعیت فعلی کاربر
+  const user = await env.DB.prepare(`
+    SELECT streak_count, last_streak_date 
+    FROM users 
+    WHERE id = ?
+  `).bind(userId).first();
+
+  if (!user) return null;
+
+  const currentStreak = (user.streak_count as number) || 0;
+  const lastDate = (user.last_streak_date as string) || "";
+  
+  // تاریخ امروز (فرمت YYYY-MM-DD برای مقایسه راحت)
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  // اگر همین امروز قبلاً زنجیره رو ثبت کرده، دیگه اضافه نکن
+  if (lastDate.startsWith(todayStr)) {
+    return null; 
+  }
+
+  // محاسبه تاریخ دیروز
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+  let newStreak = 1;
+  let message = "";
+
+  if (lastDate.startsWith(yesterdayStr)) {
+    // اگر آخرین بار دیروز بوده، زنجیره ادامه داره
+    newStreak = currentStreak + 1;
+    message = `🔥 زنجیره‌ی تو به ${newStreak} روز رسید! ایول!`;
+  } else {
+    // اگر بیشتر از یک روز فاصله افتاده (یا بار اوله)، ریست میشه به 1
+    newStreak = 1;
+    message = `🔥 زنجیره جدید شروع شد! امروز روز اوله.`;
+  }
+
+  // 3. آپدیت دیتابیس
+  await env.DB.prepare(`
+    UPDATE users 
+    SET streak_count = ?, last_streak_date = ? 
+    WHERE id = ?
+  `).bind(newStreak, new Date().toISOString(), userId).run();
+
+  return message;
+}
