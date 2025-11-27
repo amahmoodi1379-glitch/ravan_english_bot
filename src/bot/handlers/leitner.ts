@@ -11,7 +11,7 @@ import {
   markWordAsIgnored,
   DbWord
 } from "../../db/leitner";
-import { addXpForLeitnerQuestion, prepareXpForLeitner } from "../../db/xp";
+import { addXpForLeitnerQuestion, prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp"; // <--- checkAndUpdateStreak اضافه شد
 import { generateWordQuestionsWithGemini } from "../../ai/gemini";
 import { insertWordQuestions } from "../../db/word_questions";
 import { CB_PREFIX } from "../../config/constants";
@@ -116,7 +116,6 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     [user.id, question.word_id, question.id, now]
   );
 
-  // تغییر UI: گزینه‌ها در متن، دکمه‌ها فقط عدد
   const messageText = 
     `❓ <b>${question.question_text}</b>\n\n` +
     `1️⃣ ${question.option_a}\n` +
@@ -381,6 +380,15 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     if (batchStatements.length > 0) {
       await env.DB.batch(batchStatements);
     }
+
+    // --- بخش جدید مربوط به Streak ---
+    if (isCorrect) {
+      const streakMsg = await checkAndUpdateStreak(env, user.id);
+      if (streakMsg) {
+        await sendMessage(env, chatId, streakMsg);
+      }
+    }
+    // -------------------------------
 
     await answerCallbackQuery(env, callbackQuery.id);
 
