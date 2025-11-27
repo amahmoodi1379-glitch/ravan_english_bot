@@ -48,7 +48,10 @@ import {
   handleSetDisplayNameCommand
 } from "./handlers/profile";
 import { startReflectionForUser, handleReflectionAnswer } from "./handlers/reflection";
-import { CB_PREFIX } from "../config/constants"; // Import added
+import { CB_PREFIX } from "../config/constants";
+// --- ایمپورت‌های جدید اضافه شده ---
+import { getOrCreateUser } from "../db/users";
+import { queryOne, execute } from "../db/client";
 
 export interface TelegramUser {
   id: number;
@@ -140,16 +143,61 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   }
 }
 
+// --- تابع هندل مسیج جدید (با قابلیت چک کردن لایسنس) ---
 async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
   if (!message) return;
 
   const text = message.text;
   const chatId = message.chat.id;
+  const tgUser = message.from;
 
-  if (!text) {
+  if (!text || !tgUser) {
     return;
   }
+
+  // 1. دریافت اطلاعات کاربر از دیتابیس
+  const user = await getOrCreateUser(env, tgUser);
+
+  // 2. چک کردن وضعیت تایید (لایسنس)
+  if (!user.is_approved) {
+    // اگر کاربر کدی ارسال کرده، بررسی کن
+    const inputCode = text.trim();
+    
+    // چک کنیم آیا این کد در جدول کدهای ما وجود دارد و استفاده نشده؟
+    const codeRow = await queryOne<{ code: string }>(
+      env,
+      `SELECT code FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
+      [inputCode]
+    );
+
+    if (codeRow) {
+      // کد معتبر است!
+      const now = new Date().toISOString();
+      
+      // الف: کد را باطل کن (بزن به نام این کاربر)
+      await execute(
+        env,
+        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ?`,
+        [user.id, now, inputCode]
+      );
+
+      // ب: کاربر را تایید کن
+      await execute(
+        env,
+        `UPDATE users SET is_approved = 1 WHERE id = ?`,
+        [user.id]
+      );
+
+      await sendMessage(env, chatId, "✅ تبریک! لایسنس شما تایید شد.\nحالا می‌تونی از ربات استفاده کنی. بزن روی /start");
+    } else {
+      // کد نامعتبر یا قبلا استفاده شده
+      await sendMessage(env, chatId, "⛔️ شما مجوز استفاده از این ربات را ندارید.\nلطفاً کد لایسنس معتبر خود را ارسال کنید.");
+    }
+    return; // <--- خیلی مهم: اینجا تابع را متوقف می‌کنیم تا بقیه دستورات اجرا نشوند
+  }
+
+  // --- از اینجا به بعد کدهای قبلی ربات اجرا می‌شوند (چون کاربر تایید شده است) ---
 
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);
