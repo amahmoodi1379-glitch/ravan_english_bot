@@ -11,7 +11,7 @@ import {
   ActivityPeriod,
   ActivityStats
 } from "../../db/profile";
-import { CB_PREFIX } from "../../config/constants"; // Import added
+import { CB_PREFIX } from "../../config/constants";
 
 const AVATARS: { code: string; emoji: string; label: string }[] = [
   { code: "cat", emoji: "😺", label: "گربه" },
@@ -30,6 +30,33 @@ function getAvatarEmoji(code: string | null | undefined): string {
 function getAvatarLabel(code: string | null | undefined): string {
   const found = AVATARS.find((a) => a.code === code);
   return found ? found.label : "پیش‌فرض";
+}
+
+// تابع کمکی برای گرفتن اطلاعات زنجیره (مستقیم از دیتابیس)
+async function getStreakInfo(env: Env, userId: number): Promise<number> {
+  const row = await env.DB.prepare(`SELECT streak_count, last_streak_date FROM users WHERE id = ?`).bind(userId).first();
+  if (!row) return 0;
+  
+  const count = (row.streak_count as number) || 0;
+  const lastDate = (row.last_streak_date as string) || "";
+  
+  if (count === 0) return 0;
+
+  // چک کنیم که آیا تاریخ آخرین استریک، امروز یا دیروز بوده؟ (با تایم‌زون UTC)
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  
+  const todayStr = today.toISOString().split('T')[0];
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  // تاریخ دیتابیس هم فرمت ISO است (YYYY-MM-DD...)
+  const lastDateStr = lastDate.split('T')[0];
+
+  if (lastDateStr === todayStr || lastDateStr === yesterdayStr) {
+    return count;
+  }
+  
+  return 0; // متاسفانه زنجیره پاره شده
 }
 
 export async function showProfileHome(env: Env, update: TelegramUpdate): Promise<void> {
@@ -51,10 +78,15 @@ export async function showProfileHome(env: Env, update: TelegramUpdate): Promise
   const xpTotal = profile?.xp_total ?? 0;
   const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
 
+  // دریافت وضعیت زنجیره
+  const streakCount = await getStreakInfo(env, user.id);
+  const streakText = streakCount > 0 ? `🔥 <b>${streakCount}</b> روز` : "خاموش ❄️";
+
   const text =
     `👤 پروفایل تو:\n\n` +
     `نام نمایشی: <b>${displayName}</b>\n` +
     `XP کلی: <b>${xpTotal}</b>\n` +
+    `زنجیره (Streak): ${streakText}\n` + // <--- نمایش زنجیره
     `آواتار فعلی: ${avatarEmoji}\n\n` +
     `از منوی زیر یکی از گزینه‌های پروفایل رو انتخاب کن.`;
 
