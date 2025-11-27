@@ -678,18 +678,44 @@ export default {
       console.error("Global Error:", err);
       return new Response("Internal Server Error", { status: 500 });
     }
-  }, // <--- فقط یک کاما اینجا باید باشد
-
+  }, 
   // این بخش هر ساعت خودکار اجرا می‌شود
   async scheduled(event: any, env: Env, ctx: any): Promise<void> {
     ctx.waitUntil((async () => {
-      // ۱. پاکسازی دوئل‌های قدیمی
+      console.log("🔄 Starting hourly cleanup job...");
+
+      // ۱. پاکسازی دوئل‌های قدیمی (با تابع اصلاح شده)
       await cleanupOldMatches(env);
       
-      // ۲. پاکسازی سشن‌های منقضی شده ادمین
+      // ۲. پاکسازی سشن‌های ادمین منقضی شده
       await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
+
+      // ۳. [جدید] جلوگیری از انباشت لاگ‌ها: حذف لاگ‌های قدیمی‌تر از ۲ ماه
+      // چون لیدربورد فقط تا ۳۰ روز را نیاز دارد، ۶۰ روز نگه می‌داریم که مطمئن باشیم
+      await execute(
+        env, 
+        "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')"
+      );
+
+      // ۴. [جدید] پاکسازی سشن‌های ریدینگ و رفلکشنِ رها شده (بعد از ۲۴ ساعت)
+      // این‌ها فقط فضا اشغال می‌کنند و دیگر قابل ادامه دادن نیستند
+      await execute(
+        env,
+        `DELETE FROM reading_sessions 
+         WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`
+      );
       
-      console.log("Cleanup job completed.");
+      // نکته: سوالات ریدینگ (user_text_question_history) چون با CASCADE وصل نیستند، 
+      // بهتر است دستی پاک شوند یا بپذیریم که به عنوان تاریخچه بمانند (برای آمار خوب است).
+      // اما سشن خالی ارزشی ندارد.
+
+      await execute(
+        env,
+        `DELETE FROM reflection_sessions 
+         WHERE ai_score IS NULL AND created_at < datetime('now', '-1 day')`
+      );
+      
+      console.log("✅ Cleanup job completed successfully.");
     })());
   }
 };
