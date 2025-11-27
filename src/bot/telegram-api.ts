@@ -1,6 +1,9 @@
 import { Env } from "../types";
 
-// ارسال پیام ساده به تلگرام
+// یک وقفه کوچک (Sleep)
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ارسال پیام ساده به تلگرام با قابلیت تلاش مجدد (Retry)
 export async function sendMessage(
   env: Env,
   chatId: number,
@@ -16,16 +19,10 @@ export async function sendMessage(
     ...extra
   };
 
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
+  await fetchWithRetry(url, body);
 }
 
-// پاسخ به callback_query تا لودینگ متوقف شود
+// پاسخ به callback_query
 export async function answerCallbackQuery(
   env: Env,
   callbackQueryId: string,
@@ -42,11 +39,42 @@ export async function answerCallbackQuery(
     body.show_alert = true;
   }
 
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
+  // اینجا معمولاً نیازی به retry سنگین نیست چون تعامل لحظه‌ای است
+  // اما برای اطمینان از همان تابع استفاده می‌کنیم
+  await fetchWithRetry(url, body);
+}
+
+// تابع کمکی برای هندل کردن محدودیت‌های تلگرام (429 Too Many Requests)
+async function fetchWithRetry(url: string, body: any, retries = 3): Promise<void> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      if (resp.ok) {
+        return; // موفقیت‌آمیز بود، خارج شو
+      }
+
+      const data: any = await resp.json();
+
+      // خطای محدودیت سرعت (Flood Wait)
+      if (resp.status === 429) {
+        const retryAfter = data?.parameters?.retry_after || 1;
+        console.warn(`Telegram Flood Wait: Sleeping for ${retryAfter}s...`);
+        await sleep(retryAfter * 1000);
+        continue; // دوباره تلاش کن
+      }
+
+      console.error("Telegram API Error:", JSON.stringify(data));
+      return; // ارورهای دیگه (مثل 400 یا 403) رو بیخیال شو (شاید کاربر بلاک کرده باشه)
+
+    } catch (err) {
+      console.error("Network Error sending to Telegram:", err);
+      // اگر خطای شبکه بود، یک ثانیه صبر کن و دوباره بزن
+      await sleep(1000);
+    }
+  }
 }
