@@ -1,7 +1,6 @@
 import { Env } from "./types";
 import { handleTelegramUpdate, TelegramUpdate } from "./bot/router";
 import { queryAll, queryOne, execute } from "./db/client";
-import { getAllActiveReadingTexts } from "./db/texts";
 import { cleanupOldMatches } from "./db/duels";
 
 function htmlResponse(html: string, status: number = 200): Response {
@@ -68,9 +67,13 @@ function renderAdminLayout(title: string, content: string, section: string = "")
       <a href="/admin/texts" style="margin-right: 8px;${
         section === "texts" ? " font-weight:bold;" : ""
       }">متن‌ها</a>
-      <a href="/admin/users" style="margin-right: 8px;${   
-        section === "users" ? " font-weight:bold;" : ""    
-      }">کاربران</a>                                       <a href="/admin/logout" style="float: left;">خروج</a>
+      <a href="/admin/users" style="margin-right: 8px;${
+        section === "users" ? " font-weight:bold;" : ""
+      }">کاربران</a>
+      <a href="/admin/licenses" style="margin-right: 8px;${
+        section === "licenses" ? " font-weight:bold;" : ""
+      }">لایسنس‌ها</a>
+      <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;
 
@@ -120,7 +123,6 @@ export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
     const url = new URL(request.url);
 
-    // Global Error Handling
     try {
       // Telegram webhook
       if (request.method === "POST" && url.pathname === "/telegram/webhook") {
@@ -171,7 +173,7 @@ export default {
         return htmlResponse(renderAdminLayout("ورود به پنل ادمین", content, "home"));
       }
 
-      // Admin: handle login (SECURE)
+      // Admin: handle login
       if (request.method === "POST" && url.pathname === "/admin/login") {
         const form = await parseForm(request);
         const password = (form.get("password") || "").toString();
@@ -189,9 +191,7 @@ export default {
           return htmlResponse(renderAdminLayout("ورود به پنل ادمین", content, "home"), 401);
         }
 
-        // Generate Secure Token
         const token = crypto.randomUUID();
-        // Expiration: 1 day from now
         const expiresAt = new Date(Date.now() + 86400 * 1000).toISOString();
 
         await execute(
@@ -226,11 +226,12 @@ export default {
         return new Response(null, { status: 302, headers });
       }
 
-      // Admin: مدیریت واژه‌ها - لیست
+      // ----------------------------------------------------
+      // بخش مدیریت واژه‌ها
+      // ----------------------------------------------------
+
       if (request.method === "GET" && url.pathname === "/admin/words") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const search = (url.searchParams.get("q") || "").trim();
         let sql = `
@@ -303,11 +304,8 @@ export default {
         return htmlResponse(renderAdminLayout("مدیریت واژه‌ها", content, "words"));
       }
 
-      // Admin: مدیریت سوالات یک واژه
       if (request.method === "GET" && url.pathname === "/admin/words/questions") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const wordIdParam = url.searchParams.get("word_id");
         const wordId = wordIdParam ? Number(wordIdParam) : 0;
@@ -363,11 +361,8 @@ export default {
         return htmlResponse(renderAdminLayout(`سوالات: ${word.english}`, content, "words"));
       }
 
-      // Admin: حذف سوال
       if (request.method === "POST" && url.pathname === "/admin/words/questions/delete") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
         const form = await parseForm(request);
         const id = Number(form.get("id"));
         const wordId = Number(form.get("word_id"));
@@ -379,11 +374,8 @@ export default {
         return redirect(`/admin/words/questions?word_id=${wordId}`);
       }
 
-      // Admin: فرم ایجاد واژه جدید
       if (request.method === "GET" && url.pathname === "/admin/words/new") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const word = {
           id: "",
@@ -400,41 +392,27 @@ export default {
         return htmlResponse(renderAdminLayout("ایجاد واژه جدید", content, "words"));
       }
 
-      // Admin: فرم ویرایش واژه
       if (request.method === "GET" && url.pathname === "/admin/words/edit") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const idParam = url.searchParams.get("id");
         const id = idParam ? Number(idParam) : 0;
-        if (!id) {
-          return htmlResponse("شناسه واژه نامعتبر است.", 400);
-        }
+        if (!id) return htmlResponse("شناسه واژه نامعتبر است.", 400);
 
         const word = await queryOne<any>(
           env,
-          `
-          SELECT id, english, persian, level, lesson_name, synonyms, antonyms, is_active
-          FROM words
-          WHERE id = ?
-          `,
+          `SELECT * FROM words WHERE id = ?`,
           [id]
         );
 
-        if (!word) {
-          return htmlResponse("واژه پیدا نشد.", 404);
-        }
+        if (!word) return htmlResponse("واژه پیدا نشد.", 404);
 
         const content = renderWordForm(word, "ویرایش واژه");
         return htmlResponse(renderAdminLayout("ویرایش واژه", content, "words"));
       }
 
-      // Admin: ذخیره واژه
       if (request.method === "POST" && url.pathname === "/admin/words/save") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const form = await parseForm(request);
         const idStr = (form.get("id") || "").toString().trim();
@@ -496,11 +474,12 @@ export default {
         return redirect("/admin/words");
       }
 
-      // Admin: لیست متون
+      // ----------------------------------------------------
+      // بخش مدیریت متن‌ها
+      // ----------------------------------------------------
+
       if (request.method === "GET" && url.pathname === "/admin/texts") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const texts = await queryAll<any>(
           env,
@@ -561,11 +540,8 @@ export default {
         return htmlResponse(renderAdminLayout("مدیریت متن‌ها", content, "texts"));
       }
 
-      // Admin: فرم متن جدید
       if (request.method === "GET" && url.pathname === "/admin/texts/new") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const text = {
           id: "",
@@ -579,41 +555,27 @@ export default {
         return htmlResponse(renderAdminLayout("ایجاد متن جدید", content, "texts"));
       }
 
-      // Admin: فرم ویرایش متن
       if (request.method === "GET" && url.pathname === "/admin/texts/edit") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const idParam = url.searchParams.get("id");
         const id = idParam ? Number(idParam) : 0;
-        if (!id) {
-          return htmlResponse("شناسه متن نامعتبر است.", 400);
-        }
+        if (!id) return htmlResponse("شناسه متن نامعتبر است.", 400);
 
         const textRow = await queryOne<any>(
           env,
-          `
-          SELECT id, title, body_en, level, is_active
-          FROM reading_texts
-          WHERE id = ?
-          `,
+          `SELECT * FROM reading_texts WHERE id = ?`,
           [id]
         );
 
-        if (!textRow) {
-          return htmlResponse("متن پیدا نشد.", 404);
-        }
+        if (!textRow) return htmlResponse("متن پیدا نشد.", 404);
 
         const content = renderTextForm(textRow, "ویرایش متن");
         return htmlResponse(renderAdminLayout("ویرایش متن", content, "texts"));
       }
 
-      // Admin: ذخیره متن
       if (request.method === "POST" && url.pathname === "/admin/texts/save") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const form = await parseForm(request);
         const idStr = (form.get("id") || "").toString().trim();
@@ -666,25 +628,30 @@ export default {
         return redirect("/admin/texts");
       }
 
-      // Admin: لیست کاربران (اضافه شده)
+      // ----------------------------------------------------
+      // بخش مدیریت کاربران (با قابلیت لایسنس)
+      // ----------------------------------------------------
+
       if (request.method === "GET" && url.pathname === "/admin/users") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const search = (url.searchParams.get("q") || "").trim();
+        
+        // کوئری برای گرفتن کاربرها + کد لایسنس (اگر استفاده کرده باشند)
         let sql = `
-          SELECT id, telegram_id, username, display_name, xp_total, created_at
-          FROM users
+          SELECT u.id, u.telegram_id, u.username, u.display_name, u.xp_total, u.created_at, u.is_approved, ac.code as license_code
+          FROM users u
+          LEFT JOIN access_codes ac ON ac.used_by_user_id = u.id
           WHERE 1 = 1
         `;
+        
         const params: any[] = [];
         if (search) {
-          sql += ` AND (display_name LIKE ? OR username LIKE ? OR cast(telegram_id as text) LIKE ?)`;
+          sql += ` AND (u.display_name LIKE ? OR u.username LIKE ? OR cast(u.telegram_id as text) LIKE ?)`;
           const like = `%${search}%`;
           params.push(like, like, like);
         }
-        sql += ` ORDER BY id DESC LIMIT 50`;
+        sql += ` ORDER BY u.id DESC LIMIT 50`;
 
         const users = await queryAll<any>(env, sql, params);
 
@@ -698,6 +665,12 @@ export default {
                 <td>${escapeHtml(u.display_name || "")}</td>
                 <td><b>${u.xp_total}</b></td>
                 <td>${u.created_at.substring(0, 10)}</td>
+                <td>
+                  ${u.license_code 
+                    ? `<span style="font-family:monospace; background:#eee; padding:2px 4px; border-radius:4px;">${escapeHtml(u.license_code)}</span>` 
+                    : (u.is_approved ? '<span class="badge active">دستی تایید شده</span>' : '<span class="badge inactive">تایید نشده</span>')
+                  }
+                </td>
                 <td class="actions">
                   <a href="/admin/users/edit?id=${u.id}">ویرایش</a>
                 </td>
@@ -723,11 +696,12 @@ export default {
                 <th>نام نمایشی</th>
                 <th>XP</th>
                 <th>عضویت</th>
+                <th>لایسنس</th>
                 <th>عملیات</th>
               </tr>
             </thead>
             <tbody>
-              ${rowsHtml || "<tr><td colspan='7'>هیچ کاربری پیدا نشد.</td></tr>"}
+              ${rowsHtml || "<tr><td colspan='8'>هیچ کاربری پیدا نشد.</td></tr>"}
             </tbody>
           </table>
         `;
@@ -735,11 +709,8 @@ export default {
         return htmlResponse(renderAdminLayout("مدیریت کاربران", content, "users"));
       }
 
-      // Admin: فرم ویرایش کاربر (اضافه شده)
       if (request.method === "GET" && url.pathname === "/admin/users/edit") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const idParam = url.searchParams.get("id");
         const id = idParam ? Number(idParam) : 0;
@@ -757,16 +728,15 @@ export default {
         return htmlResponse(renderAdminLayout(`ویرایش کاربر ${userRow.id}`, content, "users"));
       }
 
-      // Admin: ذخیره تغییرات کاربر (اضافه شده)
       if (request.method === "POST" && url.pathname === "/admin/users/save") {
-        if (!(await isAdminAuthed(request, env))) {
-          return redirect("/admin");
-        }
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
 
         const form = await parseForm(request);
         const idStr = (form.get("id") || "").toString().trim();
         const displayName = (form.get("display_name") || "").toString().trim();
         const xpTotalStr = (form.get("xp_total") || "0").toString().trim();
+        // چک باکس تایید دستی
+        const isActive = form.get("is_approved") === "1" ? 1 : 0;
 
         if (idStr) {
           const id = Number(idStr);
@@ -776,14 +746,85 @@ export default {
             env,
             `
             UPDATE users
-            SET display_name = ?, xp_total = ?, updated_at = datetime('now')
+            SET display_name = ?, xp_total = ?, is_approved = ?, updated_at = datetime('now')
             WHERE id = ?
             `,
-            [displayName, xpTotal, id]
+            [displayName, xpTotal, isActive, id]
           );
         }
 
         return redirect("/admin/users");
+      }
+
+      // ----------------------------------------------------
+      // بخش مدیریت لایسنس‌ها (جدید)
+      // ----------------------------------------------------
+
+      if (request.method === "GET" && url.pathname === "/admin/licenses") {
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
+
+        // دریافت لیست لایسنس‌ها + نام کاربری که استفاده کرده
+        const codes = await queryAll<any>(
+          env,
+          `
+          SELECT a.code, a.created_at, a.used_at, u.display_name, u.telegram_id
+          FROM access_codes a
+          LEFT JOIN users u ON u.id = a.used_by_user_id
+          ORDER BY a.created_at DESC
+          LIMIT 100
+          `
+        );
+
+        const rows = codes.map((c) => {
+          const status = c.used_at 
+            ? `<span class="badge inactive">استفاده شده: ${escapeHtml(c.display_name || c.telegram_id)}</span>` 
+            : `<span class="badge active">آزاد</span>`;
+          
+          return `
+            <tr>
+              <td style="font-family:monospace; font-size:14px;">${escapeHtml(c.code)}</td>
+              <td>${status}</td>
+              <td>${c.created_at.substring(0, 10)}</td>
+            </tr>
+          `;
+        }).join("");
+
+        const content = `
+          <div class="top-row">
+            <h3>مدیریت لایسنس‌ها</h3>
+            <form method="post" action="/admin/licenses/create" style="display:flex; gap:8px;">
+              <input type="text" name="new_code" placeholder="کد لایسنس جدید..." required style="margin:0;" />
+              <button type="submit">افزودن کد</button>
+            </form>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>کد لایسنس</th>
+                <th>وضعیت</th>
+                <th>تاریخ ایجاد</th>
+              </tr>
+            </thead>
+            <tbody>${rows || "<tr><td colspan='3'>هیچ کدی تعریف نشده.</td></tr>"}</tbody>
+          </table>
+        `;
+        return htmlResponse(renderAdminLayout("لایسنس‌ها", content, "licenses"));
+      }
+
+      if (request.method === "POST" && url.pathname === "/admin/licenses/create") {
+        if (!(await isAdminAuthed(request, env))) return redirect("/admin");
+        
+        const form = await parseForm(request);
+        const newCode = (form.get("new_code") || "").toString().trim();
+
+        if (newCode) {
+          try {
+            await execute(env, `INSERT INTO access_codes (code) VALUES (?)`, [newCode]);
+          } catch (e) {
+            // کد تکراری یا ارور دیگر
+          }
+        }
+        return redirect("/admin/licenses");
       }
 
       // Root
@@ -796,51 +837,27 @@ export default {
 
       return new Response("Not found", { status: 404 });
 
- } catch (err: any) {
+    } catch (err: any) {
       console.error("Global Error:", err);
       return new Response("Internal Server Error", { status: 500 });
     }
   }, 
-  // این بخش هر ساعت خودکار اجرا می‌شود
+  
   async scheduled(event: any, env: Env, ctx: any): Promise<void> {
     ctx.waitUntil((async () => {
       console.log("🔄 Starting hourly cleanup job...");
-
-      // ۱. پاکسازی دوئل‌های قدیمی (با تابع اصلاح شده)
       await cleanupOldMatches(env);
-      
-      // ۲. پاکسازی سشن‌های ادمین منقضی شده
       await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
-
-      // ۳. [جدید] جلوگیری از انباشت لاگ‌ها: حذف لاگ‌های قدیمی‌تر از ۲ ماه
-      // چون لیدربورد فقط تا ۳۰ روز را نیاز دارد، ۶۰ روز نگه می‌داریم که مطمئن باشیم
-      await execute(
-        env, 
-        "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')"
-      );
-
-      // ۴. [جدید] پاکسازی سشن‌های ریدینگ و رفلکشنِ رها شده (بعد از ۲۴ ساعت)
-      // این‌ها فقط فضا اشغال می‌کنند و دیگر قابل ادامه دادن نیستند
-      await execute(
-        env,
-        `DELETE FROM reading_sessions 
-         WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`
-      );
-      
-      // نکته: سوالات ریدینگ (user_text_question_history) چون با CASCADE وصل نیستند، 
-      // بهتر است دستی پاک شوند یا بپذیریم که به عنوان تاریخچه بمانند (برای آمار خوب است).
-      // اما سشن خالی ارزشی ندارد.
-
-      await execute(
-        env,
-        `DELETE FROM reflection_sessions 
-         WHERE ai_score IS NULL AND created_at < datetime('now', '-1 day')`
-      );
-      
+      await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");
+      await execute(env, `DELETE FROM reading_sessions WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`);
+      await execute(env, `DELETE FROM reflection_sessions WHERE ai_score IS NULL AND created_at < datetime('now', '-1 day')`);
       console.log("✅ Cleanup job completed successfully.");
     })());
   }
 };
+
+// توابع کمکی ساخت فرم (Form Builders)
+
 function renderWordForm(word: any, heading: string): string {
   return `
     <h2>${escapeHtml(heading)}</h2>
@@ -939,6 +956,11 @@ function renderUserForm(user: any, heading: string): string {
 
       <label>مجموع امتیاز (XP):</label>
       <input type="number" name="xp_total" value="${user.xp_total}" />
+
+      <label style="margin-top:10px; display:block;">
+        <input type="checkbox" name="is_approved" value="1" ${user.is_approved ? "checked" : ""} />
+        کاربر تایید شده است (اجازه دسترسی دارد)
+      </label>
 
       <div style="margin-top:12px;">
         <button type="submit">ذخیره تغییرات</button>
