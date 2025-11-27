@@ -17,7 +17,7 @@ import {
   getUserCorrectCountInMatch,
   maybeFinalizeMatch
 } from "../../db/duels";
-import { addXpForDuelMatch } from "../../db/xp";
+import { addXpForDuelMatch, checkAndUpdateStreak } from "../../db/xp"; // <--- checkAndUpdateStreak اضافه شد
 import { CB_PREFIX } from "../../config/constants";
 
 export async function startDuelEasyForUser(env: Env, update: TelegramUpdate): Promise<void> {
@@ -265,6 +265,12 @@ const isCorrect = chosenOption === q.correct_option;
     else result = "lose";
 
     const xp = await addXpForDuelMatch(env, player1.id, finalMatch.id, player1Correct, totalQuestions, result);
+    
+    // --- بخش جدید مربوط به Streak برای نفر اول ---
+    const sMsg1 = await checkAndUpdateStreak(env, player1.id);
+    if (sMsg1) await sendMessage(env, player1.telegram_id, sMsg1);
+    // ------------------------------------------
+
     const text = buildDuelSummaryText(result, player1Correct, player2Correct, totalQuestions, xp, player2);
     await sendMessage(env, player1.telegram_id, text);
   }
@@ -276,6 +282,12 @@ const isCorrect = chosenOption === q.correct_option;
     else result = "lose";
 
     const xp = await addXpForDuelMatch(env, player2.id, finalMatch.id, player2Correct, totalQuestions, result);
+    
+    // --- بخش جدید مربوط به Streak برای نفر دوم ---
+    const sMsg2 = await checkAndUpdateStreak(env, player2.id);
+    if (sMsg2) await sendMessage(env, player2.telegram_id, sMsg2);
+    // ------------------------------------------
+
     const text = buildDuelSummaryText(result, player2Correct, player1Correct, totalQuestions, xp, player1);
     await sendMessage(env, player2.telegram_id, text);
   }
