@@ -17,7 +17,7 @@ import {
   ReadingSession
 } from "../../db/reading";
 import { queryAll, queryOne, execute } from "../../db/client";
-import { calculateAndPrepareXpForReading, addXpForReadingSession } from "../../db/xp";
+import { calculateAndPrepareXpForReading, addXpForReadingSession, checkAndUpdateStreak } from "../../db/xp"; // <--- checkAndUpdateStreak اضافه شد
 import { generateReadingQuestionsWithGemini } from "../../ai/gemini";
 import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
 
@@ -314,13 +314,19 @@ async function sendReadingSummary(
   // client.ts export function prepare(...) must be available
   // We assume prepare is imported from client
   const { prepare } = require("../../db/client"); // Dynamic import or just ensure it's imported at top
-  // Actually it is imported at top: import { ... prepare } from "../../db/client"; 
   
   batchStatements.push(prepare(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, session.id]));
 
   if (batchStatements.length > 0) {
     await env.DB.batch(batchStatements);
   }
+
+  // --- بخش جدید مربوط به Streak ---
+  const streakMsg = await checkAndUpdateStreak(env, user.id);
+  if (streakMsg) {
+     await sendMessage(env, chatId, streakMsg);
+  }
+  // -------------------------------
 
   let text = `نتیجه‌ی این تست درک مطلب:\n\n`;
   text += `✅ تعداد پاسخ‌های درست: <b>${correct}</b> از <b>${total}</b>\n`;
@@ -352,4 +358,3 @@ function getOptionTextForRow(row: SummaryQuestionRow, letter: string): string {
     default: return "";
   }
 }
-
