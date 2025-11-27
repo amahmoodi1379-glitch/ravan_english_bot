@@ -68,7 +68,9 @@ function renderAdminLayout(title: string, content: string, section: string = "")
       <a href="/admin/texts" style="margin-right: 8px;${
         section === "texts" ? " font-weight:bold;" : ""
       }">متن‌ها</a>
-      <a href="/admin/logout" style="float: left;">خروج</a>
+      <a href="/admin/users" style="margin-right: 8px;${   
+        section === "users" ? " font-weight:bold;" : ""    
+      }">کاربران</a>                                       <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;
 
@@ -664,6 +666,126 @@ export default {
         return redirect("/admin/texts");
       }
 
+      // Admin: لیست کاربران (اضافه شده)
+      if (request.method === "GET" && url.pathname === "/admin/users") {
+        if (!(await isAdminAuthed(request, env))) {
+          return redirect("/admin");
+        }
+
+        const search = (url.searchParams.get("q") || "").trim();
+        let sql = `
+          SELECT id, telegram_id, username, display_name, xp_total, created_at
+          FROM users
+          WHERE 1 = 1
+        `;
+        const params: any[] = [];
+        if (search) {
+          sql += ` AND (display_name LIKE ? OR username LIKE ? OR cast(telegram_id as text) LIKE ?)`;
+          const like = `%${search}%`;
+          params.push(like, like, like);
+        }
+        sql += ` ORDER BY id DESC LIMIT 50`;
+
+        const users = await queryAll<any>(env, sql, params);
+
+        const rowsHtml = users
+          .map((u: any) => {
+            return `
+              <tr>
+                <td>${u.id}</td>
+                <td>${u.telegram_id}</td>
+                <td>${u.username ? escapeHtml(u.username) : "-"}</td>
+                <td>${escapeHtml(u.display_name || "")}</td>
+                <td><b>${u.xp_total}</b></td>
+                <td>${u.created_at.substring(0, 10)}</td>
+                <td class="actions">
+                  <a href="/admin/users/edit?id=${u.id}">ویرایش</a>
+                </td>
+              </tr>
+            `;
+          })
+          .join("");
+
+        const content = `
+          <div class="top-row">
+            <form method="get" action="/admin/users" style="flex:1; display:flex; gap:8px;">
+              <input type="text" name="q" placeholder="جستجو (نام، آیدی تلگرام...)" value="${escapeHtml(search)}" style="margin:0; max-width:250px;" />
+              <button type="submit" class="secondary">جستجو</button>
+            </form>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Telegram ID</th>
+                <th>Username</th>
+                <th>نام نمایشی</th>
+                <th>XP</th>
+                <th>عضویت</th>
+                <th>عملیات</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || "<tr><td colspan='7'>هیچ کاربری پیدا نشد.</td></tr>"}
+            </tbody>
+          </table>
+        `;
+
+        return htmlResponse(renderAdminLayout("مدیریت کاربران", content, "users"));
+      }
+
+      // Admin: فرم ویرایش کاربر (اضافه شده)
+      if (request.method === "GET" && url.pathname === "/admin/users/edit") {
+        if (!(await isAdminAuthed(request, env))) {
+          return redirect("/admin");
+        }
+
+        const idParam = url.searchParams.get("id");
+        const id = idParam ? Number(idParam) : 0;
+        if (!id) return htmlResponse("شناسه کاربر نامعتبر است.", 400);
+
+        const userRow = await queryOne<any>(
+          env,
+          `SELECT * FROM users WHERE id = ?`,
+          [id]
+        );
+
+        if (!userRow) return htmlResponse("کاربر پیدا نشد.", 404);
+
+        const content = renderUserForm(userRow, "ویرایش کاربر");
+        return htmlResponse(renderAdminLayout(`ویرایش کاربر ${userRow.id}`, content, "users"));
+      }
+
+      // Admin: ذخیره تغییرات کاربر (اضافه شده)
+      if (request.method === "POST" && url.pathname === "/admin/users/save") {
+        if (!(await isAdminAuthed(request, env))) {
+          return redirect("/admin");
+        }
+
+        const form = await parseForm(request);
+        const idStr = (form.get("id") || "").toString().trim();
+        const displayName = (form.get("display_name") || "").toString().trim();
+        const xpTotalStr = (form.get("xp_total") || "0").toString().trim();
+
+        if (idStr) {
+          const id = Number(idStr);
+          const xpTotal = Number(xpTotalStr);
+          
+          await execute(
+            env,
+            `
+            UPDATE users
+            SET display_name = ?, xp_total = ?, updated_at = datetime('now')
+            WHERE id = ?
+            `,
+            [displayName, xpTotal, id]
+          );
+        }
+
+        return redirect("/admin/users");
+      }
+
       // Root
       if (request.method === "GET" && url.pathname === "/") {
         return new Response("OK from ravan_english_bot Worker ✅", {
@@ -799,3 +921,29 @@ function renderTextForm(text: any, heading: string): string {
   `;
 }
 
+function renderUserForm(user: any, heading: string): string {
+  return `
+    <h2>${escapeHtml(heading)}</h2>
+    <div style="background:#eee; padding:10px; border-radius:6px; margin-bottom:10px; font-size:12px;">
+      <b>اطلاعات ثابت:</b><br/>
+      Telegram ID: ${user.telegram_id}<br/>
+      Username: ${user.username || "-"}<br/>
+      نام اصلی: ${user.first_name || ""} ${user.last_name || ""}
+    </div>
+
+    <form method="post" action="/admin/users/save">
+      <input type="hidden" name="id" value="${user.id}" />
+
+      <label>نام نمایشی (Display Name):</label>
+      <input type="text" name="display_name" value="${escapeHtml(user.display_name || "")}" />
+
+      <label>مجموع امتیاز (XP):</label>
+      <input type="number" name="xp_total" value="${user.xp_total}" />
+
+      <div style="margin-top:12px;">
+        <button type="submit">ذخیره تغییرات</button>
+        <a href="/admin/users"><button type="button" class="secondary">انصراف</button></a>
+      </div>
+    </form>
+  `;
+}
