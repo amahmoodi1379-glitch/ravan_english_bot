@@ -92,3 +92,12 @@ export async function getUserById(env: Env, userId: number): Promise<DbUser | nu
   );
   return user ?? null;
 }
+
+// این تابع فقط کاربر را می‌گیرد، اگر نباشد null برمی‌گرداند (چیزی نمی‌سازد)
+export async function getUserByTelegramId(env: Env, telegramId: number): Promise<DbUser | null> {
+  return await queryOne<DbUser>(
+    env, 
+    "SELECT * FROM users WHERE telegram_id = ?", 
+    [telegramId]
+  );
+}
