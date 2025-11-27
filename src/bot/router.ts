@@ -49,8 +49,7 @@ import {
 } from "./handlers/profile";
 import { startReflectionForUser, handleReflectionAnswer } from "./handlers/reflection";
 import { CB_PREFIX } from "../config/constants";
-// --- ایمپورت‌های جدید اضافه شده ---
-import { getOrCreateUser } from "../db/users";
+import { getOrCreateUser, getUserByTelegramId } from "../db/users";
 import { queryOne, execute } from "../db/client";
 
 export interface TelegramUser {
@@ -143,7 +142,6 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   }
 }
 
-// --- تابع هندل مسیج جدید (با قابلیت چک کردن لایسنس) ---
 async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
   if (!message) return;
@@ -156,15 +154,14 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // 1. دریافت اطلاعات کاربر از دیتابیس
-  const user = await getOrCreateUser(env, tgUser);
+  // 1. اول فقط چک می‌کنیم کاربر قبلاً ثبت نام کرده یا نه (بدون ساختن)
+  let user = await getUserByTelegramId(env, tgUser.id);
 
-  // 2. چک کردن وضعیت تایید (لایسنس)
-  if (!user.is_approved) {
-    // اگر کاربر کدی ارسال کرده، بررسی کن
+  // 2. اگر کاربر در دیتابیس نیست (یعنی هنوز ثبت نام نشده)
+  if (!user) {
     const inputCode = text.trim();
-    
-    // چک کنیم آیا این کد در جدول کدهای ما وجود دارد و استفاده نشده؟
+
+    // چک می‌کنیم آیا متنی که فرستاده، یک کد لایسنس معتبر و آزاد است؟
     const codeRow = await queryOne<{ code: string }>(
       env,
       `SELECT code FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
@@ -172,32 +169,68 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     );
 
     if (codeRow) {
-      // کد معتبر است!
+      // عالی! کد درست است. حالا کاربر را در دیتابیس می‌سازیم.
+      user = await getOrCreateUser(env, tgUser);
+
+      // کد را باطل می‌کنیم و کاربر را تایید می‌کنیم
       const now = new Date().toISOString();
-      
-      // الف: کد را باطل کن (بزن به نام این کاربر)
       await execute(
         env,
         `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ?`,
         [user.id, now, inputCode]
       );
-
-      // ب: کاربر را تایید کن
       await execute(
         env,
         `UPDATE users SET is_approved = 1 WHERE id = ?`,
         [user.id]
       );
 
-      await sendMessage(env, chatId, "✅ تبریک! لایسنس شما تایید شد.\nحالا می‌تونی از ربات استفاده کنی. بزن روی /start");
+      // چون تازه ساخته شده، user.is_approved هنوز صفره تو متغیر، دستی یک می‌کنیم
+      user.is_approved = 1;
+
+      await sendMessage(env, chatId, "✅ تبریک! لایسنس شما تایید شد.\nثبت‌نام شما انجام شد و حالا می‌تونی از ربات استفاده کنی. بزن روی /start");
+      return;
     } else {
-      // کد نامعتبر یا قبلا استفاده شده
-      await sendMessage(env, chatId, "⛔️ شما مجوز استفاده از این ربات را ندارید.\nلطفاً کد لایسنس معتبر خود را ارسال کنید.");
+      // کاربر نیست و کدش هم غلطه یا اصلاً کد نیست
+      await sendMessage(
+        env,
+        chatId,
+        "⛔️ این ربات خصوصی است.\n\nشما هنوز عضو نشده‌اید. لطفاً **کد لایسنس** خود را ارسال کنید تا اجازه ورود داده شود."
+      );
+      return; // مهم: اینجا متوقف می‌شیم و کاربر در دیتابیس ذخیره نمی‌شه!
     }
-    return; // <--- خیلی مهم: اینجا تابع را متوقف می‌کنیم تا بقیه دستورات اجرا نشوند
   }
 
-  // --- از اینجا به بعد کدهای قبلی ربات اجرا می‌شوند (چون کاربر تایید شده است) ---
+  // 3. اگر کاربر در دیتابیس هست، اما هنوز تایید نشده (شاید دستی ساختیم یا از قبل بوده)
+  if (user && !user.is_approved) {
+    const inputCode = text.trim();
+    const codeRow = await queryOne<{ code: string }>(
+      env,
+      `SELECT code FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
+      [inputCode]
+    );
+
+    if (codeRow) {
+      const now = new Date().toISOString();
+      await execute(
+        env,
+        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ?`,
+        [user.id, now, inputCode]
+      );
+      await execute(
+        env,
+        `UPDATE users SET is_approved = 1 WHERE id = ?`,
+        [user.id]
+      );
+
+      await sendMessage(env, chatId, "✅ اکانت شما فعال شد! مجدد تلاش کنید.");
+    } else {
+      await sendMessage(env, chatId, "⛔️ اکانت شما هنوز تایید نشده است. لطفاً کد لایسنس صحیح را ارسال کنید.");
+    }
+    return;
+  }
+
+  // --- از اینجا به بعد یعنی کاربر هم هست و هم تایید شده ---
 
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);
@@ -281,7 +314,7 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
   const wasReflection = await handleReflectionAnswer(env, update, text);
   if (wasReflection) {
-    return; 
+    return;
   }
 
   await sendMessage(
