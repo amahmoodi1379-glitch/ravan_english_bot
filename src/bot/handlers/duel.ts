@@ -41,13 +41,22 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
 
   if (!match) {
     // ... (کد ساخت مچ جدید بدون تغییر) ...
+// 1. ساخت مچ اولیه
     match = await createDuelMatch(env, difficulty, user.id);
+    
+    // 2. تلاش برای ساخت یا پیدا کردن سوال
     await ensureDuelQuestions(env, match.id, difficulty);
 
+    // 3. چک کردن اینکه آیا سوالی وجود دارد؟
     const totalQ = await getTotalQuestionsInMatch(env, match.id);
+    
     if (totalQ === 0) {
-        // ... (ارسال پیام خطا) ...
-        await sendMessage(env, chatId, "فعلاً سوال کافی برای دوئل در این سطح وجود ندارد ❗️");
+        // === بخش اصلاح شده: حذف مچ خراب ===
+        // اگر سوال ساخته نشد، مچ را پاک می‌کنیم تا نفر بعدی در آن گیر نکند
+        await env.DB.prepare("DELETE FROM duel_matches WHERE id = ?").bind(match.id).run();
+        // ==================================
+
+        await sendMessage(env, chatId, "متاسفانه نتوانستیم سوالات دوئل را آماده کنیم. لطفاً چند لحظه دیگر دوباره تلاش کنید ❗️");
         return;
     }
     // ... (پیام شروع و ارسال سوال اول) ...
