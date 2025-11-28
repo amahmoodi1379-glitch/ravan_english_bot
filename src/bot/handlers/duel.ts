@@ -139,16 +139,18 @@ async function sendNextDuelQuestion(
     `3️⃣ ${q.option_c}\n` +
     `4️⃣ ${q.option_d}`;
 
+  // === اصلاح شده: حذف duelId از داده‌های دکمه برای کاهش حجم ===
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "1", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:A` },
-        { text: "2", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:B` },
-        { text: "3", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:C` },
-        { text: "4", callback_data: `${CB_PREFIX.DUEL}:${duelId}:${q.duel_question_id}:D` }
+        { text: "1", callback_data: `${CB_PREFIX.DUEL}:${q.duel_question_id}:A` },
+        { text: "2", callback_data: `${CB_PREFIX.DUEL}:${q.duel_question_id}:B` },
+        { text: "3", callback_data: `${CB_PREFIX.DUEL}:${q.duel_question_id}:C` },
+        { text: "4", callback_data: `${CB_PREFIX.DUEL}:${q.duel_question_id}:D` }
       ]
     ]
   };
+  // ==========================================================
 
   await sendMessage(env, chatId, messageText, { reply_markup: replyMarkup });
   return true;
@@ -158,19 +160,21 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
   const data = callbackQuery.data ?? "";
   const parts = data.split(":"); 
   
-  if (parts.length !== 4 || parts[0] !== CB_PREFIX.DUEL) {
+  // === تغییر ۱: انتظار داریم ۳ بخش داشته باشیم (قبلاً ۴ تا بود) ===
+  // فرمت جدید: d:questionId:option
+  if (parts.length !== 3 || parts[0] !== CB_PREFIX.DUEL) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
 
-  const duelId = Number(parts[1]);
-  const duelQuestionId = Number(parts[2]);
-  const chosenOption = parts[3];
+  const duelQuestionId = Number(parts[1]);
+  const chosenOption = parts[2];
 
-  if (!Number.isFinite(duelId) || !Number.isFinite(duelQuestionId)) {
+  if (!Number.isFinite(duelQuestionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
+  // ============================================================
 
   const tgUser = callbackQuery.from;
   const message = callbackQuery.message;
@@ -181,6 +185,16 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
 
   const chatId = message.chat.id;
   const user = await getOrCreateUser(env, tgUser);
+
+  // === تغییر ۲: اول سوال رو پیدا می‌کنیم تا شناسه دوئل رو بفهمیم ===
+  const q = await getDuelQuestionById(env, duelQuestionId);
+  if (!q) {
+    await answerCallbackQuery(env, callbackQuery.id, "سوال این دوئل پیدا نشد ❗️");
+    return;
+  }
+
+  const duelId = q.duel_id; // شناسه دوئل را از روی سوال استخراج کردیم
+  // ============================================================
 
   const match = await getDuelMatchById(env, duelId);
   if (!match) {
@@ -193,19 +207,11 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     return;
   }
 
-  const q = await getDuelQuestionById(env, duelQuestionId);
-  if (!q) {
-    await answerCallbackQuery(env, callbackQuery.id, "سوال این دوئل پیدا نشد ❗️");
-    return;
-  }
-
-const isCorrect = chosenOption === q.correct_option;
+  const isCorrect = chosenOption === q.correct_option;
 
   try {
-    // تلاش برای ثبت جواب
     await recordDuelAnswer(env, duelId, duelQuestionId, user.id, chosenOption, isCorrect);
   } catch (e) {
-    // اگه ارور داد (یعنی قبلاً ثبت شده)، فقط لودینگ رو ببند و کار رو تموم کن
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
@@ -222,7 +228,13 @@ const isCorrect = chosenOption === q.correct_option;
     }
   };
   const correctNum = getOptionNumber(q.correct_option);
-  const correctText = q[`option_${q.correct_option.toLowerCase()}` as keyof typeof q]; // trick to get text
+  // نکته ریز: چون q از جوین جداول آمده، فیلدهای option_a و ... را دارد
+  // ما برای نمایش متن گزینه صحیح از یک ترفند استفاده می‌کنیم یا مستقیم از q می‌خوانیم
+  let correctText = "";
+  if (q.correct_option === "A") correctText = q.option_a;
+  else if (q.correct_option === "B") correctText = q.option_b;
+  else if (q.correct_option === "C") correctText = q.option_c;
+  else if (q.correct_option === "D") correctText = q.option_d;
 
   let replyText: string;
   if (isCorrect) {
@@ -275,10 +287,8 @@ const isCorrect = chosenOption === q.correct_option;
 
     const xp = await addXpForDuelMatch(env, player1.id, finalMatch.id, player1Correct, totalQuestions, result);
     
-    // --- بخش جدید مربوط به Streak برای نفر اول ---
     const sMsg1 = await checkAndUpdateStreak(env, player1.id);
     if (sMsg1) await sendMessage(env, player1.telegram_id, sMsg1);
-    // ------------------------------------------
 
     const text = buildDuelSummaryText(result, player1Correct, player2Correct, totalQuestions, xp, player2);
     await sendMessage(env, player1.telegram_id, text);
@@ -292,10 +302,8 @@ const isCorrect = chosenOption === q.correct_option;
 
     const xp = await addXpForDuelMatch(env, player2.id, finalMatch.id, player2Correct, totalQuestions, result);
     
-    // --- بخش جدید مربوط به Streak برای نفر دوم ---
     const sMsg2 = await checkAndUpdateStreak(env, player2.id);
     if (sMsg2) await sendMessage(env, player2.telegram_id, sMsg2);
-    // ------------------------------------------
 
     const text = buildDuelSummaryText(result, player2Correct, player1Correct, totalQuestions, xp, player1);
     await sendMessage(env, player2.telegram_id, text);
