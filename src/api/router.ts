@@ -1,49 +1,56 @@
 import { Env } from "../types";
 import { getNextLeitnerQuestionAPI, submitAnswerAPI } from "./handlers/leitner";
 import { validateInitData } from "../utils/auth";
+import { getUserByTelegramId } from "../db/users"; // <--- ایمپورت مهم
 
 export async function handleApiRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
-  // --- Middleware امنیتی ---
-  // این بخش وظیفه احراز هویت را انجام می‌دهد
-  let userId: number | null = null;
+  // --- Middleware امنیتی و شناسایی کاربر ---
+  let dbUserId: number | null = null;
 
   // 1. دریافت initData از هدر Authorization
   const authHeader = request.headers.get("Authorization");
   
   if (authHeader) {
-    // اعتبارسنجی داده‌های تلگرام
-    userId = await validateInitData(authHeader, env.TELEGRAM_BOT_TOKEN);
+    // الف) اعتبارسنجی و گرفتن آیدی تلگرام
+    const telegramId = await validateInitData(authHeader, env.TELEGRAM_BOT_TOKEN);
+    
+    if (telegramId) {
+        // ب) تبدیل آیدی تلگرام به آیدی دیتابیس
+        const user = await getUserByTelegramId(env, telegramId);
+        if (user) {
+            dbUserId = user.id; // <--- این همان کلید طلایی است!
+        }
+    }
   }
 
-  // اگر احراز هویت شکست خورد، ارور 401 برمی‌گردانیم
-  if (!userId) {
-    return new Response(JSON.stringify({ error: "Unauthorized / Invalid Telegram Data" }), {
+  // اگر کاربر پیدا نشد یا معتبر نبود
+  if (!dbUserId) {
+    return new Response(JSON.stringify({ error: "Unauthorized User" }), {
       status: 401,
       headers: { "Content-Type": "application/json" }
     });
   }
   // -------------------------
 
-  // حالا که مطمئنیم userId معتبر و واقعی است، درخواست‌ها را پردازش می‌کنیم:
+  // حالا همه درخواست‌ها با dbUserId واقعی انجام می‌شوند:
 
-  // مسیر دریافت سوال بعدی
+  // دریافت سوال بعدی
   if (request.method === "GET" && url.pathname === "/api/leitner/next") {
-    return await getNextLeitnerQuestionAPI(env, userId);
+    return await getNextLeitnerQuestionAPI(env, dbUserId);
   }
 
-  // مسیر ثبت جواب کاربر
+  // ثبت جواب
   if (request.method === "POST" && url.pathname === "/api/leitner/answer") {
     try {
       const body = await request.json() as any;
-      // اعتبارسنجی ورودی‌ها
       if (!body.questionId || !body.option) {
         return new Response(JSON.stringify({ error: "Missing data" }), { status: 400 });
       }
-      return await submitAnswerAPI(env, userId, body.questionId, body.option);
+      return await submitAnswerAPI(env, dbUserId, body.questionId, body.option);
     } catch (e) {
-      return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Server Error" }), { status: 500 });
     }
   }
 
