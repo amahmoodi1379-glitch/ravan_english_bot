@@ -1,5 +1,6 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare } from "./client";
+import { addXpForDuelMatch, checkAndUpdateStreak } from "./xp";
 import { generateWordQuestionsWithGemini } from "../ai/gemini";
 import { insertWordQuestions } from "./word_questions";
 
@@ -265,20 +266,74 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
   };
 }
 
-// پاکسازی دوئل‌های قدیمی و گیرکرده (نسخه اصلاح شده و بدون باگ)
+// پاکسازی هوشمند: پایان دادن به دوئل‌های رها شده و دادن امتیاز
 export async function cleanupOldMatches(env: Env): Promise<void> {
-  // ۱. دوئل‌های در حال اجرا که بیشتر از ۲۴ ساعت مانده‌اند -> منقضی کن
-  await execute(
+  // 1. پیدا کردن بازی‌هایی که بیش از ۱ ساعت در وضعیت in_progress مانده‌اند
+  const stuckMatches = await queryAll<DuelMatch>(
     env,
-    `UPDATE duel_matches 
-     SET status = 'expired', completed_at = datetime('now') 
-     WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`
+    `SELECT * FROM duel_matches 
+     WHERE status = 'in_progress' 
+     AND started_at < datetime('now', '-1 hour')`
   );
-  
-  // ۲. پاکسازی کامل دوئل‌های 'waiting' قدیمی (که هیچ‌وقت شروع نشدند)
-  // نکته مهم: اول باید سوالات و جواب‌های وابسته را پاک کنیم تا دیتابیس ارور ندهد
-  
-  // الف) حذف جواب‌های احتمالی (محض احتیاط)
+
+  for (const match of stuckMatches) {
+    // محاسبه امتیازات تا این لحظه
+    const p1Correct = await getUserCorrectCountInMatch(env, match.id, match.player1_id);
+    const p2Correct = match.player2_id ? await getUserCorrectCountInMatch(env, match.id, match.player2_id) : 0;
+    
+    let winnerUserId: number | null = null;
+    let isDraw = 0;
+    
+    // تعیین برنده بر اساس امتیازات فعلی (کسی که جا زده احتمالا امتیاز کمتری دارد)
+    if (p1Correct > p2Correct) {
+       winnerUserId = match.player1_id;
+       isDraw = 0;
+    } else if (p2Correct > p1Correct) {
+       winnerUserId = match.player2_id;
+       isDraw = 0;
+    } else {
+       winnerUserId = null;
+       isDraw = 1;
+    }
+
+    const now = new Date().toISOString();
+
+    // وضعیت بازی را به 'completed' تغییر می‌دهیم
+    await execute(
+      env,
+      `UPDATE duel_matches 
+       SET status = 'completed', 
+           player1_correct = ?, 
+           player2_correct = ?, 
+           winner_user_id = ?, 
+           is_draw = ?, 
+           completed_at = ? 
+       WHERE id = ?`,
+      [p1Correct, p2Correct, winnerUserId, isDraw, now, match.id]
+    );
+
+    // محاسبه و واریز XP برای بازیکن اول
+    const totalQ = 5; // فرض بر ۵ سوال
+    let p1Result: "win" | "draw" | "lose" = "lose";
+    if (isDraw) p1Result = "draw";
+    else if (winnerUserId === match.player1_id) p1Result = "win";
+    
+    await addXpForDuelMatch(env, match.player1_id, match.id, p1Correct, totalQ, p1Result);
+    await checkAndUpdateStreak(env, match.player1_id); // حفظ زنجیره
+
+    // محاسبه و واریز XP برای بازیکن دوم (اگر وجود داشته باشد)
+    if (match.player2_id) {
+       let p2Result: "win" | "draw" | "lose" = "lose";
+       if (isDraw) p2Result = "draw";
+       else if (winnerUserId === match.player2_id) p2Result = "win";
+       
+       await addXpForDuelMatch(env, match.player2_id, match.id, p2Correct, totalQ, p2Result);
+       await checkAndUpdateStreak(env, match.player2_id); // حفظ زنجیره
+    }
+  }
+
+  // 2. پاکسازی کامل دوئل‌های 'waiting' خیلی قدیمی (زباله‌روبی)
+  // الف) حذف جواب‌ها
   await execute(
     env,
     `DELETE FROM duel_answers 
@@ -288,7 +343,7 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
      )`
   );
 
-  // ب) حذف سوالات مربوط به آن دوئل‌ها
+  // ب) حذف سوالات
   await execute(
     env,
     `DELETE FROM duel_questions 
@@ -298,7 +353,7 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
      )`
   );
 
-  // ج) حالا که وابستگی‌ها پاک شد، خود مچ را پاک کن
+  // ج) حذف خود مچ
   await execute(
     env,
     `DELETE FROM duel_matches 
