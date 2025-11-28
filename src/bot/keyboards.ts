@@ -73,3 +73,45 @@ export function getProfileMenuKeyboard() {
     one_time_keyboard: false
   };
 }
+
+// === تابع جدید: کیبورد صفحه‌بندی شده برای لیست متن‌ها ===
+export function getPaginatedReadingKeyboard(
+  titles: string[], 
+  currentPage: number, 
+  totalPages: number
+) {
+  const keyboard: any[][] = [];
+  
+  // ۱. چیدن عنوان‌ها (۲ تا در هر سطر)
+  for (let i = 0; i < titles.length; i += 2) {
+    const chunk = titles.slice(i, i + 2);
+    keyboard.push(chunk.map(title => ({ text: title })));
+  }
+
+  // ۲. ردیف دکمه‌های ناوبری (بعدی / قبلی)
+  const navRow: any[] = [];
+  
+  // دکمه صفحه قبل (اگر در صفحه اول نباشیم)
+  if (currentPage > 1) {
+    navRow.push({ text: `▶️ صفحه ${currentPage - 1}` });
+  }
+  
+  // نشانگر وسط (فقط برای نمایش، قابل کلیک نیست)
+  navRow.push({ text: `--- ${currentPage}/${totalPages} ---` });
+  
+  // دکمه صفحه بعد (اگر به آخر نرسیده باشیم)
+  if (currentPage < totalPages) {
+    navRow.push({ text: `صفحه ${currentPage + 1} ◀️` });
+  }
+  
+  keyboard.push(navRow);
+
+  // ۳. دکمه بازگشت (همیشه پایین باشد)
+  keyboard.push([{ text: TRAINING_MENU_BUTTON_BACK }]);
+
+  return {
+    keyboard: keyboard,
+    resize_keyboard: true,
+    one_time_keyboard: false
+  };
+}
