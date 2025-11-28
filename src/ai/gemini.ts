@@ -180,11 +180,10 @@ Return ONLY valid JSON in this exact format (no markdown, no extra text):
 }
 
 function parseGeminiJson(raw: string, limit: number): AiGeneratedQuestion[] {
-  raw = raw.replace(/```json/g, "").replace(/```/g, "").trim();
-
   let parsed: any;
   try {
-    parsed = JSON.parse(raw);
+    // استفاده از تابع امن جدید
+    parsed = safeExtractJson(raw);
   } catch (err) {
     console.error("Failed to parse Gemini JSON:", raw);
     throw err;
@@ -263,16 +262,34 @@ Return ONLY valid JSON in this format:
 `.trim();
 
   const raw = await callGemini(env, prompt);
-  const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
   
   try {
-    const parsed = JSON.parse(cleaned);
+    // استفاده از تابع امن جدید
+    const parsed = safeExtractJson(raw);
+    
     return {
       score: typeof parsed.score === 'number' ? parsed.score : 0,
       feedback: typeof parsed.feedback === 'string' ? parsed.feedback : "بازخوردی ثبت نشد."
     };
   } catch (e) {
-    console.error("Failed to parse reflection evaluation:", cleaned);
+    console.error("Failed to parse reflection evaluation:", raw);
     return { score: 0, feedback: "خطا در دریافت بازخورد هوش مصنوعی." };
   }
+}
+
+// تابع کمکی: استخراج امن JSON از میان متن‌های اضافه
+function safeExtractJson(raw: string): any {
+  // ۱. حذف مارک‌داون‌های احتمالی
+  let text = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  // ۲. تلاش برای پیدا کردن محدوده JSON واقعی
+  const firstOpen = text.indexOf("{");
+  const lastClose = text.lastIndexOf("}");
+
+  if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+    text = text.substring(firstOpen, lastClose + 1);
+  }
+
+  // ۳. تلاش برای پارس کردن
+  return JSON.parse(text);
 }
