@@ -1,7 +1,7 @@
 import { Env } from "../types";
 import { getNextLeitnerQuestionAPI, submitAnswerAPI } from "./handlers/leitner";
 import { validateInitData } from "../utils/auth";
-import { getUserByTelegramId } from "../db/users"; // <--- ایمپورت مهم
+import { getUserByTelegramId } from "../db/users";
 
 export async function handleApiRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -20,7 +20,14 @@ export async function handleApiRequest(request: Request, env: Env): Promise<Resp
         // ب) تبدیل آیدی تلگرام به آیدی دیتابیس
         const user = await getUserByTelegramId(env, telegramId);
         if (user) {
-            dbUserId = user.id; // <--- این همان کلید طلایی است!
+            // 🛑 چک کردن لایسنس (فیکس امنیتی)
+            if (!user.is_approved) {
+                return new Response(JSON.stringify({ error: "License Required" }), {
+                    status: 403, // کد ۴۰۳ یعنی ممنوع
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+            dbUserId = user.id;
         }
     }
   }
@@ -34,7 +41,7 @@ export async function handleApiRequest(request: Request, env: Env): Promise<Resp
   }
   // -------------------------
 
-  // حالا همه درخواست‌ها با dbUserId واقعی انجام می‌شوند:
+  // حالا همه درخواست‌ها با dbUserId واقعی و تایید شده انجام می‌شوند:
 
   // دریافت سوال بعدی
   if (request.method === "GET" && url.pathname === "/api/leitner/next") {
