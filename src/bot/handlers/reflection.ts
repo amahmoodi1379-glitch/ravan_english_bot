@@ -34,10 +34,7 @@ export async function startReflectionForUser(env: Env, update: TelegramUpdate): 
 
   // 1. کلمات کاربر را بگیر
   const words = await getUserLearnedWords(env, user.id, 5);
-  
-  // 2. تولید متن توسط AI
-  const words = await getUserLearnedWords(env, user.id, 5);
-  
+    
   let paragraph: string;
   try {
     paragraph = await generateReflectionParagraph(env, words);
