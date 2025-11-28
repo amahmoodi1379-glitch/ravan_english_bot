@@ -15,6 +15,8 @@ export function getMiniAppHtml(): string {
           .card { background-color: var(--tg-theme-secondary-bg-color, #27272a); }
           .btn { transition: all 0.2s; }
           .btn:active { transform: scale(0.95); }
+          .fade-in { animation: fadeIn 0.3s ease-in-out; }
+          @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       </style>
   </head>
   <body class="flex flex-col items-center justify-center min-h-screen p-4 space-y-6 select-none">
@@ -24,17 +26,20 @@ export function getMiniAppHtml(): string {
           <span id="score">...</span>
       </div>
 
-      <div class="card w-full max-w-md p-8 rounded-3xl shadow-2xl text-center space-y-6 border border-gray-700/50">
-          <div class="text-xs uppercase tracking-widest opacity-50">Word of the moment</div>
-          <h1 id="word" class="text-4xl font-black text-blue-400 drop-shadow-lg">...</h1>
+      <div class="card w-full max-w-md p-8 rounded-3xl shadow-2xl text-center space-y-6 border border-gray-700/50 relative overflow-hidden">
           
-          <div id="quiz-area" class="hidden space-y-4">
-              <p id="question-text" class="text-lg font-medium opacity-90">...</p>
+          <div id="status-area" class="hidden mb-4">
+            <div id="status-icon" class="text-6xl drop-shadow-lg"></div>
+          </div>
+
+          <div id="quiz-area" class="hidden space-y-6 fade-in">
+              <p id="question-text" class="text-2xl font-bold leading-relaxed text-blue-100">...</p>
+              
               <div id="options" class="grid grid-cols-1 gap-3"></div>
           </div>
 
           <div id="loading" class="animate-pulse flex justify-center py-10">
-              <div class="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+              <div class="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
       </div>
 
@@ -46,78 +51,83 @@ export function getMiniAppHtml(): string {
           const tg = window.Telegram.WebApp;
           tg.expand();
 
-          // رشته امنیتی که تلگرام تولید کرده
           const initData = tg.initData; 
 
+          // المنت‌های صفحه
+          const els = {
+            loading: document.getElementById('loading'),
+            quizArea: document.getElementById('quiz-area'),
+            statusArea: document.getElementById('status-area'),
+            statusIcon: document.getElementById('status-icon'),
+            questionText: document.getElementById('question-text'),
+            optionsDiv: document.getElementById('options'),
+            nextBtn: document.getElementById('next-btn'),
+            score: document.getElementById('score')
+          };
+
           async function loadNext() {
-              document.getElementById('loading').classList.remove('hidden');
-              document.getElementById('quiz-area').classList.add('hidden');
-              document.getElementById('next-btn').classList.add('hidden');
-              document.getElementById('word').innerText = '...';
+              // ریست کردن وضعیت ظاهری
+              els.loading.classList.remove('hidden');
+              els.quizArea.classList.add('hidden');
+              els.statusArea.classList.add('hidden');
+              els.nextBtn.classList.add('hidden');
 
               try {
                   const res = await fetch('/api/leitner/next', {
                       method: 'GET',
-                      headers: {
-                          'Authorization': initData 
-                      }
+                      headers: { 'Authorization': initData }
                   });
 
-                  // مدیریت ارور لایسنس (جدید)
+                  // مدیریت خطای لایسنس
                   if (res.status === 403) {
-                      document.getElementById('loading').classList.add('hidden');
-                      document.getElementById('word').innerText = '⛔️';
-                      document.getElementById('question-text').innerHTML = 
-                        'شما هنوز عضو نشده‌اید.<br>لطفاً در ربات کد لایسنس خود را وارد کنید.';
-                      document.getElementById('question-text').classList.add('text-red-400');
-                      document.getElementById('quiz-area').classList.remove('hidden');
+                      showStatus('⛔️', 'شما هنوز عضو نشده‌اید.<br>لطفاً کد لایسنس خود را در ربات ارسال کنید.', 'text-red-400');
                       return;
                   }
 
+                  // مدیریت خطای احراز هویت
                   if (res.status === 401) {
-                      document.getElementById('word').innerText = 'خطای دسترسی';
-                      document.getElementById('question-text').innerText = 'لطفاً ربات را از داخل تلگرام باز کنید.';
-                      document.getElementById('loading').classList.add('hidden');
-                      document.getElementById('quiz-area').classList.remove('hidden');
+                      showStatus('⚠️', 'خطای دسترسی.<br>لطفاً ربات را از تلگرام باز کنید.', 'text-yellow-400');
                       return;
                   }
 
                   const data = await res.json();
-                  document.getElementById('loading').classList.add('hidden');
+                  els.loading.classList.add('hidden');
 
+                  // اگر کلمه‌ای نبود
                   if (data.status === 'empty') {
-                      document.getElementById('word').innerText = '🎉';
-                      document.getElementById('question-text').innerText = 'فعلاً هیچ کلمه‌ای برای مرور نداری!';
-                      document.getElementById('quiz-area').classList.remove('hidden');
+                      showStatus('🎉', 'آفرین! فعلاً هیچ کلمه‌ای برای مرور نداری.', 'text-green-400');
                       return;
                   }
 
-                  document.getElementById('word').innerText = data.word;
-                  document.getElementById('question-text').innerText = data.question;
+                  // نمایش سوال (بدون نمایش کلمه اصلی!)
+                  els.questionText.innerText = data.question;
+                  els.questionText.className = "text-2xl font-bold leading-relaxed text-blue-100"; // بازنشانی استایل
                   
-                  const optionsDiv = document.getElementById('options');
-                  optionsDiv.innerHTML = '';
-                  
+                  els.optionsDiv.innerHTML = '';
                   data.options.forEach((opt, idx) => {
                       const btn = document.createElement('button');
-                      btn.className = 'btn w-full py-3 rounded-xl bg-gray-700 hover:bg-gray-600 font-medium border border-gray-600';
+                      btn.className = 'btn w-full py-4 rounded-xl bg-gray-700 hover:bg-gray-600 font-medium border border-gray-600 text-lg';
                       btn.innerText = opt;
                       btn.onclick = () => checkAnswer(idx, data.id);
-                      optionsDiv.appendChild(btn);
+                      els.optionsDiv.appendChild(btn);
                   });
 
-                  document.getElementById('quiz-area').classList.remove('hidden');
+                  els.quizArea.classList.remove('hidden');
+
               } catch (e) {
                   console.error(e);
-                  document.getElementById('word').innerText = 'Error';
+                  showStatus('❌', 'خطایی رخ داد. لطفا دوباره تلاش کنید.', 'text-red-500');
+                  els.nextBtn.innerText = "تلاش مجدد";
+                  els.nextBtn.classList.remove('hidden');
               }
           }
 
           async function checkAnswer(selectedIdx, qId) {
               const options = ['A', 'B', 'C', 'D'];
               const selectedOption = options[selectedIdx];
-              const btns = document.getElementById('options').children;
+              const btns = els.optionsDiv.children;
 
+              // قفل کردن دکمه‌ها
               for(let btn of btns) {
                   btn.disabled = true;
                   btn.classList.add('opacity-50');
@@ -131,10 +141,9 @@ export function getMiniAppHtml(): string {
                       method: 'POST',
                       headers: { 
                           'Content-Type': 'application/json',
-                          'Authorization': initData // <--- ارسال هدر امنیتی
+                          'Authorization': initData
                       },
                       body: JSON.stringify({
-                          // دیگر نیازی به ارسال userId نیست، سرور خودش می‌فهمد
                           questionId: qId,
                           option: selectedOption
                       })
@@ -147,23 +156,22 @@ export function getMiniAppHtml(): string {
                       btns[selectedIdx].innerText = '✅ Correct!';
                       
                       if (result.xp > 0) {
-                          const scoreEl = document.getElementById('score');
-                          scoreEl.innerText = '+' + result.xp + ' XP';
-                          scoreEl.classList.add('text-green-400', 'font-bold');
+                          els.score.innerText = '+' + result.xp + ' XP';
+                          els.score.classList.add('text-green-400', 'font-bold');
                       }
                   } else {
                       btns[selectedIdx].classList.remove('bg-gray-700');
                       btns[selectedIdx].classList.add('bg-red-600');
                       btns[selectedIdx].innerText = '❌ Wrong';
                       
+                      // نمایش جواب درست
                       const correctIdx = options.indexOf(result.correctOption);
                       if (correctIdx !== -1) {
                           btns[correctIdx].classList.remove('opacity-50', 'bg-gray-700');
-                          btns[correctIdx].classList.add('bg-green-600');
+                          btns[correctIdx].classList.add('bg-green-600', 'ring-2', 'ring-green-400');
                       }
                   }
                   
-                  // ویبره زدن گوشی (Haptic Feedback) برای حس بهتر
                   if (result.correct) tg.HapticFeedback.notificationOccurred('success');
                   else tg.HapticFeedback.notificationOccurred('error');
 
@@ -171,7 +179,25 @@ export function getMiniAppHtml(): string {
                   btns[selectedIdx].innerText = 'Error ⚠️';
               }
               
-              document.getElementById('next-btn').classList.remove('hidden');
+              els.nextBtn.innerText = "ادامه";
+              els.nextBtn.classList.remove('hidden');
+          }
+
+          // تابع کمکی برای نمایش وضعیت‌های خاص (پایان، خطا و...)
+          function showStatus(icon, message, colorClass) {
+              els.loading.classList.add('hidden');
+              els.quizArea.classList.add('hidden');
+              
+              els.statusIcon.innerText = icon;
+              els.statusArea.classList.remove('hidden');
+              
+              // استفاده از فضای سوال برای نمایش پیام
+              els.questionText.innerHTML = message;
+              els.questionText.className = "text-lg font-medium " + colorClass;
+              els.quizArea.classList.remove('hidden');
+              
+              // پاک کردن گزینه‌ها
+              els.optionsDiv.innerHTML = '';
           }
 
           loadNext();
