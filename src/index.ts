@@ -2,6 +2,8 @@ import { Env } from "./types";
 import { handleTelegramUpdate, TelegramUpdate } from "./bot/router";
 import { queryAll, queryOne, execute } from "./db/client";
 import { cleanupOldMatches } from "./db/duels";
+import { handleApiRequest } from "./api/router";
+import { getMiniAppHtml } from "./web/views";
 
 function htmlResponse(html: string, status: number = 200): Response {
   return new Response(html, {
@@ -826,6 +828,15 @@ export default {
         }
         return redirect("/admin/licenses");
       }
+
+      // مینی اپ
+if (request.method === "GET" && url.pathname === "/webapp") {
+  return htmlResponse(getMiniAppHtml());
+}
+// API مینی اپ
+if (url.pathname.startsWith("/api/")) {
+  return await handleApiRequest(request, env);
+}
 
       // Root
       if (request.method === "GET" && url.pathname === "/") {
