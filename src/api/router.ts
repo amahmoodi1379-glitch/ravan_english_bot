@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { getNextLeitnerQuestionAPI, submitAnswerAPI } from "./handlers/leitner";
-import { validateInitData } from "../utils/auth"; // <--- ایمپورت جدید
+import { validateInitData } from "../utils/auth";
 
 export async function handleApiRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -13,8 +13,7 @@ export async function handleApiRequest(request: Request, env: Env): Promise<Resp
   const authHeader = request.headers.get("Authorization");
   
   if (authHeader) {
-    // انتظار داریم فرمت هدر این باشد: "twa-init-data <initDataString>"
-    // یا خود رشته خام را بفرستیم. برای سادگی فرض میکنیم خود رشته initData ارسال شده
+    // اعتبارسنجی داده‌های تلگرام
     userId = await validateInitData(authHeader, env.TELEGRAM_BOT_TOKEN);
   }
 
@@ -31,7 +30,6 @@ export async function handleApiRequest(request: Request, env: Env): Promise<Resp
 
   // مسیر دریافت سوال بعدی
   if (request.method === "GET" && url.pathname === "/api/leitner/next") {
-    // دیگر نیازی به گرفتن uid از URL نیست
     return await getNextLeitnerQuestionAPI(env, userId);
   }
 
@@ -39,7 +37,7 @@ export async function handleApiRequest(request: Request, env: Env): Promise<Resp
   if (request.method === "POST" && url.pathname === "/api/leitner/answer") {
     try {
       const body = await request.json() as any;
-      // نکته: userId را از body نمی‌خوانیم (چون ممکن است دروغ باشد)، از توکن معتبر می‌خوانیم
+      // اعتبارسنجی ورودی‌ها
       if (!body.questionId || !body.option) {
         return new Response(JSON.stringify({ error: "Missing data" }), { status: 400 });
       }
