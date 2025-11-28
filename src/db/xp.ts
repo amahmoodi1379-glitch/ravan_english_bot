@@ -139,19 +139,23 @@ export async function addXpForDuelMatch(
   return totalXp;
 }
 
-// چک کردن و آپدیت زنجیره (Streak)
+// چک کردن و آپدیت زنجیره (Streak) با پشتیبانی از تایم‌زون
 export async function checkAndUpdateStreak(env: Env, userId: number): Promise<string | null> {
   const TARGET_DAILY_XP = 50; // هدف روزانه
+  
+  // تنظیم اختلاف ساعت (مثلاً برای ایران +3.5 ساعت)
+  // این باعث می‌شود "روز جدید" دقیقاً ساعت ۰۰:۰۰ به وقت محلی شروع شود
+  const TIME_MODIFIER = '+3.5 hours';
 
-  // 1. محاسبه کل XP امروز کاربر
-  const row = await env.DB.prepare(`
+  // 1. محاسبه XP امروز (با لحاظ کردن اختلاف ساعت)
+  const xpRow = await env.DB.prepare(`
     SELECT SUM(xp_delta) as total
     FROM activity_log
     WHERE user_id = ? 
-      AND created_at >= date('now', 'start of day')
-  `).bind(userId).first();
+      AND date(created_at, ?) = date('now', ?)
+  `).bind(userId, TIME_MODIFIER, TIME_MODIFIER).first();
 
-  const todayXp = (row?.total as number) || 0;
+  const todayXp = (xpRow?.total as number) || 0;
 
   // اگر هنوز به هدف نرسیده، کاری نداریم
   if (todayXp < TARGET_DAILY_XP) return null;
@@ -166,40 +170,42 @@ export async function checkAndUpdateStreak(env: Env, userId: number): Promise<st
   if (!user) return null;
 
   const currentStreak = (user.streak_count as number) || 0;
-  const lastDate = (user.last_streak_date as string) || "";
-  
-  // تاریخ امروز (فرمت YYYY-MM-DD برای مقایسه راحت)
-  const todayStr = new Date().toISOString().split('T')[0];
+  const lastStreakDate = (user.last_streak_date as string) || ""; // فرمت YYYY-MM-DD ذخیره شده
 
-  // اگر همین امروز قبلاً زنجیره رو ثبت کرده، دیگه اضافه نکن
-  if (lastDate.startsWith(todayStr)) {
+  // گرفتن تاریخ "امروز" و "دیروز" به وقت محلی از دیتابیس (برای دقت صددرصد)
+  const dateCheck = await env.DB.prepare(`
+    SELECT 
+      date('now', ?) as today_local,
+      date('now', ?, '-1 day') as yesterday_local
+  `).bind(TIME_MODIFIER, TIME_MODIFIER).first();
+
+  const todayLocal = dateCheck?.today_local as string;
+  const yesterdayLocal = dateCheck?.yesterday_local as string;
+
+  // اگر همین امروز (به وقت محلی) قبلاً زنجیره ثبت شده، دیگه اضافه نکن
+  if (lastStreakDate === todayLocal) {
     return null; 
   }
-
-  // محاسبه تاریخ دیروز
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
 
   let newStreak = 1;
   let message = "";
 
-  if (lastDate.startsWith(yesterdayStr)) {
+  if (lastStreakDate === yesterdayLocal) {
     // اگر آخرین بار دیروز بوده، زنجیره ادامه داره
     newStreak = currentStreak + 1;
     message = `🔥 زنجیره‌ی تو به ${newStreak} روز رسید! ایول!`;
   } else {
-    // اگر بیشتر از یک روز فاصله افتاده (یا بار اوله)، ریست میشه به 1
+    // اگر بیشتر فاصله افتاده (یا بار اوله)، ریست میشه به 1
     newStreak = 1;
     message = `🔥 زنجیره جدید شروع شد! امروز روز اوله.`;
   }
 
-  // 3. آپدیت دیتابیس
+  // 3. آپدیت دیتابیس با تاریخ محلی
   await env.DB.prepare(`
     UPDATE users 
     SET streak_count = ?, last_streak_date = ? 
     WHERE id = ?
-  `).bind(newStreak, new Date().toISOString(), userId).run();
+  `).bind(newStreak, todayLocal, userId).run();
 
   return message;
 }
