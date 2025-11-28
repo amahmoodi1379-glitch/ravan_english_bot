@@ -17,7 +17,8 @@ import {
   getUserCorrectCountInMatch,
   maybeFinalizeMatch
 } from "../../db/duels";
-import { addXpForDuelMatch, checkAndUpdateStreak } from "../../db/xp"; // <--- checkAndUpdateStreak اضافه شد
+import { addXpForDuelMatch, checkAndUpdateStreak } from "../../db/xp"; 
+import { queryOne } from "../../db/client";
 import { CB_PREFIX } from "../../config/constants";
 
 export async function startDuelEasyForUser(env: Env, update: TelegramUpdate): Promise<void> {
@@ -193,7 +194,19 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     return;
   }
 
-  const duelId = q.duel_id; // شناسه دوئل را از روی سوال استخراج کردیم
+  const duelId = q.duel_id; 
+  // === شروع تغییرات: جلوگیری از پاسخ تکراری ===
+  const existingAnswer = await queryOne<{ id: number }>(
+    env,
+    `SELECT id FROM duel_answers WHERE duel_id = ? AND duel_question_id = ? AND user_id = ?`,
+    [duelId, duelQuestionId, user.id]
+  );
+
+  if (existingAnswer) {
+    await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
+    return;
+  }
+  // === پایان تغییرات ===
   // ============================================================
 
   const match = await getDuelMatchById(env, duelId);
