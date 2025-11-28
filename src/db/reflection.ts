@@ -104,3 +104,11 @@ export async function getUserLearnedWords(
 
   return rows.map(r => r.english);
 }
+// تابع جدید: حذف تمرین ناتمام (برای وقتی که کاربر انصراف می‌دهد)
+export async function deletePendingReflectionSession(env: Env, userId: number): Promise<void> {
+  await execute(
+    env,
+    `DELETE FROM reflection_sessions WHERE user_id = ? AND ai_score IS NULL`,
+    [userId]
+  );
+}
