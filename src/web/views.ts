@@ -45,8 +45,9 @@ export function getMiniAppHtml(): string {
       <script>
           const tg = window.Telegram.WebApp;
           tg.expand();
-          // در نسخه واقعی، این آیدی باید با مکانیزم امنیتی initData چک شود
-          const userId = tg.initDataUnsafe?.user?.id || 0; 
+
+          // رشته امنیتی که تلگرام تولید کرده
+          const initData = tg.initData; 
 
           async function loadNext() {
               document.getElementById('loading').classList.remove('hidden');
@@ -55,9 +56,22 @@ export function getMiniAppHtml(): string {
               document.getElementById('word').innerText = '...';
 
               try {
-                  const res = await fetch('/api/leitner/next?uid=' + userId);
-                  const data = await res.json();
+                  // ارسال initData در هدر Authorization
+                  const res = await fetch('/api/leitner/next', {
+                      method: 'GET',
+                      headers: {
+                          'Authorization': initData 
+                      }
+                  });
 
+                  if (res.status === 401) {
+                      document.getElementById('word').innerText = 'خطای دسترسی';
+                      document.getElementById('question-text').innerText = 'لطفاً ربات را از داخل تلگرام باز کنید.';
+                      document.getElementById('loading').classList.add('hidden');
+                      return;
+                  }
+
+                  const data = await res.json();
                   document.getElementById('loading').classList.add('hidden');
 
                   if (data.status === 'empty') {
@@ -83,6 +97,7 @@ export function getMiniAppHtml(): string {
 
                   document.getElementById('quiz-area').classList.remove('hidden');
               } catch (e) {
+                  console.error(e);
                   document.getElementById('word').innerText = 'Error';
               }
           }
@@ -92,36 +107,34 @@ export function getMiniAppHtml(): string {
               const selectedOption = options[selectedIdx];
               const btns = document.getElementById('options').children;
 
-              // قفل کردن دکمه‌ها برای جلوگیری از کلیک مجدد
               for(let btn of btns) {
                   btn.disabled = true;
                   btn.classList.add('opacity-50');
               }
               
-              // حالت لودینگ روی دکمه انتخاب شده
               btns[selectedIdx].classList.remove('opacity-50');
               btns[selectedIdx].innerHTML = '⏳ ...';
 
               try {
-                  // ارسال درخواست به سرور
                   const res = await fetch('/api/leitner/answer', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: { 
+                          'Content-Type': 'application/json',
+                          'Authorization': initData // <--- ارسال هدر امنیتی
+                      },
                       body: JSON.stringify({
-                          userId: userId,
+                          // دیگر نیازی به ارسال userId نیست، سرور خودش می‌فهمد
                           questionId: qId,
                           option: selectedOption
                       })
                   });
                   const result = await res.json();
 
-                  // نمایش نتیجه (درست یا غلط)
                   if (result.correct) {
                       btns[selectedIdx].classList.remove('bg-gray-700');
-                      btns[selectedIdx].classList.add('bg-green-600'); // سبز برای درست
+                      btns[selectedIdx].classList.add('bg-green-600');
                       btns[selectedIdx].innerText = '✅ Correct!';
                       
-                      // آپدیت امتیاز در بالا سمت چپ
                       if (result.xp > 0) {
                           const scoreEl = document.getElementById('score');
                           scoreEl.innerText = '+' + result.xp + ' XP';
@@ -129,28 +142,24 @@ export function getMiniAppHtml(): string {
                       }
                   } else {
                       btns[selectedIdx].classList.remove('bg-gray-700');
-                      btns[selectedIdx].classList.add('bg-red-600'); // قرمز برای غلط
+                      btns[selectedIdx].classList.add('bg-red-600');
                       btns[selectedIdx].innerText = '❌ Wrong';
                       
-                      // نشان دادن جواب درست
                       const correctIdx = options.indexOf(result.correctOption);
                       if (correctIdx !== -1) {
                           btns[correctIdx].classList.remove('opacity-50', 'bg-gray-700');
                           btns[correctIdx].classList.add('bg-green-600');
                       }
                   }
-
-                  // اگر استریک داشتیم، آلرت بده (یا هر افکت دیگری)
-                  if (result.streak) {
-                      // اینجا می‌تونی یه انیمیشن آتش هم اضافه کنی!
-                      // alert(result.streak); 
-                  }
+                  
+                  // ویبره زدن گوشی (Haptic Feedback) برای حس بهتر
+                  if (result.correct) tg.HapticFeedback.notificationOccurred('success');
+                  else tg.HapticFeedback.notificationOccurred('error');
 
               } catch (e) {
                   btns[selectedIdx].innerText = 'Error ⚠️';
               }
               
-              // نمایش دکمه ادامه
               document.getElementById('next-btn').classList.remove('hidden');
           }
 
