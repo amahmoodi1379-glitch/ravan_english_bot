@@ -98,12 +98,26 @@ export async function joinDuelMatch(env: Env, matchId: number, userId: number): 
 }
 
 export async function ensureDuelQuestions(env: Env, matchId: number, difficulty: DuelDifficulty): Promise<void> {
-  const countRow = await queryOne<{ cnt: number }>(env, `SELECT COUNT(*) AS cnt FROM duel_questions WHERE duel_id = ?`, [matchId]);
-  if ((countRow?.cnt ?? 0) > 0) return;
+  // ۱. چک کردن کلی: اگر ۵ تا سوال کامل داریم، اصلاً ادامه نده
+  const totalQ = await getTotalQuestionsInMatch(env, matchId);
+  if (totalQ >= QUESTION_COUNT) return;
 
   const levelCond = difficulty === "easy" ? "AND level IN (1, 2)" : "AND level BETWEEN 1 AND 4";
 
   for (let idx = 1; idx <= QUESTION_COUNT; idx++) {
+    // === تغییر مهم اینجاست ===
+    // ۲. چک کردن دقیق: آیا سوال شماره "idx" (مثلاً سوال ۱) برای این بازی قبلاً ساخته شده؟
+    // اگر نفر قبلی همین الان این سوال رو ساخته باشه، ما دیگه نمیسازیمش.
+    const existing = await queryOne<{ id: number }>(
+      env,
+      `SELECT id FROM duel_questions WHERE duel_id = ? AND question_index = ?`,
+      [matchId, idx]
+    );
+
+    // اگر سوال وجود داشت، می‌پریم به دور بعدی حلقه (سوال بعدی)
+    if (existing) continue;
+    // ========================
+
     const wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
       env,
       `SELECT id, english, persian, level FROM words WHERE is_active = 1 ${levelCond} ORDER BY RANDOM() LIMIT 1`
@@ -158,6 +172,7 @@ export async function ensureDuelQuestions(env: Env, matchId: number, difficulty:
 
     if (!qRow) continue;
 
+    // ثبت سوال در دیتابیس
     await execute(
       env,
       `INSERT INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
