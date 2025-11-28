@@ -87,17 +87,70 @@ export function getMiniAppHtml(): string {
               }
           }
 
-          function checkAnswer(selectedIdx, qId) {
+          async function checkAnswer(selectedIdx, qId) {
+              const options = ['A', 'B', 'C', 'D'];
+              const selectedOption = options[selectedIdx];
               const btns = document.getElementById('options').children;
+
+              // قفل کردن دکمه‌ها برای جلوگیری از کلیک مجدد
               for(let btn of btns) {
                   btn.disabled = true;
                   btn.classList.add('opacity-50');
               }
-              btns[selectedIdx].classList.remove('bg-gray-700', 'opacity-50');
-              btns[selectedIdx].classList.add('bg-blue-600');
               
-              // اینجا می‌توانید درخواست POST به سرور بفرستید تا جواب ثبت شود
-              // فعلاً فقط دکمه ادامه را نشان می‌دهیم
+              // حالت لودینگ روی دکمه انتخاب شده
+              btns[selectedIdx].classList.remove('opacity-50');
+              btns[selectedIdx].innerHTML = '⏳ ...';
+
+              try {
+                  // ارسال درخواست به سرور
+                  const res = await fetch('/api/leitner/answer', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                          userId: userId,
+                          questionId: qId,
+                          option: selectedOption
+                      })
+                  });
+                  const result = await res.json();
+
+                  // نمایش نتیجه (درست یا غلط)
+                  if (result.correct) {
+                      btns[selectedIdx].classList.remove('bg-gray-700');
+                      btns[selectedIdx].classList.add('bg-green-600'); // سبز برای درست
+                      btns[selectedIdx].innerText = '✅ Correct!';
+                      
+                      // آپدیت امتیاز در بالا سمت چپ
+                      if (result.xp > 0) {
+                          const scoreEl = document.getElementById('score');
+                          scoreEl.innerText = '+' + result.xp + ' XP';
+                          scoreEl.classList.add('text-green-400', 'font-bold');
+                      }
+                  } else {
+                      btns[selectedIdx].classList.remove('bg-gray-700');
+                      btns[selectedIdx].classList.add('bg-red-600'); // قرمز برای غلط
+                      btns[selectedIdx].innerText = '❌ Wrong';
+                      
+                      // نشان دادن جواب درست
+                      const correctIdx = options.indexOf(result.correctOption);
+                      if (correctIdx !== -1) {
+                          btns[correctIdx].classList.remove('opacity-50', 'bg-gray-700');
+                          btns[correctIdx].classList.add('bg-green-600');
+                      }
+                  }
+
+                  // اگر استریک داشتیم، آلرت بده (یا هر افکت دیگری)
+                  if (result.streak) {
+                      // اینجا می‌تونی یه انیمیشن آتش هم اضافه کنی!
+                      // alert(result.streak); 
+                  }
+
+              } catch (e) {
+                  btns[selectedIdx].innerText = 'Error ⚠️';
+              }
+              
+              // نمایش دکمه ادامه
               document.getElementById('next-btn').classList.remove('hidden');
           }
 
