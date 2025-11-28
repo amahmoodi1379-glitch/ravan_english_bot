@@ -418,18 +418,16 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
         default: return "";
       }
     };
-    const getOptionText = (letter: string): string => {
-      switch (letter) {
-        case "A": return question.option_a;
-        case "B": return question.option_b;
-        case "C": return question.option_c;
-        case "D": return question.option_d;
-        default: return "";
-      }
-    };
+
+    // === اصلاح: استخراج متن گزینه صحیح به صورت صریح و امن ===
+    let correctText = "";
+    if (question.correct_option === "A") correctText = question.option_a;
+    else if (question.correct_option === "B") correctText = question.option_b;
+    else if (question.correct_option === "C") correctText = question.option_c;
+    else if (question.correct_option === "D") correctText = question.option_d;
+    // ========================================================
 
     const correctNum = getOptionNumber(question.correct_option);
-    const correctText = getOptionText(question.correct_option);
     let replyText: string;
     if (isCorrect) {
       replyText = `آفرین! ✅ جواب درست بود.\n\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;
