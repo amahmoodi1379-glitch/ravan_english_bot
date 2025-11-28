@@ -88,17 +88,37 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     return redirect("/admin");
   }
 
-  // --- مدیریت واژه‌ها ---
+  // --- مدیریت واژه‌ها (با صفحه‌بندی) ---
   if (url.pathname === "/admin/words") {
     const search = (url.searchParams.get("q") || "").trim();
-    let sql = `SELECT id, english, persian, level, lesson_name, is_active FROM words WHERE 1 = 1`;
-    const params: any[] = [];
+    // ۱. گرفتن شماره صفحه از آدرس (اگر نبود، صفحه ۱ فرض می‌شود)
+    const page = Math.max(1, Number(url.searchParams.get("page") || 1));
+    const limit = 50; // تعداد واژه در هر صفحه
+    const offset = (page - 1) * limit;
+
+    // ۲. ساخت شرط‌های جستجو
+    let whereSql = "FROM words WHERE 1 = 1";
+    const baseParams: any[] = [];
+    
     if (search) {
-      sql += ` AND (english LIKE ? OR persian LIKE ? OR lesson_name LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      whereSql += " AND (english LIKE ? OR persian LIKE ? OR lesson_name LIKE ?)";
+      baseParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
-    sql += ` ORDER BY id DESC LIMIT 100`;
-    const words = await queryAll<any>(env, sql, params);
+
+    // ۳. گرفتن تعداد کل واژه‌ها (برای محاسبه تعداد صفحات)
+    const countRow = await queryOne<{ total: number }>(
+      env, 
+      `SELECT COUNT(*) as total ${whereSql}`, 
+      baseParams
+    );
+    const totalCount = countRow?.total || 0;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+
+    // ۴. گرفتن خود واژه‌ها برای صفحه جاری
+    const dataSql = `SELECT id, english, persian, level, lesson_name, is_active ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`;
+    const dataParams = [...baseParams, limit, offset];
+    
+    const words = await queryAll<any>(env, dataSql, dataParams);
 
     const rowsHtml = words.map((w: any) => `
       <tr>
@@ -115,6 +135,16 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       </tr>
     `).join("");
 
+    // دکمه‌های صفحه‌بندی
+    const paginationHtml = `
+      <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
+        ${page > 1 ? `<a href="/admin/words?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
+        <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
+        ${page < totalPages ? `<a href="/admin/words?q=${escapeHtml(search)}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
+      </div>
+      <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} words</div>
+    `;
+
     const content = `
       <div class="top-row">
         <form method="get" action="/admin/words" style="flex:1; display:flex; gap:8px;">
@@ -124,6 +154,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         <div><a href="/admin/words/new"><button type="button">+ واژه‌ی جدید</button></a></div>
       </div>
       <table><thead><tr><th>ID</th><th>English</th><th>معنی فارسی</th><th>Level</th><th>درس</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='7'>هیچ واژه‌ای پیدا نشد.</td></tr>"}</tbody></table>
+      ${paginationHtml}
     `;
     return htmlResponse(renderAdminLayout("مدیریت واژه‌ها", content, "words"));
   }
