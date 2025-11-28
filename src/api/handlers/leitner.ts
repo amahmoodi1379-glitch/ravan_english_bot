@@ -1,9 +1,9 @@
-// فایل: src/api/handlers/leitner.ts
 import { Env } from "../../types";
-import { pickNextWordForUser } from "../../db/leitner"; // استفاده از کد موجود
-import { queryOne } from "../../db/client";
+import { pickNextWordForUser, getOrCreateUserWordState, prepareUpdateSm2 } from "../../db/leitner";
+import { queryOne, prepare, execute } from "../../db/client";
+import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
 
-// این تابع مسئول ساختن JSON برای سوال بعدی است
+// تابع ۱: دریافت سوال بعدی (برای نمایش در مینی‌اپ)
 export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promise<Response> {
   const word = await pickNextWordForUser(env, userId);
 
@@ -13,9 +13,6 @@ export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promi
     });
   }
 
-  // گرفتن یک سوال رندوم برای این کلمه (ساده‌سازی شده برای API)
-  // در کد اصلی شما logic پیچیده‌تری بود که می‌توان عیناً اینجا آورد
-  // اما برای شروع ساده نگه می‌داریم
   const question = await queryOne<{
     id: number; 
     question_text: string; 
@@ -29,7 +26,6 @@ export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promi
   );
 
   if (!question) {
-     // اگر کلمه هست ولی سوال ندارد (حالت خاص)
      return new Response(JSON.stringify({ status: 'empty' }), {
       headers: { "Content-Type": "application/json" }
     });
@@ -46,12 +42,7 @@ export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promi
   });
 }
 
-// ... (کدهای قبلی سر جایشان بمانند) ...
-import { getOrCreateUserWordState, prepareUpdateSm2 } from "../../db/leitner";
-import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
-import { prepare, execute } from "../../db/client";
-
-// این تابع مسئول دریافت جواب کاربر و ثبت آن در دیتابیس است
+// تابع ۲: ثبت جواب کاربر (ذخیره در دیتابیس)
 export async function submitAnswerAPI(env: Env, userId: number, questionId: number, selectedOption: string): Promise<Response> {
   // 1. پیدا کردن سوال و جواب درست
   const question = await queryOne<{
@@ -69,46 +60,38 @@ export async function submitAnswerAPI(env: Env, userId: number, questionId: numb
   const isCorrect = selectedOption === question.correct_option;
   const now = new Date().toISOString();
 
-  // 3. آماده‌سازی عملیات دیتابیس (Batch)
+  // 3. آماده‌سازی عملیات دیتابیس
   const batchStatements: any[] = [];
 
-  // الف) ثبت در تاریخچه
   batchStatements.push(prepare(
     env,
     `INSERT INTO user_word_question_history (user_id, word_id, question_id, context, is_correct, shown_at, answered_at) VALUES (?, ?, ?, 'leitner_miniapp', ?, ?, ?)`,
     [userId, question.word_id, questionId, isCorrect ? 1 : 0, now, now]
   ));
 
-  // ب) آپدیت الگوریتم لایتنر (SM2)
   const sm2Stmts = await prepareUpdateSm2(env, userId, question.word_id, isCorrect);
   batchStatements.push(...sm2Stmts);
 
-  // پ) اضافه کردن XP (فقط اگر درست بود)
   let xpGained = 0;
   if (isCorrect) {
-    // محاسبه مقدار XP بر اساس لول کلمه
     const xpStmts = prepareXpForLeitner(env, userId, question.word_id, question.level, true);
     batchStatements.push(...xpStmts);
-    // مقدار حدودی XP را برای نمایش به کاربر برمی‌گردانیم (کمی ساده‌سازی شده)
     xpGained = [5, 8, 12, 16][question.level - 1] || 5; 
   }
 
-  // اجرای همه تغییرات با هم
   if (batchStatements.length > 0) {
     await env.DB.batch(batchStatements);
   }
 
-  // ت) چک کردن زنجیره (Streak)
   let streakMessage = null;
   if (isCorrect) {
     streakMessage = await checkAndUpdateStreak(env, userId);
   }
 
-  // 4. بازگرداندن نتیجه به مینی‌اپ
   return new Response(JSON.stringify({
     status: 'ok',
     correct: isCorrect,
-    correctOption: question.correct_option, // جواب درست را می‌فرستیم تا اگر غلط زد نمایش دهیم
+    correctOption: question.correct_option,
     xp: xpGained,
     streak: streakMessage
   }), {
