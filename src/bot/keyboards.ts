@@ -74,7 +74,7 @@ export function getProfileMenuKeyboard() {
   };
 }
 
-// === تابع جدید: کیبورد صفحه‌بندی شده برای لیست متن‌ها ===
+// === تابع اصلاح شده: کیبورد هوشمند صفحه‌بندی ===
 export function getPaginatedReadingKeyboard(
   titles: string[], 
   currentPage: number, 
@@ -82,29 +82,31 @@ export function getPaginatedReadingKeyboard(
 ) {
   const keyboard: any[][] = [];
   
-  // ۱. چیدن عنوان‌ها (۲ تا در هر سطر)
+  // ۱. چیدن عنوان‌ها (۲ تا در هر سطر برای اینکه خیلی دراز نشود)
   for (let i = 0; i < titles.length; i += 2) {
     const chunk = titles.slice(i, i + 2);
     keyboard.push(chunk.map(title => ({ text: title })));
   }
 
-  // ۲. ردیف دکمه‌های ناوبری (بعدی / قبلی)
-  const navRow: any[] = [];
-  
-  // دکمه صفحه قبل (اگر در صفحه اول نباشیم)
-  if (currentPage > 1) {
-    navRow.push({ text: `▶️ صفحه ${currentPage - 1}` });
+  // ۲. مدیریت دکمه‌های ناوبری (فقط اگر بیشتر از ۱ صفحه داریم)
+  if (totalPages > 1) {
+    const navRow: any[] = [];
+    
+    // اگر صفحه اول نیستیم -> دکمه "صفحه قبل" را نشان بده
+    if (currentPage > 1) {
+      navRow.push({ text: `▶️ صفحه ${currentPage - 1}` });
+    }
+    
+    // اگر صفحه آخر نیستیم -> دکمه "صفحه بعد" را نشان بده
+    if (currentPage < totalPages) {
+      navRow.push({ text: `صفحه ${currentPage + 1} ◀️` });
+    }
+    
+    // اگر دکمه‌ای ساخته شد، آن را به کیبورد اضافه کن
+    if (navRow.length > 0) {
+      keyboard.push(navRow);
+    }
   }
-  
-  // نشانگر وسط (فقط برای نمایش، قابل کلیک نیست)
-  navRow.push({ text: `--- ${currentPage}/${totalPages} ---` });
-  
-  // دکمه صفحه بعد (اگر به آخر نرسیده باشیم)
-  if (currentPage < totalPages) {
-    navRow.push({ text: `صفحه ${currentPage + 1} ◀️` });
-  }
-  
-  keyboard.push(navRow);
 
   // ۳. دکمه بازگشت (همیشه پایین باشد)
   keyboard.push([{ text: TRAINING_MENU_BUTTON_BACK }]);
