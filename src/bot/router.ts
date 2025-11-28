@@ -49,6 +49,7 @@ import {
   handleSetDisplayNameCommand
 } from "./handlers/profile";
 import { startReflectionForUser, handleReflectionAnswer } from "./handlers/reflection";
+import { deletePendingReflectionSession } from "../db/reflection";
 import { CB_PREFIX } from "../config/constants";
 import { getOrCreateUser, getUserByTelegramId } from "../db/users";
 import { queryOne, execute } from "../db/client";
@@ -231,6 +232,33 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     }
     return;
   }
+
+  // --- کد جدید: پاکسازی تمرین‌های نیمه‌کاره با تغییر منو ---
+  // لیست تمام دکمه‌های منو که باعث خروج از حالت تمرین می‌شوند
+  const EXIT_COMMANDS = [
+    "/start",
+    MAIN_MENU_BUTTON_TRAINING,
+    MAIN_MENU_BUTTON_COMPETITIONS,
+    MAIN_MENU_BUTTON_PROFILE,
+    TRAINING_MENU_BUTTON_LEITNER,
+    TRAINING_MENU_BUTTON_READING,
+    TRAINING_MENU_BUTTON_REFLECTION,
+    TRAINING_MENU_BUTTON_BACK,
+    COMP_MENU_BUTTON_DUEL_EASY,
+    COMP_MENU_BUTTON_DUEL_HARD,
+    COMP_MENU_BUTTON_LEADERBOARD,
+    PROFILE_MENU_BUTTON_SETTINGS,
+    PROFILE_MENU_BUTTON_STATS,
+    PROFILE_MENU_BUTTON_SUMMARY
+  ];
+
+  // اگر پیام کاربر یکی از دکمه‌های بالا بود، سشن باز (Reflection) را پاک کن
+  if (EXIT_COMMANDS.includes(text) || text.startsWith("/setname")) {
+     if (user) {
+       await deletePendingReflectionSession(env, user.id);
+     }
+  }
+  // -------------------------------------------------------
 
   // --- از اینجا به بعد یعنی کاربر هم هست و هم تایید شده ---
 
