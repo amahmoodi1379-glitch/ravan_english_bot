@@ -45,3 +45,73 @@ export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promi
     headers: { "Content-Type": "application/json" }
   });
 }
+
+// ... (کدهای قبلی سر جایشان بمانند) ...
+import { getOrCreateUserWordState, prepareUpdateSm2 } from "../../db/leitner";
+import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
+import { prepare, execute } from "../../db/client";
+
+// این تابع مسئول دریافت جواب کاربر و ثبت آن در دیتابیس است
+export async function submitAnswerAPI(env: Env, userId: number, questionId: number, selectedOption: string): Promise<Response> {
+  // 1. پیدا کردن سوال و جواب درست
+  const question = await queryOne<{
+    id: number;
+    word_id: number;
+    correct_option: string;
+    level: number;
+  }>(env, `SELECT q.id, q.word_id, q.correct_option, w.level FROM word_questions q JOIN words w ON q.word_id = w.id WHERE q.id = ?`, [questionId]);
+
+  if (!question) {
+    return new Response(JSON.stringify({ error: "Question not found" }), { status: 404 });
+  }
+
+  // 2. بررسی درستی جواب
+  const isCorrect = selectedOption === question.correct_option;
+  const now = new Date().toISOString();
+
+  // 3. آماده‌سازی عملیات دیتابیس (Batch)
+  const batchStatements: any[] = [];
+
+  // الف) ثبت در تاریخچه
+  batchStatements.push(prepare(
+    env,
+    `INSERT INTO user_word_question_history (user_id, word_id, question_id, context, is_correct, shown_at, answered_at) VALUES (?, ?, ?, 'leitner_miniapp', ?, ?, ?)`,
+    [userId, question.word_id, questionId, isCorrect ? 1 : 0, now, now]
+  ));
+
+  // ب) آپدیت الگوریتم لایتنر (SM2)
+  const sm2Stmts = await prepareUpdateSm2(env, userId, question.word_id, isCorrect);
+  batchStatements.push(...sm2Stmts);
+
+  // پ) اضافه کردن XP (فقط اگر درست بود)
+  let xpGained = 0;
+  if (isCorrect) {
+    // محاسبه مقدار XP بر اساس لول کلمه
+    const xpStmts = prepareXpForLeitner(env, userId, question.word_id, question.level, true);
+    batchStatements.push(...xpStmts);
+    // مقدار حدودی XP را برای نمایش به کاربر برمی‌گردانیم (کمی ساده‌سازی شده)
+    xpGained = [5, 8, 12, 16][question.level - 1] || 5; 
+  }
+
+  // اجرای همه تغییرات با هم
+  if (batchStatements.length > 0) {
+    await env.DB.batch(batchStatements);
+  }
+
+  // ت) چک کردن زنجیره (Streak)
+  let streakMessage = null;
+  if (isCorrect) {
+    streakMessage = await checkAndUpdateStreak(env, userId);
+  }
+
+  // 4. بازگرداندن نتیجه به مینی‌اپ
+  return new Response(JSON.stringify({
+    status: 'ok',
+    correct: isCorrect,
+    correctOption: question.correct_option, // جواب درست را می‌فرستیم تا اگر غلط زد نمایش دهیم
+    xp: xpGained,
+    streak: streakMessage
+  }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
