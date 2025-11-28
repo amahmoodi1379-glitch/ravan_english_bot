@@ -2,7 +2,12 @@ import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
-import { getAllActiveReadingTexts, getReadingTextById } from "../../db/texts";
+import { 
+  getReadingTextsCount, 
+  getPaginatedReadingTexts, 
+  getReadingTextByTitle,
+  getReadingTextById 
+} from "../../db/texts";
 import {
   createReadingSession,
   getReadingSessionById,
@@ -16,10 +21,11 @@ import {
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
-import { queryAll, queryOne, execute } from "../../db/client";
-import { calculateAndPrepareXpForReading, addXpForReadingSession, checkAndUpdateStreak } from "../../db/xp"; // <--- checkAndUpdateStreak اضافه شد
+import { queryAll, queryOne } from "../../db/client";
+import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { generateReadingQuestionsWithGemini } from "../../ai/gemini";
 import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
+import { getPaginatedReadingKeyboard } from "../keyboards";
 
 interface SummaryQuestionRow {
   question_text: string;
@@ -31,7 +37,10 @@ interface SummaryQuestionRow {
   is_correct: number | null;
 }
 
-export async function startReadingMenuForUser(env: Env, update: TelegramUpdate): Promise<void> {
+const ITEMS_PER_PAGE = 6; // تعداد متن‌ها در هر صفحه
+
+// نمایش منوی انتخاب متن (با قابلیت صفحه‌بندی)
+export async function startReadingMenuForUser(env: Env, update: TelegramUpdate, page: number = 1): Promise<void> {
   const message = update.message;
   if (!message || !message.from) return;
 
@@ -40,27 +49,71 @@ export async function startReadingMenuForUser(env: Env, update: TelegramUpdate):
 
   await getOrCreateUser(env, tgUser);
 
-  const texts = await getAllActiveReadingTexts(env);
-  if (texts.length === 0) {
+  // ۱. محاسبه تعداد کل و صفحات
+  const totalCount = await getReadingTextsCount(env);
+  if (totalCount === 0) {
     await sendMessage(env, chatId, "فعلاً هیچ متنی برای تست درک مطلب ثبت نشده ❗️");
     return;
   }
+  
+  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
+  
+  // اصلاح شماره صفحه اگر خارج از محدوده بود
+  if (page < 1) page = 1;
+  if (page > totalPages) page = totalPages;
 
-  const inlineRows = texts.map(t => {
-    const title = t.title.length > 40 ? t.title.slice(0, 37) + "..." : t.title;
-    return [{ text: title, callback_data: `${CB_PREFIX.READING_TEXT}:${t.id}` }];
-  });
+  const offset = (page - 1) * ITEMS_PER_PAGE;
 
-  const replyMarkup = { inline_keyboard: inlineRows };
+  // ۲. گرفتن متن‌های این صفحه
+  const texts = await getPaginatedReadingTexts(env, ITEMS_PER_PAGE, offset);
+  const titles = texts.map(t => t.title);
 
+  // ۳. ارسال پیام با کیبورد جدید
   await sendMessage(
     env,
     chatId,
-    "یک متن برای تست درک مطلب انتخاب کن:",
-    { reply_markup: replyMarkup }
+    `📚 لیست متون درک مطلب (صفحه ${page} از ${totalPages})\n\nیکی از متن‌های زیر را انتخاب کن:`,
+    { 
+      reply_markup: getPaginatedReadingKeyboard(titles, page, totalPages) 
+    }
   );
 }
 
+// هندلر جدید: وقتی کاربر روی یک "عنوان" کلیک می‌کند
+export async function handleReadingTitleSelection(env: Env, update: TelegramUpdate, title: string): Promise<boolean> {
+  const message = update.message;
+  if (!message || !message.from) return false;
+  const chatId = message.chat.id;
+  
+  // ۱. پیدا کردن متن از روی عنوان
+  const textRow = await getReadingTextByTitle(env, title);
+  if (!textRow) {
+    // شاید کاربر متن الکی فرستاده یا دکمه قدیمی بوده
+    return false; 
+  }
+
+  const user = await getOrCreateUser(env, message.from);
+
+  // ۲. شروع سشن
+  const session = await createReadingSession(env, user.id, textRow.id, GAME_CONFIG.READING_QUESTION_COUNT);
+
+  // ۳. شروع سوالات
+  // برای اینکه کیبورد قبلی حذف شود، یک پیام ساده می‌فرستیم که کیبورد را بردارد (یا کیبورد خالی می‌فرستیم)
+  // در اینجا فرض می‌کنیم کاربر وارد مود سوال شده و سوالات به صورت Inline می‌آیند.
+  await sendMessage(env, chatId, `متن "<b>${textRow.title}</b>" انتخاب شد ✅\nتست شروع شد... 👇`, {
+      reply_markup: { remove_keyboard: true } // حذف کیبورد متنی برای تمرکز روی سوالات
+  });
+
+  const sent = await sendNextReadingQuestion(env, user, session, chatId);
+  
+  if (!sent) {
+    await sendMessage(env, chatId, "مشکلی در دریافت سوال پیش آمد ❗️");
+  }
+  return true;
+}
+
+// این تابع برای دکمه‌های شیشه‌ای قدیمی بود، اما شاید هنوز لازم شود (اگر جایی لینک مستقیم دادید)
+// فعلاً نگهش می‌داریم ولی در منوی اصلی استفاده نمی‌شود.
 export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":"); 
@@ -88,7 +141,6 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   const session = await createReadingSession(env, user.id, textId, GAME_CONFIG.READING_QUESTION_COUNT);
 
   await answerCallbackQuery(env, callbackQuery.id);
-  // متن اصلی نمایش داده نمی‌شود (طبق خواسته شما)
   await sendMessage(env, chatId, "تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
@@ -155,7 +207,6 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
   const isCorrect = chosenOption === question.correct_option;
 
-  // BATCH
   const stmts = prepareRecordAnswer(env, session, user.id, questionId, isCorrect);
   await env.DB.batch(stmts);
 
@@ -192,15 +243,12 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
  const sent = await sendNextReadingQuestion(env, user, freshSession, chatId);
   if (!sent) {
-    // چک می‌کنیم که آیا واقعاً تست تموم شده یا ارور پیش اومده
     const stats = await getSessionStats(env, freshSession.id);
     const limit = freshSession.num_questions || 3;
 
     if (stats.total >= limit) {
-      // تعداد سوالات تکمیل شده، پس نتیجه رو نشون بده
       await sendReadingSummary(env, user, freshSession, chatId);
     } else {
-      // هنوز به حد نصاب نرسیده ولی سوالی نیومد (ارور هوش مصنوعی)
       await sendMessage(env, chatId, "متاسفانه در تولید سوال بعدی مشکلی پیش آمد. لطفاً کمی بعد تلاش کنید ❗️");
     }
   }
@@ -311,9 +359,8 @@ async function sendReadingSummary(
   }
   
   const now = new Date().toISOString();
-  // client.ts export function prepare(...) must be available
-  // We assume prepare is imported from client
-  const { prepare } = require("../../db/client"); // Dynamic import or just ensure it's imported at top
+  // We assume prepare is imported from client (it is imported at top)
+  const { prepare } = require("../../db/client"); 
   
   batchStatements.push(prepare(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, session.id]));
 
@@ -321,12 +368,10 @@ async function sendReadingSummary(
     await env.DB.batch(batchStatements);
   }
 
-  // --- بخش جدید مربوط به Streak ---
   const streakMsg = await checkAndUpdateStreak(env, user.id);
   if (streakMsg) {
      await sendMessage(env, chatId, streakMsg);
   }
-  // -------------------------------
 
   let text = `نتیجه‌ی این تست درک مطلب:\n\n`;
   text += `✅ تعداد پاسخ‌های درست: <b>${correct}</b> از <b>${total}</b>\n`;
@@ -346,7 +391,18 @@ async function sendReadingSummary(
     });
   }
 
-  await sendMessage(env, chatId, text);
+  // اضافه کردن دکمه بازگشت به منوی تمرین‌ها (Inline) چون کیبورد Reply حذف شده
+  await sendMessage(env, chatId, text, {
+      reply_markup: {
+          inline_keyboard: [[{ text: "بازگشت به منوی اصلی", callback_data: "none" }]] // یا می‌تونید کیبورد اصلی رو دوباره بفرستید
+      }
+  });
+  
+  // یا بهتر: برگرداندن کیبورد اصلی (Main Menu)
+  const { getMainMenuKeyboard } = require("../keyboards");
+  await sendMessage(env, chatId, "خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟", {
+      reply_markup: getMainMenuKeyboard()
+  });
 }
 
 function getOptionTextForRow(row: SummaryQuestionRow, letter: string): string {
