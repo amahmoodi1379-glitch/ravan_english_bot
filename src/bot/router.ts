@@ -27,7 +27,8 @@ import {
 import {
   startReadingMenuForUser,
   handleReadingTextChosen,
-  handleReadingAnswerCallback
+  handleReadingAnswerCallback,
+  handleReadingTitleSelection // <--- تابع جدید اضافه شده
 } from "./handlers/reading";
 import {
   startDuelEasyForUser,
@@ -270,10 +271,35 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     await startLeitnerForUser(env, update);
     return;
   }
+
+  // === تغییر جدید: مدیریت دکمه‌های منوی Reading (صفحه‌بندی) ===
+  
   if (text === TRAINING_MENU_BUTTON_READING) {
-    await startReadingMenuForUser(env, update);
+    // ورود اولیه به منوی ریدینگ (نمایش صفحه ۱)
+    await startReadingMenuForUser(env, update, 1);
     return;
   }
+
+  // بررسی دکمه‌های ناوبری (مثلاً: "صفحه 2 ◀️" یا "▶️ صفحه 1")
+  if (text.includes("صفحه") && (text.includes("◀️") || text.includes("▶️"))) {
+     const numMatch = text.match(/\d+/); // پیدا کردن عدد در متن دکمه
+     if (numMatch) {
+        const page = parseInt(numMatch[0]);
+        if (!isNaN(page)) {
+            await startReadingMenuForUser(env, update, page);
+            return;
+        }
+     }
+  }
+
+  // بررسی اینکه آیا متن، عنوان یکی از متن‌های موجود است؟
+  const isReadingTitle = await handleReadingTitleSelection(env, update, text);
+  if (isReadingTitle) {
+    return; // اگر عنوان معتبر بود و پردازش شد، ادامه نده
+  }
+  
+  // ========================================================
+
   if (text === TRAINING_MENU_BUTTON_REFLECTION) {
     await startReflectionForUser(env, update);
     return;
