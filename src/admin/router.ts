@@ -293,16 +293,38 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   }
 
   // --- مدیریت کاربران ---
+  // --- مدیریت کاربران (با صفحه‌بندی) ---
   if (url.pathname === "/admin/users") {
     const search = (url.searchParams.get("q") || "").trim();
-    let sql = `SELECT u.id, u.telegram_id, u.username, u.display_name, u.xp_total, u.created_at, u.is_approved, ac.code as license_code FROM users u LEFT JOIN access_codes ac ON ac.used_by_user_id = u.id WHERE 1 = 1`;
-    const params: any[] = [];
+    
+    // ۱. تنظیمات صفحه
+    const page = Math.max(1, Number(url.searchParams.get("page") || 1));
+    const limit = 50; 
+    const offset = (page - 1) * limit;
+
+    // ۲. ساخت شرط‌های جستجو
+    let whereSql = "FROM users u LEFT JOIN access_codes ac ON ac.used_by_user_id = u.id WHERE 1 = 1";
+    const baseParams: any[] = [];
+
     if (search) {
-      sql += ` AND (u.display_name LIKE ? OR u.username LIKE ? OR cast(u.telegram_id as text) LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      whereSql += ` AND (u.display_name LIKE ? OR u.username LIKE ? OR cast(u.telegram_id as text) LIKE ?)`;
+      baseParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
-    sql += ` ORDER BY u.id DESC LIMIT 50`;
-    const users = await queryAll<any>(env, sql, params);
+
+    // ۳. شمارش کل کاربران (برای دکمه‌های صفحه بعد)
+    const countRow = await queryOne<{ total: number }>(
+      env,
+      `SELECT COUNT(*) as total ${whereSql}`,
+      baseParams
+    );
+    const totalCount = countRow?.total || 0;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+
+    // ۴. گرفتن اطلاعات کاربران صفحه جاری
+    const dataSql = `SELECT u.id, u.telegram_id, u.username, u.display_name, u.xp_total, u.created_at, u.is_approved, ac.code as license_code ${whereSql} ORDER BY u.id DESC LIMIT ? OFFSET ?`;
+    const dataParams = [...baseParams, limit, offset];
+
+    const users = await queryAll<any>(env, dataSql, dataParams);
 
     const rowsHtml = users.map((u: any) => `
       <tr>
@@ -317,6 +339,16 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       </tr>
     `).join("");
 
+    // دکمه‌های پایین جدول
+    const paginationHtml = `
+      <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
+        ${page > 1 ? `<a href="/admin/users?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
+        <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
+        ${page < totalPages ? `<a href="/admin/users?q=${escapeHtml(search)}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
+      </div>
+      <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} users</div>
+    `;
+
     const content = `
       <div class="top-row">
         <form method="get" action="/admin/users" style="flex:1; display:flex; gap:8px;">
@@ -325,6 +357,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         </form>
       </div>
       <table><thead><tr><th>ID</th><th>Telegram</th><th>Username</th><th>نام</th><th>XP</th><th>عضویت</th><th>لایسنس</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='8'>یافت نشد.</td></tr>"}</tbody></table>
+      ${paginationHtml}
     `;
     return htmlResponse(renderAdminLayout("مدیریت کاربران", content, "users"));
   }
