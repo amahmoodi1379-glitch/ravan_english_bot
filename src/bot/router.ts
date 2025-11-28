@@ -51,6 +51,7 @@ import { startReflectionForUser, handleReflectionAnswer } from "./handlers/refle
 import { CB_PREFIX } from "../config/constants";
 import { getOrCreateUser, getUserByTelegramId } from "../db/users";
 import { queryOne, execute } from "../db/client";
+import { quitActiveMatch } from "../db/duels";
 
 export interface TelegramUser {
   id: number;
@@ -278,6 +279,11 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
   if (text === TRAINING_MENU_BUTTON_BACK) {
+    // === اصلاح: اگر کاربر وسط دوئل بود، انصراف دهد ===
+    const user = await getOrCreateUser(env, tgUser);
+    await quitActiveMatch(env, user.id);
+    // ===============================================
+
     await sendMessage(
       env,
       chatId,
