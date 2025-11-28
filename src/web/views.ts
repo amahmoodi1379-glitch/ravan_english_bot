@@ -56,7 +56,6 @@ export function getMiniAppHtml(): string {
               document.getElementById('word').innerText = '...';
 
               try {
-                  // ارسال initData در هدر Authorization
                   const res = await fetch('/api/leitner/next', {
                       method: 'GET',
                       headers: {
@@ -64,10 +63,22 @@ export function getMiniAppHtml(): string {
                       }
                   });
 
+                  // مدیریت ارور لایسنس (جدید)
+                  if (res.status === 403) {
+                      document.getElementById('loading').classList.add('hidden');
+                      document.getElementById('word').innerText = '⛔️';
+                      document.getElementById('question-text').innerHTML = 
+                        'شما هنوز عضو نشده‌اید.<br>لطفاً در ربات کد لایسنس خود را وارد کنید.';
+                      document.getElementById('question-text').classList.add('text-red-400');
+                      document.getElementById('quiz-area').classList.remove('hidden');
+                      return;
+                  }
+
                   if (res.status === 401) {
                       document.getElementById('word').innerText = 'خطای دسترسی';
                       document.getElementById('question-text').innerText = 'لطفاً ربات را از داخل تلگرام باز کنید.';
                       document.getElementById('loading').classList.add('hidden');
+                      document.getElementById('quiz-area').classList.remove('hidden');
                       return;
                   }
 
