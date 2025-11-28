@@ -1,19 +1,37 @@
 import { Env } from "../types";
-// فقط یک خط ایمپورت تمیز و کامل:
 import { getNextLeitnerQuestionAPI, submitAnswerAPI } from "./handlers/leitner";
+import { validateInitData } from "../utils/auth"; // <--- ایمپورت جدید
 
 export async function handleApiRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
+
+  // --- Middleware امنیتی ---
+  // این بخش وظیفه احراز هویت را انجام می‌دهد
+  let userId: number | null = null;
+
+  // 1. دریافت initData از هدر Authorization
+  const authHeader = request.headers.get("Authorization");
   
+  if (authHeader) {
+    // انتظار داریم فرمت هدر این باشد: "twa-init-data <initDataString>"
+    // یا خود رشته خام را بفرستیم. برای سادگی فرض میکنیم خود رشته initData ارسال شده
+    userId = await validateInitData(authHeader, env.TELEGRAM_BOT_TOKEN);
+  }
+
+  // اگر احراز هویت شکست خورد، ارور 401 برمی‌گردانیم
+  if (!userId) {
+    return new Response(JSON.stringify({ error: "Unauthorized / Invalid Telegram Data" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  // -------------------------
+
+  // حالا که مطمئنیم userId معتبر و واقعی است، درخواست‌ها را پردازش می‌کنیم:
+
   // مسیر دریافت سوال بعدی
   if (request.method === "GET" && url.pathname === "/api/leitner/next") {
-    const uid = url.searchParams.get("uid");
-    const userId = uid ? Number(uid) : 0;
-    
-    if (!userId) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
-    }
-
+    // دیگر نیازی به گرفتن uid از URL نیست
     return await getNextLeitnerQuestionAPI(env, userId);
   }
 
@@ -21,10 +39,11 @@ export async function handleApiRequest(request: Request, env: Env): Promise<Resp
   if (request.method === "POST" && url.pathname === "/api/leitner/answer") {
     try {
       const body = await request.json() as any;
-      if (!body.userId || !body.questionId || !body.option) {
+      // نکته: userId را از body نمی‌خوانیم (چون ممکن است دروغ باشد)، از توکن معتبر می‌خوانیم
+      if (!body.questionId || !body.option) {
         return new Response(JSON.stringify({ error: "Missing data" }), { status: 400 });
       }
-      return await submitAnswerAPI(env, body.userId, body.questionId, body.option);
+      return await submitAnswerAPI(env, userId, body.questionId, body.option);
     } catch (e) {
       return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400 });
     }
