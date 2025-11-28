@@ -360,6 +360,23 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
 
+    // === اصلاح باگ همزمانی (Race Condition) ===
+    // چک می‌کنیم آیا کاربر قبلاً به این سوال در همین نوبت پاسخ داده است؟
+    // اگر پاسخ داده باشد، answered_at پر شده است.
+    const historyCheck = await queryOne<{ answered_at: string | null }>(
+      env,
+      `SELECT answered_at FROM user_word_question_history 
+       WHERE user_id = ? AND question_id = ? AND context = 'leitner'`,
+      [user.id, question.id]
+    );
+
+    if (historyCheck && historyCheck.answered_at) {
+      // اگر قبلاً جواب داده، فقط یک پیام پاپ‌آپ بده و هیچ کاری نکن
+      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
+      return;
+    }
+    // ===========================================
+
     const isCorrect = chosenOption === question.correct_option;
     const now = new Date().toISOString();
 
