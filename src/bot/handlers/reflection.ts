@@ -36,7 +36,17 @@ export async function startReflectionForUser(env: Env, update: TelegramUpdate): 
   const words = await getUserLearnedWords(env, user.id, 5);
   
   // 2. تولید متن توسط AI
-  const paragraph = await generateReflectionParagraph(env, words);
+  const words = await getUserLearnedWords(env, user.id, 5);
+  
+  let paragraph: string;
+  try {
+    paragraph = await generateReflectionParagraph(env, words);
+  } catch (error) {
+    console.error("Reflection AI Error:", error);
+    await sendMessage(env, chatId, "متاسفانه در ارتباط با هوش مصنوعی مشکلی پیش آمد. لطفاً کمی بعد تلاش کن ⚠️");
+    return;
+  }
+  // =========================================
 
   // 3. ذخیره در دیتابیس
   await createReflectionSession(env, user.id, paragraph);
