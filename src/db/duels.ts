@@ -360,3 +360,30 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
      WHERE status = 'waiting' AND created_at < datetime('now', '-3 days')`
   );
 }
+
+// تابع جدید: انصراف از بازی فعال (زمانی که دکمه بازگشت زده می‌شود)
+export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
+  // پیدا کردن بازی فعال کاربر
+  const match = await queryOne<DuelMatch>(
+    env,
+    `SELECT * FROM duel_matches WHERE (player1_id = ? OR player2_id = ?) AND status = 'in_progress'`,
+    [userId, userId]
+  );
+
+  if (!match) return; // اگر بازی فعالی ندارد، کاری نکن
+
+  const now = new Date().toISOString();
+  // تعیین برنده (حریف برنده می‌شود)
+  const winnerId = match.player1_id === userId ? match.player2_id : match.player1_id;
+
+  // پایان بازی
+  await execute(
+    env,
+    `UPDATE duel_matches 
+     SET status = 'completed', 
+         winner_user_id = ?, 
+         completed_at = ? 
+     WHERE id = ?`,
+    [winnerId, now, match.id]
+  );
+}
