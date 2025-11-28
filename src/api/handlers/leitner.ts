@@ -1,6 +1,6 @@
 import { Env } from "../../types";
-import { pickNextWordForUser, getOrCreateUserWordState, prepareUpdateSm2 } from "../../db/leitner";
-import { queryOne, prepare, execute } from "../../db/client";
+import { pickNextWordForUser, prepareUpdateSm2 } from "../../db/leitner";
+import { queryOne, prepare } from "../../db/client";
 import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
 
 // تابع ۱: دریافت سوال بعدی (برای نمایش در مینی‌اپ)
@@ -60,38 +60,46 @@ export async function submitAnswerAPI(env: Env, userId: number, questionId: numb
   const isCorrect = selectedOption === question.correct_option;
   const now = new Date().toISOString();
 
-  // 3. آماده‌سازی عملیات دیتابیس
+  // 3. آماده‌سازی عملیات دیتابیس (Batch)
   const batchStatements: any[] = [];
 
+  // الف) ثبت در تاریخچه
   batchStatements.push(prepare(
     env,
     `INSERT INTO user_word_question_history (user_id, word_id, question_id, context, is_correct, shown_at, answered_at) VALUES (?, ?, ?, 'leitner_miniapp', ?, ?, ?)`,
     [userId, question.word_id, questionId, isCorrect ? 1 : 0, now, now]
   ));
 
+  // ب) آپدیت الگوریتم لایتنر (SM2)
   const sm2Stmts = await prepareUpdateSm2(env, userId, question.word_id, isCorrect);
   batchStatements.push(...sm2Stmts);
 
+  // پ) اضافه کردن XP (فقط اگر درست بود)
   let xpGained = 0;
   if (isCorrect) {
+    // محاسبه مقدار XP بر اساس لول کلمه
     const xpStmts = prepareXpForLeitner(env, userId, question.word_id, question.level, true);
     batchStatements.push(...xpStmts);
+    // مقدار حدودی XP را برای نمایش به کاربر برمی‌گردانیم
     xpGained = [5, 8, 12, 16][question.level - 1] || 5; 
   }
 
+  // اجرای همه تغییرات با هم
   if (batchStatements.length > 0) {
     await env.DB.batch(batchStatements);
   }
 
+  // ت) چک کردن زنجیره (Streak)
   let streakMessage = null;
   if (isCorrect) {
     streakMessage = await checkAndUpdateStreak(env, userId);
   }
 
+  // 4. بازگرداندن نتیجه به مینی‌اپ
   return new Response(JSON.stringify({
     status: 'ok',
     correct: isCorrect,
-    correctOption: question.correct_option,
+    correctOption: question.correct_option, // جواب درست را می‌فرستیم تا اگر غلط زد نمایش دهیم
     xp: xpGained,
     streak: streakMessage
   }), {
