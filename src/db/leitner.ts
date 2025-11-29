@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, execute, prepare } from "./client"; // Import prepare
+import { queryOne, execute, prepare } from "./client"; 
 import { sm2 } from "../utils/sm2";
 
 export interface DbWord {
@@ -138,15 +138,13 @@ function addDaysToIso(iso: string, days: number): string {
   return d.toISOString();
 }
 
-// NEW: نسخه‌ی آماده‌ساز (Prepare) برای Batch
+// تابع اصلی که تغییر کرده است
 export async function prepareUpdateSm2(
   env: Env,
   userId: number,
   wordId: number,
   isCorrect: boolean
 ): Promise<any[]> {
-  // چون state را باید بخوانیم، نمی‌توانیم این بخش را کاملاً خالص کنیم،
-  // اما خواندن اشکالی ندارد، نوشتن مهم است که batch شود.
   
   let state = await queryOne<UserWordState>(
     env,
@@ -154,19 +152,32 @@ export async function prepareUpdateSm2(
     [userId, wordId]
   );
 
-  // اگر استیت نبود، باید بسازیمش. اینجا مجبوریم یک execute داشته باشیم 
-  // (چون id رکورد جدید را برای آپدیت نیاز داریم).
-  // اما چون این حالت نادره (معمولا getOrCreate قبلش صدا شده)، ریسک کمی داره.
   if (!state) {
     state = await getOrCreateUserWordState(env, userId, wordId);
   }
 
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
   const quality = isCorrect ? 5 : 2;
+
+  // === تغییر اصلاحی: استفاده از فاصله زمانی واقعی ===
+  let usedInterval = state.interval_days || 1;
+
+  if (state.last_reviewed_at) {
+    const lastReviewDate = new Date(state.last_reviewed_at);
+    // اختلاف زمانی به میلی‌ثانیه
+    const diffMs = now.getTime() - lastReviewDate.getTime();
+    // تبدیل به روز
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    // اگر فاصله بیشتر از 1 روز بود، از فاصله واقعی استفاده کن (رند شده)
+    // اگر کمتر بود (مثلاً همون روز دوباره مرور کرده)، حداقل 1 رو در نظر بگیر
+    usedInterval = Math.max(1, Math.round(diffDays));
+  }
+  // ================================================
 
   const sm2Result = sm2(
     {
-      interval: state.interval_days || 1,
+      interval: usedInterval, // اینجا قبلاً state.interval_days بود
       repetition: state.repetitions || 0,
       ef: state.ease_factor || 2.5
     },
@@ -216,7 +227,6 @@ export async function prepareUpdateSm2(
   return [stmt];
 }
 
-// تابع قدیمی برای سازگاری
 export async function updateSm2AndStageAfterAnswer(env: Env, userId: number, wordId: number, isCorrect: boolean): Promise<void> {
   const stmts = await prepareUpdateSm2(env, userId, wordId, isCorrect);
   if (stmts.length > 0) await env.DB.batch(stmts);
