@@ -109,8 +109,9 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   // --- مدیریت واژه‌ها (با صفحه‌بندی) ---
   if (url.pathname === "/admin/words") {
     const search = (url.searchParams.get("q") || "").trim();
-    const page = Math.max(1, Number(url.searchParams.get("page") || 1));
-    const limit = 50; 
+    let rawPage = parseInt(url.searchParams.get("page") || "1");
+    if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
+    const page = Math.min(rawPage, 1000000); // سقف میذاریم که از ۱ میلیون بیشتر نشه    const limit = 50; 
     const offset = (page - 1) * limit;
 
     let whereSql = "FROM words WHERE 1 = 1";
@@ -308,8 +309,10 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   // --- مدیریت کاربران (با صفحه‌بندی) ---
   if (url.pathname === "/admin/users") {
     const search = (url.searchParams.get("q") || "").trim();
-    const page = Math.max(1, Number(url.searchParams.get("page") || 1));
-    const limit = 50; 
+// ✅ کد اصلاح شده و ایمن برای شماره صفحه
+    let rawPage = parseInt(url.searchParams.get("page") || "1");
+    if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
+    const page = Math.min(rawPage, 1000000);    const limit = 50; 
     const offset = (page - 1) * limit;
 
     let whereSql = "FROM users u LEFT JOIN access_codes ac ON ac.used_by_user_id = u.id WHERE 1 = 1";
