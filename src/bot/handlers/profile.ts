@@ -11,26 +11,51 @@ import {
   ActivityPeriod,
   ActivityStats
 } from "../../db/profile";
-import { CB_PREFIX } from "../../config/constants";
 import { CB_PREFIX, TIME_ZONE_OFFSET } from "../../config/constants";
 
+// لیست جدید، متنوع و جذاب آواتارها
 const AVATARS: { code: string; emoji: string; label: string }[] = [
+  // حیوانات بامزه
   { code: "cat", emoji: "😺", label: "گربه" },
   { code: "fox", emoji: "🦊", label: "روباه" },
-  { code: "owl", emoji: "🦉", label: "جغد" },
   { code: "panda", emoji: "🐼", label: "پاندا" },
+  { code: "koala", emoji: "🐨", label: "کوالا" },
+  
+  // حیوانات قدرتمند
   { code: "lion", emoji: "🦁", label: "شیر" },
-  { code: "robot", emoji: "🤖", label: "ربات" }
+  { code: "tiger", emoji: "🐯", label: "ببر" },
+  { code: "wolf", emoji: "🐺", label: "گرگ" },
+  { code: "eagle", emoji: "🦅", label: "عقاب" },
+
+  // پرندگان و فانتزی
+  { code: "owl", emoji: "🦉", label: "جغد" },
+  { code: "unicorn", emoji: "🦄", label: "تک‌شاخ" },
+  { code: "dragon", emoji: "🐉", label: "اژدها" },
+  { code: "dino", emoji: "🦖", label: "دایناسور" },
+
+  // شخصیت‌ها
+  { code: "robot", emoji: "🤖", label: "ربات" },
+  { code: "alien", emoji: "👽", label: "فضایی" },
+  { code: "ninja", emoji: "🥷", label: "نینجا" },
+  { code: "ghost", emoji: "👻", label: "روح" },
+
+  // مشاغل و انسان‌ها
+  { code: "detective", emoji: "🕵️‍♂️", label: "کارآگاه" },
+  { code: "astronaut", emoji: "👩‍🚀", label: "فضانورد" },
+  { code: "scientist", emoji: "👨‍🔬", label: "دانشمند" },
+  { code: "wizard", emoji: "🧙‍♂️", label: "جادوگر" }
 ];
 
 function getAvatarEmoji(code: string | null | undefined): string {
+  if (!code) return "👤"; // آواتار پیش‌فرض برای کاربرانی که انتخاب نکردند
   const found = AVATARS.find((a) => a.code === code);
-  return found ? found.emoji : "🙂";
+  return found ? found.emoji : "👤"; // فال‌بک امن
 }
 
 function getAvatarLabel(code: string | null | undefined): string {
+  if (!code) return "انتخاب نشده";
   const found = AVATARS.find((a) => a.code === code);
-  return found ? found.label : "پیش‌فرض";
+  return found ? found.label : "نامشخص";
 }
 
 // تابع اصلاح شده برای محاسبه دقیق زنجیره با ساعت ایران
@@ -45,7 +70,6 @@ async function getStreakInfo(env: Env, userId: number): Promise<number> {
   if (count === 0) return 0;
 
   // ۲. گرفتن تاریخ دقیق "امروز" و "دیروز" به وقت ایران
-  // استفاده از TIME_ZONE_OFFSET که از تنظیمات می‌آید
   const dateCheck = await env.DB.prepare(`
     SELECT 
       date('now', ?) as today_local,
@@ -87,12 +111,12 @@ export async function showProfileHome(env: Env, update: TelegramUpdate): Promise
   const streakText = streakCount > 0 ? `🔥 <b>${streakCount}</b> روز` : "خاموش ❄️";
 
   const text =
-    `👤 پروفایل تو:\n\n` +
-    `نام نمایشی: <b>${displayName}</b>\n` +
-    `XP کلی: <b>${xpTotal}</b>\n` +
-    `زنجیره (Streak): ${streakText}\n` + // <--- نمایش زنجیره
-    `آواتار فعلی: ${avatarEmoji}\n\n` +
-    `از منوی زیر یکی از گزینه‌های پروفایل رو انتخاب کن.`;
+    `👤 <b>پروفایل کاربری</b>\n\n` +
+    `🏷 نام نمایشی: <b>${displayName}</b>\n` +
+    `⭐️ مجموع امتیاز: <b>${xpTotal}</b> XP\n` +
+    `🔥 زنجیره مطالعه: ${streakText}\n` +
+    `🖼 آواتار فعلی: ${avatarEmoji}\n\n` +
+    `👇 از منوی زیر تنظیمات رو انتخاب کن:`;
 
   await sendMessage(env, chatId, text, {
     reply_markup: getProfileMenuKeyboard()
@@ -120,21 +144,21 @@ export async function showProfileSettings(env: Env, update: TelegramUpdate): Pro
   const avatarLabel = getAvatarLabel(profile?.avatar_code);
 
   const text =
-    `⚙️ تنظیمات پروفایل\n\n` +
-    `نام نمایشی فعلی: <b>${displayName}</b>\n` +
-    `تعداد تغییرات نام باقی‌مانده: <b>${remainingChanges}</b> از 3\n\n` +
-    `برای تغییر نام نمایشی، دستور زیر را ارسال کن:\n` +
-    `<code>/setname نام_جدید</code>\n\n` +
-    `آواتار فعلی: ${avatarEmoji} (${avatarLabel})\n` +
-    `برای تغییر آواتار، یکی از گزینه‌های زیر را انتخاب کن:`;
+    `⚙️ <b>تنظیمات پروفایل</b>\n\n` +
+    `✏️ <b>نام نمایشی:</b> ${displayName}\n` +
+    `<i>(تغییرات باقی‌مانده: ${remainingChanges} از 3)</i>\n` +
+    `برای تغییر نام، دستور زیر رو بفرست:\n` +
+    `<code>/setname اسم_جدید</code>\n\n` +
+    `🎭 <b>آواتار فعلی:</b> ${avatarEmoji} (${avatarLabel})\n` +
+    `برای تغییر، یکی از گزینه‌های زیر رو انتخاب کن: 👇`;
 
   const inlineRows: any[][] = [];
-  for (let i = 0; i < AVATARS.length; i += 3) {
-    const slice = AVATARS.slice(i, i + 3);
+  // تغییر چیدمان به ۴ تایی برای زیبایی بیشتر
+  for (let i = 0; i < AVATARS.length; i += 4) {
+    const slice = AVATARS.slice(i, i + 4);
     inlineRows.push(
       slice.map((a) => ({
-        text: `${a.emoji} ${a.label}`,
-        // av:<code>
+        text: `${a.emoji}`, // فقط ایموجی رو نشون میدیم که جا بشه
         callback_data: `${CB_PREFIX.AVATAR}:${a.code}`
       }))
     );
@@ -179,9 +203,9 @@ export async function handleAvatarCallback(
 
   await setAvatar(env, user.id, code);
 
-  await answerCallbackQuery(env, callbackQuery.id, "آواتار به‌روزرسانی شد ✅");
+  await answerCallbackQuery(env, callbackQuery.id, "آواتار جدید ثبت شد! 😍");
 
-  const text = `آواتارت تغییر کرد به ${avatar.emoji} ${avatar.label} ✅`;
+  const text = `🎉 آواتار تو به ${avatar.emoji} <b>${avatar.label}</b> تغییر کرد!`;
   await sendMessage(env, chatId, text, {
     reply_markup: getProfileMenuKeyboard()
   });
@@ -206,13 +230,13 @@ export async function handleSetDisplayNameCommand(
     await sendMessage(
       env,
       chatId,
-      "برای تغییر نام، بعد از دستور /setname نام جدید رو بنویس.\nمثلاً:\n<code>/setname علی</code>"
+      "⚠️ لطفاً نام جدید رو بعد از دستور بنویس.\nمثال:\n<code>/setname رضا</code>"
     );
     return;
   }
 
   if (newName.length > 32) {
-    await sendMessage(env, chatId, "نام جدید خیلی طولانیه. حداکثر ۳۲ کاراکتر باشه.");
+    await sendMessage(env, chatId, "نام جدید خیلی طولانیه! (حداکثر ۳۲ حرف)");
     return;
   }
 
@@ -223,10 +247,10 @@ export async function handleSetDisplayNameCommand(
       await sendMessage(
         env,
         chatId,
-        "دیگه نمی‌تونی نام نمایشی رو عوض کنی (حداکثر ۳ بار در طول عمر حساب)."
+        "⛔️ متاسفانه سقف تغییر نام (۳ بار) پر شده است."
       );
     } else {
-      await sendMessage(env, chatId, "در تغییر نام مشکلی پیش اومد.");
+      await sendMessage(env, chatId, "❌ مشکلی در تغییر نام پیش آمد.");
     }
     return;
   }
@@ -236,7 +260,7 @@ export async function handleSetDisplayNameCommand(
   await sendMessage(
     env,
     chatId,
-    `نام نمایشی‌ات به <b>${newName}</b> تغییر کرد ✅\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b> از 3.`,
+    `✅ نام نمایشی به <b>${newName}</b> تغییر کرد.\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b>`,
     {
       reply_markup: getProfileMenuKeyboard()
     }
@@ -255,15 +279,14 @@ export async function startProfileStats(env: Env, update: TelegramUpdate): Promi
   await sendMessage(
     env,
     chatId,
-    "برای دیدن آمار فعالیت، بازه‌ی زمانی رو انتخاب کن:",
+    "📊 بازه‌ی زمانی آمار رو انتخاب کن:",
     {
       reply_markup: {
         inline_keyboard: [
-          // st:<period>
-          [{ text: "امروز", callback_data: `${CB_PREFIX.STATS}:day` }],
-          [{ text: "۷ روز اخیر", callback_data: `${CB_PREFIX.STATS}:week` }],
-          [{ text: "۳۰ روز اخیر", callback_data: `${CB_PREFIX.STATS}:month` }],
-          [{ text: "همه‌ی زمان‌ها", callback_data: `${CB_PREFIX.STATS}:all` }]
+          [{ text: "📅 امروز", callback_data: `${CB_PREFIX.STATS}:day` }],
+          [{ text: "🗓 ۷ روز اخیر", callback_data: `${CB_PREFIX.STATS}:week` }],
+          [{ text: "📆 ۳۰ روز اخیر", callback_data: `${CB_PREFIX.STATS}:month` }],
+          [{ text: "♾ همه‌ی زمان‌ها", callback_data: `${CB_PREFIX.STATS}:all` }]
         ]
       }
     }
@@ -283,12 +306,12 @@ function buildStatsText(stats: ActivityStats): string {
   const label = periodLabel(stats.period);
 
   let text =
-    `📈 آمار فعالیت تو در بازه ${label}:\n\n` +
-    `سوال‌های لایتنر: <b>${stats.leitner_questions}</b>\n` +
-    `ست‌های تست درک مطلب: <b>${stats.reading_sets}</b>\n` +
-    `دوئل‌ها: <b>${stats.duels}</b>\n` +
-    `تمرین‌های برداشت از متن: <b>${stats.reflections}</b>\n` +
-    `\nXP این بازه: <b>${stats.xp}</b>`;
+    `📈 <b>گزارش عملکرد (${label})</b>\n\n` +
+    `🧠 سوال‌های لایتنر: <b>${stats.leitner_questions}</b>\n` +
+    `📖 درک مطلب (Reading): <b>${stats.reading_sets}</b>\n` +
+    `⚔️ دوئل‌ها: <b>${stats.duels}</b>\n` +
+    `📝 برداشت از متن: <b>${stats.reflections}</b>\n` +
+    `\n⭐️ <b>XP کسب شده: ${stats.xp}</b>`;
 
   return text;
 }
@@ -300,7 +323,6 @@ export async function handleStatsCallback(
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
 
-  // st:<period>
   if (parts.length !== 2 || parts[0] !== CB_PREFIX.STATS) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -355,12 +377,12 @@ export async function showProfileSummary(env: Env, update: TelegramUpdate): Prom
   const lastSeenDate = lastSeen ? lastSeen.substring(0, 10) : "-";
 
   const text =
-    `🪪 خلاصه پروفایل:\n\n` +
-    `نام نمایشی: <b>${displayName}</b>\n` +
-    `XP کلی: <b>${xpTotal}</b>\n` +
-    `آواتار: ${avatarEmoji}\n` +
-    `تاریخ عضویت (UTC): <b>${createdDate}</b>\n` +
-    `آخرین فعالیت ثبت‌شده (UTC): <b>${lastSeenDate}</b>`;
+    `🪪 <b>کارت شناسایی زبان‌آموز</b>\n\n` +
+    `👤 نام: <b>${displayName}</b>\n` +
+    `⭐️ امتیاز کل: <b>${xpTotal}</b>\n` +
+    `🎭 آواتار: ${avatarEmoji}\n` +
+    `📅 تاریخ عضویت: <b>${createdDate}</b>\n` +
+    `⏰ آخرین بازدید: <b>${lastSeenDate}</b>`;
 
   await sendMessage(env, chatId, text, {
     reply_markup: getProfileMenuKeyboard()
