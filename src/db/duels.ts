@@ -288,6 +288,17 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
   );
 
   for (const match of stuckMatches) {
+    // === FIX START: چک می‌کنیم آیا اصلاً کسی بازی کرده؟ ===
+    const p1Answers = await getUserAnswerCountInMatch(env, match.id, match.player1_id);
+    const p2Answers = match.player2_id ? await getUserAnswerCountInMatch(env, match.id, match.player2_id) : 0;
+
+    // اگر هیچکدام حتی یک جواب هم نداده‌اند -> بازی کنسل می‌شود (بدون XP)
+    if (p1Answers === 0 && p2Answers === 0) {
+       await execute(env, `UPDATE duel_matches SET status = 'cancelled', completed_at = datetime('now') WHERE id = ?`, [match.id]);
+       continue; // برو سراغ بازی بعدی
+    }
+    // === FIX END ===
+
     const p1Correct = await getUserCorrectCountInMatch(env, match.id, match.player1_id);
     const p2Correct = match.player2_id ? await getUserCorrectCountInMatch(env, match.id, match.player2_id) : 0;
     
@@ -321,14 +332,18 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
     );
 
     const totalQ = 5; 
-    let p1Result: "win" | "draw" | "lose" = "lose";
-    if (isDraw) p1Result = "draw";
-    else if (winnerUserId === match.player1_id) p1Result = "win";
     
-    await addXpForDuelMatch(env, match.player1_id, match.id, p1Correct, totalQ, p1Result);
-    await checkAndUpdateStreak(env, match.player1_id);
+    // فقط اگر کاربر حداقل ۱ جواب داده باشد به او XP بدهیم
+    if (p1Answers > 0) {
+        let p1Result: "win" | "draw" | "lose" = "lose";
+        if (isDraw) p1Result = "draw";
+        else if (winnerUserId === match.player1_id) p1Result = "win";
+        
+        await addXpForDuelMatch(env, match.player1_id, match.id, p1Correct, totalQ, p1Result);
+        await checkAndUpdateStreak(env, match.player1_id);
+    }
 
-    if (match.player2_id) {
+    if (match.player2_id && p2Answers > 0) {
        let p2Result: "win" | "draw" | "lose" = "lose";
        if (isDraw) p2Result = "draw";
        else if (winnerUserId === match.player2_id) p2Result = "win";
