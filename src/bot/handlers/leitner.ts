@@ -2,7 +2,7 @@ import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
-import { queryOne, execute, prepare } from "../../db/client";
+import { queryOne, execute, prepare, queryAll } from "../../db/client";
 import {
   pickNextWordForUser,
   getOrCreateUserWordState,
@@ -11,7 +11,7 @@ import {
   markWordAsIgnored,
   DbWord
 } from "../../db/leitner";
-import { addXpForLeitnerQuestion, prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp"; // <--- checkAndUpdateStreak اضافه شد
+import { addXpForLeitnerQuestion, prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
 import { generateWordQuestionsWithGemini } from "../../ai/gemini";
 import { insertWordQuestions } from "../../db/word_questions";
 import { CB_PREFIX } from "../../config/constants";
@@ -31,13 +31,19 @@ interface LeitnerQuestionRow {
   level: number;
 }
 
-function getQuestionStyleForStage(stage: number): string {
+// تعیین نوع سوال بر اساس مرحله (استایل‌های ساده‌تر شده)
+function getQuestionStyleForStage(stage: number): string | null {
+  // مرحله ۱: معنی فارسی
   if (stage <= 1) return "fa_meaning";
+  
+  // مرحله ۲: تعریف ساده انگلیسی
   if (stage === 2) return "en_definition";
+  
+  // مرحله ۳: تشخیص کلمه از روی تعریف
   if (stage === 3) return "word_from_definition";
-  const advanced = ["synonym", "antonym", "fa_to_en"];
-  const idx = Math.floor(Math.random() * advanced.length);
-  return advanced[idx];
+
+  // مرحله ۴ و بالاتر: هر چیزی می‌تواند باشد (رندوم از موجودی‌ها انتخاب می‌شود)
+  return null; 
 }
 
 export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Promise<void> {
@@ -50,6 +56,7 @@ export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Pro
 }
 
 async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Promise<void> {
+  // ۱. انتخاب واژه
   const word = await pickNextWordForUser(env, user.id);
 
   if (!word) {
@@ -57,13 +64,53 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     return;
   }
 
-  const state = await getOrCreateUserWordState(env, user.id, word.id);
-  const stage = state.question_stage || 1;
-  const desiredStyle = getQuestionStyleForStage(stage);
+  // ۲. تعیین نیاز (آیا باید سوال بسازیم؟)
+  // سهمیه‌ها:
+  // fa_meaning: 2
+  // en_definition: 2
+  // word_from_definition: 3
+  // synonym: 2 (اگر کلمه مترادف داشت)
+  // antonym: 2 (اگر کلمه متضاد داشت)
 
-  let question = await pickQuestionForUserWord(env, user, word, desiredStyle);
+  // شمارش سوالات موجود برای این کلمه
+  const countsRows = await queryAll<{ question_style: string; cnt: number }>(
+    env,
+    `SELECT question_style, COUNT(*) as cnt FROM word_questions WHERE word_id = ? GROUP BY question_style`,
+    [word.id]
+  );
+  
+  const counts: Record<string, number> = {};
+  countsRows.forEach(r => counts[r.question_style] = r.cnt);
 
-  if (!question) {
+  let styleToGenerate: string | null = null;
+  let neededCount = 0;
+
+  // بررسی اولویت‌ها برای ساخت سوال جدید
+  if ((counts["fa_meaning"] || 0) < 2) {
+      styleToGenerate = "fa_meaning";
+      neededCount = 2 - (counts["fa_meaning"] || 0);
+  } 
+  else if ((counts["en_definition"] || 0) < 2) {
+      styleToGenerate = "en_definition";
+      neededCount = 2 - (counts["en_definition"] || 0);
+  }
+  else if ((counts["word_from_definition"] || 0) < 3) {
+      styleToGenerate = "word_from_definition";
+      neededCount = 3 - (counts["word_from_definition"] || 0);
+  }
+  // فقط اگر کلمه در دیتابیس مترادف داشت، سوال مترادف بساز
+  else if (word.synonyms && word.synonyms.trim().length > 1 && (counts["synonym"] || 0) < 2) {
+      styleToGenerate = "synonym";
+      neededCount = 2 - (counts["synonym"] || 0);
+  }
+  // فقط اگر کلمه در دیتابیس متضاد داشت، سوال متضاد بساز
+  else if (word.antonyms && word.antonyms.trim().length > 1 && (counts["antonym"] || 0) < 2) {
+      styleToGenerate = "antonym";
+      neededCount = 2 - (counts["antonym"] || 0);
+  }
+
+  // ۳. اگر نیاز به ساخت بود، بساز
+  if (styleToGenerate) {
     await sendMessage(env, chatId, "⏳ در حال طراحی سوال جدید با هوش مصنوعی...");
     try {
       const aiQuestions = await generateWordQuestionsWithGemini({
@@ -71,8 +118,8 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
         english: word.english,
         persian: word.persian,
         level: word.level,
-        questionStyle: desiredStyle,
-        count: 2
+        questionStyle: styleToGenerate,
+        count: neededCount // فقط به تعدادی که کم داریم بساز
       });
 
       if (aiQuestions.length > 0) {
@@ -85,27 +132,54 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
             options: q.options,
             correctIndex: q.correctIndex,
             explanation: q.explanation,
-            questionStyle: desiredStyle
+            questionStyle: styleToGenerate!
           }))
         );
-        question = await pickQuestionForUserWord(env, user, word, desiredStyle);
       }
     } catch (error) {
-      console.error("Error auto-generating questions:", error);
+      console.error("Error generating questions:", error);
+      // اگر خطا داد، ادامه میدیم تا شاید سوالی از قبل باشه
     }
+  }
+
+  // ۴. انتخاب سوال برای نمایش به کاربر
+  const state = await getOrCreateUserWordState(env, user.id, word.id);
+  const stage = state.question_stage || 1;
+  
+  // استایل ترجیحی بر اساس مرحله
+  const preferredStyle = getQuestionStyleForStage(stage);
+
+  let question: LeitnerQuestionRow | null = null;
+
+  if (preferredStyle) {
+    // تلاش برای پیدا کردن سوال با استایل مشخص که کاربر ندیده باشد
+    question = await pickQuestionForUserWord(env, user, word, preferredStyle);
+  }
+
+  // اگر سوالی با استایل ترجیحی پیدا نشد (یا استایل نال بود)، یک سوال تصادفی که ندیده انتخاب کن
+  if (!question) {
+     question = await pickRandomUnseenQuestion(env, user, word);
+  }
+
+  // اگر باز هم پیدا نشد (یعنی همه سوالات موجود رو دیده)، یک سوال تصادفی از کل سوالات انتخاب کن
+  if (!question) {
+    question = await pickRandomQuestionAny(env, word);
   }
 
   if (!question) {
     await sendMessage(
       env,
       chatId,
-      `برای واژه‌ی <b>${word.english}</b> هنوز هیچ سوالی در بانک سوال‌ها وجود ندارد و ساخت خودکار هم ناموفق بود ❗️`
+      `برای واژه‌ی <b>${word.english}</b> سوالی پیدا نشد و ساخت خودکار هم ناموفق بود ❗️`
     );
     return;
   }
 
+  // ثبت نمایش
   const now = new Date().toISOString();
-
+  // فقط اگر قبلاً ندیده ثبت کن، اما اینجا چون ممکن است تکراری باشد، بهتر است 
+  // تاریخچه را فقط برای جلوگیری از تکرار پشت سر هم استفاده کنیم.
+  // فعلاً طبق روال قبل ثبت می کنیم.
   await execute(
     env,
     `
@@ -140,135 +214,73 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   });
 }
 
+// انتخاب سوال با استایل خاص که کاربر ندیده
 async function pickQuestionForUserWord(
   env: Env,
   user: DbUser,
   word: DbWord,
-  desiredStyle: string
+  style: string
 ): Promise<LeitnerQuestionRow | null> {
-  let q = await queryOne<LeitnerQuestionRow>(
+  return await queryOne<LeitnerQuestionRow>(
     env,
     `
-    SELECT
-      q.id,
-      q.word_id,
-      q.question_text,
-      q.option_a,
-      q.option_b,
-      q.option_c,
-      q.option_d,
-      q.correct_option,
-      q.question_style,
-      w.english,
-      w.persian,
-      w.level
+    SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.question_style, w.english, w.persian, w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
       AND q.question_style = ?
       AND NOT EXISTS (
-        SELECT 1
-        FROM user_word_question_history h
-        WHERE h.user_id = ?
-          AND h.question_id = q.id
-          AND h.context = 'leitner'
+        SELECT 1 FROM user_word_question_history h
+        WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
       )
-    ORDER BY q.id
+    ORDER BY RANDOM()
     LIMIT 1
     `,
-    [word.id, desiredStyle, user.id]
+    [word.id, style, user.id]
   );
+}
 
-  if (q) return q;
-
-  q = await queryOne<LeitnerQuestionRow>(
+// انتخاب هر سوالی که کاربر ندیده (بدون توجه به استایل)
+async function pickRandomUnseenQuestion(
+  env: Env,
+  user: DbUser,
+  word: DbWord
+): Promise<LeitnerQuestionRow | null> {
+  return await queryOne<LeitnerQuestionRow>(
     env,
     `
-    SELECT
-      q.id,
-      q.word_id,
-      q.question_text,
-      q.option_a,
-      q.option_b,
-      q.option_c,
-      q.option_d,
-      q.correct_option,
-      q.question_style,
-      w.english,
-      w.persian,
-      w.level
-    FROM word_questions q
-    JOIN words w ON q.word_id = w.id
-    WHERE q.word_id = ?
-      AND q.question_style = ?
-    ORDER BY q.id
-    LIMIT 1
-    `,
-    [word.id, desiredStyle]
-  );
-
-  if (q) return q;
-
-  q = await queryOne<LeitnerQuestionRow>(
-    env,
-    `
-    SELECT
-      q.id,
-      q.word_id,
-      q.question_text,
-      q.option_a,
-      q.option_b,
-      q.option_c,
-      q.option_d,
-      q.correct_option,
-      q.question_style,
-      w.english,
-      w.persian,
-      w.level
+    SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.question_style, w.english, w.persian, w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
       AND NOT EXISTS (
-        SELECT 1
-        FROM user_word_question_history h
-        WHERE h.user_id = ?
-          AND h.question_id = q.id
-          AND h.context = 'leitner'
+        SELECT 1 FROM user_word_question_history h
+        WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
       )
-    ORDER BY q.id
+    ORDER BY RANDOM()
     LIMIT 1
     `,
     [word.id, user.id]
   );
+}
 
-  if (q) return q;
-
-  q = await queryOne<LeitnerQuestionRow>(
+// انتخاب هر سوالی (تکراری هم باشد اشکال ندارد)
+async function pickRandomQuestionAny(
+  env: Env,
+  word: DbWord
+): Promise<LeitnerQuestionRow | null> {
+  return await queryOne<LeitnerQuestionRow>(
     env,
     `
-    SELECT
-      q.id,
-      q.word_id,
-      q.question_text,
-      q.option_a,
-      q.option_b,
-      q.option_c,
-      q.option_d,
-      q.correct_option,
-      q.question_style,
-      w.english,
-      w.persian,
-      w.level
+    SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.question_style, w.english, w.persian, w.level
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
-    ORDER BY q.id
+    ORDER BY RANDOM()
     LIMIT 1
     `,
     [word.id]
   );
-
-  return q ?? null;
 }
 
 export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
@@ -281,7 +293,6 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       await answerCallbackQuery(env, callbackQuery.id);
       return;
     }
-
     const message = callbackQuery.message;
     if (!message) {
       await answerCallbackQuery(env, callbackQuery.id);
@@ -293,12 +304,7 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
 
     const question = await queryOne<{ word_id: number; english: string }>(
       env,
-      `
-      SELECT q.word_id, w.english
-      FROM word_questions q
-      JOIN words w ON w.id = q.word_id
-      WHERE q.id = ?
-      `,
+      `SELECT q.word_id, w.english FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
       [questionId]
     );
 
@@ -335,19 +341,7 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     const question = await queryOne<LeitnerQuestionRow>(
       env,
       `
-      SELECT
-        q.id,
-        q.word_id,
-        q.question_text,
-        q.option_a,
-        q.option_b,
-        q.option_c,
-        q.option_d,
-        q.correct_option,
-        q.question_style,
-        w.english,
-        w.persian,
-        w.level
+      SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.question_style, w.english, w.persian, w.level
       FROM word_questions q
       JOIN words w ON q.word_id = w.id
       WHERE q.id = ?
@@ -360,12 +354,10 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
 
-    // تعریف متغیرها همین اول کار
     const isCorrect = chosenOption === question.correct_option;
     const now = new Date().toISOString();
 
-    // === راه حل واقعی همزمانی (Atomic Update) ===
-    // ما سعی می‌کنیم رکورد را آپدیت کنیم، اما شرط می‌گذاریم که answered_at باید NULL باشد
+    // Atomic Update
     const updateResult = await env.DB.prepare(
       `UPDATE user_word_question_history 
        SET is_correct = ?, answered_at = ? 
@@ -374,19 +366,14 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     .bind(isCorrect ? 1 : 0, now, user.id, question.id)
     .run();
 
-    // اگر meta.changes برابر 0 بود، یعنی هیچ ردیفی آپدیت نشد (چون قبلاً answered_at پر شده بود)
     if (updateResult.meta.changes === 0) {
        await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
        return; 
     }
-    // ===========================================
 
     const batchStatements: any[] = [];
-    // نکته: دیگه نیازی نیست دستور آپدیت تاریخچه رو به batch اضافه کنیم چون بالا انجام شد.
-
     const sm2Stmts = await prepareUpdateSm2(env, user.id, question.word_id, isCorrect);
     batchStatements.push(...sm2Stmts);
-
     const xpStmts = prepareXpForLeitner(env, user.id, question.word_id, question.level, isCorrect);
     batchStatements.push(...xpStmts);
 
@@ -394,14 +381,12 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       await env.DB.batch(batchStatements);
     }
 
-    // --- بخش جدید مربوط به Streak ---
     if (isCorrect) {
       const streakMsg = await checkAndUpdateStreak(env, user.id);
       if (streakMsg) {
         await sendMessage(env, chatId, streakMsg);
       }
     }
-    // -------------------------------
 
     await answerCallbackQuery(env, callbackQuery.id);
 
@@ -415,13 +400,11 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       }
     };
 
-    // === اصلاح: استخراج متن گزینه صحیح به صورت صریح و امن ===
     let correctText = "";
     if (question.correct_option === "A") correctText = question.option_a;
     else if (question.correct_option === "B") correctText = question.option_b;
     else if (question.correct_option === "C") correctText = question.option_c;
     else if (question.correct_option === "D") correctText = question.option_d;
-    // ========================================================
 
     const correctNum = getOptionNumber(question.correct_option);
     let replyText: string;
