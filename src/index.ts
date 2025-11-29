@@ -4,8 +4,8 @@ import { queryAll, execute } from "./db/client";
 import { cleanupOldMatches } from "./db/duels";
 import { handleApiRequest } from "./api/router";
 import { getMiniAppHtml } from "./web/views";
-import { handleAdminRequest } from "./admin/router"; // <--- روتر ادمین
-import { htmlResponse } from "./utils/response"; // <--- تابع کمکی مشترک
+import { handleAdminRequest } from "./admin/router";
+import { htmlResponse } from "./utils/response";
 
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
@@ -38,7 +38,7 @@ export default {
         return await handleApiRequest(request, env);
       }
 
-      // 4. پنل ادمین (تمیز و منتقل شده!)
+      // 4. پنل ادمین
       if (url.pathname.startsWith("/admin")) {
         return await handleAdminRequest(request, env);
       }
@@ -68,29 +68,28 @@ export default {
   },
   
   async scheduled(event: any, env: Env, ctx: any): Promise<void> {
-  ctx.waitUntil((async () => {
-    console.log("🔄 Cleanup job...");
-    
-    // پاکسازی دوئل‌ها (با لیمیت که در فایل duels اعمال کردیم)
-    await cleanupOldMatches(env);
-    
-    // سشن‌های ادمین منقضی شده
-    await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
-    
-    // لاگ فعالیت (قبلاً داشتید - عالیه)
-    await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");
-    
-    // سشن‌های ریدینگ نیمه‌کاره
-    await execute(env, `DELETE FROM reading_sessions WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`);
-    
-    // سشن‌های رفلکشن نیمه‌کاره
-    await execute(env, `DELETE FROM reflection_sessions WHERE ai_score IS NULL AND created_at < datetime('now', '-1 day')`);
+    ctx.waitUntil((async () => {
+      console.log("🔄 Cleanup job...");
+      
+      // پاکسازی دوئل‌ها
+      await cleanupOldMatches(env);
+      
+      // سشن‌های ادمین منقضی شده
+      await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
+      
+      // لاگ فعالیت
+      await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");
+      
+      // سشن‌های ریدینگ نیمه‌کاره
+      await execute(env, `DELETE FROM reading_sessions WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`);
+      
+      // سشن‌های رفلکشن نیمه‌کاره
+      await execute(env, `DELETE FROM reflection_sessions WHERE ai_score IS NULL AND created_at < datetime('now', '-1 day')`);
 
-    // === خط جدید و حیاتی برای جلوگیری از پر شدن دیتابیس ===
-    // حذف تاریخچه پاسخ به سوالات لایتنر که قدیمی‌تر از ۶ ماه هستند
-    await execute(env, `DELETE FROM user_word_question_history WHERE shown_at < datetime('now', '-180 days')`);
-    // ====================================================
+      // حذف تاریخچه پاسخ به سوالات لایتنر قدیمی
+      await execute(env, `DELETE FROM user_word_question_history WHERE shown_at < datetime('now', '-180 days')`);
 
-    console.log("✅ Done.");
-  })());
-}
+      console.log("✅ Done.");
+    })());
+  }
+};
