@@ -364,17 +364,27 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
   );
 }
 
+// جایگزین تابع فعلی در src/db/duels.ts شوید:
 export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
+  // ۱. پیدا کردن هر بازی فعالی (چه در انتظار، چه در حال اجرا)
   const match = await queryOne<DuelMatch>(
     env,
-    `SELECT * FROM duel_matches WHERE (player1_id = ? OR player2_id = ?) AND status = 'in_progress'`,
+    `SELECT * FROM duel_matches 
+     WHERE (player1_id = ? OR player2_id = ?) 
+     AND status IN ('waiting', 'in_progress')`, // <--- اصلاح شد
     [userId, userId]
   );
 
   if (!match) return; 
 
   const now = new Date().toISOString();
-  const winnerId = match.player1_id === userId ? match.player2_id : match.player1_id;
+  
+  // اگر بازی هنوز شروع نشده (waiting)، برنده‌ای نداریم (کنسل شده)
+  // اگر بازی شروع شده، نفر دیگر برنده است
+  let winnerId: number | null = null;
+  if (match.status === 'in_progress') {
+      winnerId = match.player1_id === userId ? match.player2_id : match.player1_id;
+  }
 
   await execute(
     env,
