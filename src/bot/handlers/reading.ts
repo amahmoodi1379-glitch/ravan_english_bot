@@ -155,6 +155,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 export async function handleReadingAnswerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
+  // فرمت: ra:sessionId:questionId:option
   if (parts.length !== 4 || parts[0] !== CB_PREFIX.READING_ANSWER) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -176,6 +177,22 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     return;
   }
   const chatId = message.chat.id;
+
+  // === تغییر جدید: مدیریت دکمه انصراف ===
+  if (chosenOption === 'CANCEL') {
+    await answerCallbackQuery(env, callbackQuery.id, "آزمون لغو شد 🚫");
+    
+    // سشن را کنسل می‌کنیم تا در لیست کارهای نیمه‌کاره نماند
+    await env.DB.prepare("UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?").bind(sessionId).run();
+
+    // بازگشت به منوی اصلی
+    const { getMainMenuKeyboard } = require("../keyboards");
+    await sendMessage(env, chatId, "تست متوقف شد. به منوی اصلی برگشتی 👇", {
+        reply_markup: getMainMenuKeyboard()
+    });
+    return;
+  }
+  // =====================================
 
   const user = await getOrCreateUser(env, tgUser);
   const session = await getReadingSessionById(env, sessionId);
@@ -212,8 +229,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
   const now = new Date().toISOString();
 
-  // === فیکس امنیتی: جلوگیری از دوبار حساب شدن امتیاز ===
-  // 1. تلاش می‌کنیم تاریخچه را آپدیت کنیم، به شرطی که قبلاً پر نشده باشد
+  // فیکس امنیتی: جلوگیری از دوبار حساب شدن امتیاز
   const updateResult = await env.DB.prepare(
     `UPDATE user_text_question_history
      SET is_correct = ?, answered_at = ?
@@ -225,19 +241,16 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   .bind(isCorrect ? 1 : 0, now, session.id, user.id, questionId)
   .run();
 
-  // 2. اگر دیتابیس گفت "هیچ ردیفی تغییر نکرد" (changes = 0)، یعنی قبلاً جواب داده!
   if (updateResult.meta.changes === 0) {
      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
      return;
   }
 
-  // 3. اگر واقعاً بار اول بود و جواب درست بود، حالا امتیاز را اضافه کن
   if (isCorrect) {
     await env.DB.prepare(
       `UPDATE reading_sessions SET num_correct = num_correct + 1 WHERE id = ?`
     ).bind(session.id).run();
   }
-  // ========================================================
 
   await answerCallbackQuery(env, callbackQuery.id);
 
@@ -289,15 +302,10 @@ async function sendNextReadingQuestion(
   session: ReadingSession,
   chatId: number
 ): Promise<boolean> {
-  // 1. منطق هوشمند تولید سوال:
-  // الف) چند تا سوال کلاً داریم؟
+  // 1. منطق هوشمند تولید سوال
   const currentQCount = await getQuestionsCountForText(env, session.text_id);
-  // ب) کاربر چند تا سوال یکتا از این متن رو دیده؟
   const userSeenCount = await getDistinctSeenCount(env, user.id, session.text_id);
 
-  // شرط تولید سوال جدید:
-  // ۱. هنوز به سقف ۱۸ سوال نرسیده باشیم
-  // ۲. کاربر تمام سوالات موجود (currentQCount) را دیده باشد
   if (currentQCount < 18 && userSeenCount >= currentQCount) {
     const textRow = await getReadingTextById(env, session.text_id);
     if (textRow && textRow.body_en) {
@@ -322,7 +330,7 @@ async function sendNextReadingQuestion(
     }
   }
 
-  // 2. انتخاب سوال (حالا یا از جدیدها یا از موجودها - به صورت رندوم طبق تغییر دیتابیس)
+  // 2. انتخاب سوال
   let question = await getNextQuestionForSession(env, session, user.id);
 
   if (!question) {
@@ -351,6 +359,10 @@ async function sendNextReadingQuestion(
         { text: "2", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:B` },
         { text: "3", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:C` },
         { text: "4", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:D` }
+      ],
+      // دکمه انصراف جدید
+      [
+        { text: "❌ انصراف و خروج", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:CANCEL` }
       ]
     ]
   };
