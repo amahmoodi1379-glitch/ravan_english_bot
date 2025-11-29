@@ -154,3 +154,35 @@ export async function insertTextQuestions(env: Env, textId: number, questions: N
   }
   if (stmts.length > 0) await env.DB.batch(stmts);
 }
+
+// دریافت تعداد کل سوالات موجود برای یک متن (برای محدودیت ۱۸ تایی)
+export async function getQuestionsCountForText(env: Env, textId: number): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `SELECT COUNT(*) as cnt FROM text_questions WHERE text_id = ?`,
+    [textId]
+  );
+  return row?.cnt ?? 0;
+}
+
+// محاسبه تعداد پاسخ‌های درستی که "برای اولین بار" داده شده‌اند (جلوگیری از XP تکراری)
+export async function getNewCorrectCount(env: Env, sessionId: number, userId: number): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `
+    SELECT COUNT(*) as cnt
+    FROM user_text_question_history h
+    WHERE h.reading_session_id = ?
+      AND h.is_correct = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM user_text_question_history old
+        WHERE old.user_id = ?
+          AND old.question_id = h.question_id
+          AND old.is_correct = 1
+          AND old.reading_session_id != ?
+      )
+    `,
+    [sessionId, userId, sessionId]
+  );
+  return row?.cnt ?? 0;
+}
