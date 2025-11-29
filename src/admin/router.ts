@@ -108,7 +108,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
     
     const page = Math.min(rawPage, 1000000); 
-    const limit = 50; // ✅ اصلاح شد: به خط جدید آمد
+    const limit = 50;
     const offset = (page - 1) * limit;
 
     let whereSql = "FROM words WHERE 1 = 1";
@@ -206,11 +206,35 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     return htmlResponse(renderAdminLayout(`سوالات: ${word.english}`, content, "words"));
   }
 
+  // === اصلاح شده: حذف امن سوال و وابستگی‌هایش ===
   if (request.method === "POST" && url.pathname === "/admin/words/questions/delete") {
     const form = await parseForm(request);
     const id = Number(form.get("id"));
     const wordId = Number(form.get("word_id"));
-    if (id) await execute(env, "DELETE FROM word_questions WHERE id = ?", [id]);
+    
+    if (id) {
+      // 1. حذف تاریخچه پاسخ‌های کاربران به این سوال (وابستگی اول)
+      await execute(env, "DELETE FROM user_word_question_history WHERE question_id = ?", [id]);
+
+      // 2. پیدا کردن و حذف سوالات مربوط در دوئل‌ها (وابستگی دوم)
+      const duelQuestions = await queryAll<{ id: number }>(
+        env, 
+        "SELECT id FROM duel_questions WHERE word_question_id = ?", 
+        [id]
+      );
+      
+      if (duelQuestions.length > 0) {
+        const dqIds = duelQuestions.map(q => q.id).join(",");
+        // الف) حذف پاسخ‌های دوئل
+        await execute(env, `DELETE FROM duel_answers WHERE duel_question_id IN (${dqIds})`);
+        // ب) حذف خود سوالات دوئل
+        await execute(env, `DELETE FROM duel_questions WHERE id IN (${dqIds})`);
+      }
+
+      // 3. حالا که وابستگی‌ها پاک شدند، خود سوال را حذف کن
+      await execute(env, "DELETE FROM word_questions WHERE id = ?", [id]);
+    }
+    
     return redirect(`/admin/words/questions?word_id=${wordId}`);
   }
 
