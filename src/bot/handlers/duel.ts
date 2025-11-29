@@ -37,6 +37,19 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
   const tgUser = message.from;
 
   const user = await getOrCreateUser(env, tgUser);
+  // === فیکس: جلوگیری از شروع بازی تکراری ===
+  // چک می‌کنیم آیا کاربر همین الان بازی باز دارد؟
+  const existingMatch = await queryOne<{ id: number }>(
+      env, 
+      "SELECT id FROM duel_matches WHERE (player1_id = ? OR player2_id = ?) AND status IN ('waiting', 'in_progress')",
+      [user.id, user.id]
+  );
+  
+  if (existingMatch) {
+      await sendMessage(env, chatId, "⚠️ تو همین الان یک بازی فعال (یا در انتظار) داری! اول اون رو تموم کن یا از دکمه 'بازگشت' استفاده کن.");
+      return;
+  }
+  // ===========================================
 
   let match = await findWaitingMatch(env, difficulty, user.id);
 
