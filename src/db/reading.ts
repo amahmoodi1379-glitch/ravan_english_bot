@@ -58,9 +58,23 @@ export async function getNextQuestionForSession(env: Env, session: ReadingSessio
   return q ?? null;
 }
 
-export async function recordQuestionShown(env: Env, session: ReadingSession, userId: number, questionId: number): Promise<void> {
+export async function recordQuestionShown(env: Env, session: ReadingSession, userId: number, questionId: number): Promise<boolean> {
   const now = new Date().toISOString();
-  await execute(env, `INSERT INTO user_text_question_history (user_id, text_id, question_id, reading_session_id, shown_at) VALUES (?, ?, ?, ?, ?)`, [userId, session.text_id, questionId, session.id, now]);
+  
+  // این دستور SQL چک می‌کند که آیا این سوال قبلاً در این سشن ثبت شده یا نه
+  // اگر ثبت شده بود، دیگه ثبت نمیکنه (WHERE NOT EXISTS)
+  const result = await execute(env, `
+    INSERT INTO user_text_question_history (user_id, text_id, question_id, reading_session_id, shown_at)
+    SELECT ?, ?, ?, ?, ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM user_text_question_history 
+      WHERE reading_session_id = ? AND question_id = ?
+    )
+  `, [userId, session.text_id, questionId, session.id, now, session.id, questionId]);
+
+  // اگر چیزی ثبت شد (changes > 0) یعنی تکراری نبوده و موفق شدیم (True)
+  // اگر 0 بود یعنی تکراری بوده (False)
+  return result.meta.changes > 0;
 }
 
 export function prepareRecordAnswer(
