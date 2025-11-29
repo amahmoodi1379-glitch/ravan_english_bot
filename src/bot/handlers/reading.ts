@@ -323,7 +323,15 @@ async function sendNextReadingQuestion(
     return false;
   }
 
-  await recordQuestionShown(env, session, user.id, question.id);
+  // === تغییر اصلی اینجاست ===
+  // تلاش می‌کنیم سوال رو ثبت کنیم. اگه تکراری باشه، success برابر false میشه
+  const success = await recordQuestionShown(env, session, user.id, question.id);
+  
+  if (!success) {
+      console.warn("Duplicate question detected (Race Condition). Skipping...");
+      return false; // چون تکراری بود، بیخیال میشیم و پیام نمیدیم
+  }
+  // ==========================
 
   const messageText = 
     `❓ <b>${question.question_text}</b>\n\n` +
@@ -346,7 +354,6 @@ async function sendNextReadingQuestion(
   await sendMessage(env, chatId, messageText, { reply_markup: replyMarkup });
   return true;
 }
-
 async function sendReadingSummary(
   env: Env,
   user: DbUser,
