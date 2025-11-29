@@ -19,7 +19,8 @@ import {
   insertTextQuestions,
   prepareUpdateSessionXp,
   getQuestionsCountForText,  
-  getNewCorrectCount,        
+  getNewCorrectCount,
+  getDistinctSeenCount,
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
@@ -288,16 +289,19 @@ async function sendNextReadingQuestion(
   session: ReadingSession,
   chatId: number
 ): Promise<boolean> {
-  // 1. بررسی تعداد سوالات موجود برای این متن
-  // اگر کمتر از 18 تا بود، بگو هوش مصنوعی بسازد (حتی اگر سوال تکراری موجود باشد)
-  // این تضمین می‌کند که استخر سوالات به 18 تا می‌رسد.
+  // 1. منطق هوشمند تولید سوال:
+  // الف) چند تا سوال کلاً داریم؟
   const currentQCount = await getQuestionsCountForText(env, session.text_id);
-  
-  if (currentQCount < 18) {
+  // ب) کاربر چند تا سوال یکتا از این متن رو دیده؟
+  const userSeenCount = await getDistinctSeenCount(env, user.id, session.text_id);
+
+  // شرط تولید سوال جدید:
+  // ۱. هنوز به سقف ۱۸ سوال نرسیده باشیم
+  // ۲. کاربر تمام سوالات موجود (currentQCount) را دیده باشد
+  if (currentQCount < 18 && userSeenCount >= currentQCount) {
     const textRow = await getReadingTextById(env, session.text_id);
-    // فقط اگر متن وجود داشت و بادی داشت
     if (textRow && textRow.body_en) {
-      await sendMessage(env, chatId, "⏳ در حال طراحی سوالات جدید توسط هوش مصنوعی...");
+      await sendMessage(env, chatId, "⏳ همه سوالات قبلی رو دیدی! در حال طراحی سوالات جدید...");
       try {
         const aiQuestions = await generateReadingQuestionsWithGemini(env, textRow.body_en, GAME_CONFIG.READING_QUESTION_COUNT);
         if (aiQuestions.length > 0) {
@@ -318,7 +322,7 @@ async function sendNextReadingQuestion(
     }
   }
 
-  // 2. حالا سوال بعدی را انتخاب کن (سیستم خودکار تکراری‌ها را مدیریت می‌کند)
+  // 2. انتخاب سوال (حالا یا از جدیدها یا از موجودها - به صورت رندوم طبق تغییر دیتابیس)
   let question = await getNextQuestionForSession(env, session, user.id);
 
   if (!question) {
