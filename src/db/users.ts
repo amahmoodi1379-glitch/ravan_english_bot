@@ -11,9 +11,10 @@ export interface DbUser {
   display_name: string | null;
   xp_total: number;
   is_approved: number; 
+  last_seen_at: string | null;
 }
 
-// ورودی ساده از تلگرام (فقط چیزهایی که لازم داریم)
+// ورودی ساده از تلگرام
 export interface TelegramUserLike {
   id: number;
   username?: string;
@@ -21,15 +22,39 @@ export interface TelegramUserLike {
   last_name?: string;
 }
 
-// گرفتن یا ساختن کاربر بر اساس telegram_id
 export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<DbUser> {
   // 1) ببینیم قبلاً همچین کاربری داریم یا نه
   let user = await queryOne<DbUser>(env, "SELECT * FROM users WHERE telegram_id = ?", [tg.id]);
 
-  const now = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
 
   if (user) {
-    // اگر هست، فقط آخرین زمان دیده شدن و اطلاعات تلگرام رو آپدیت می‌کنیم
+    // === بهینه‌سازی: فقط در صورت تغییر یا گذشت زمان آپدیت کن ===
+    
+    // آیا اطلاعات پروفایل تغییر کرده؟
+    const infoChanged = 
+      (user.username || "") !== (tg.username || "") ||
+      (user.first_name || "") !== (tg.first_name || "") ||
+      (user.last_name || "") !== (tg.last_name || "");
+
+    // آیا از آخرین بازدید بیش از ۱ ساعت گذشته؟
+    let timeToUpdate = true;
+    if (user.last_seen_at) {
+      const lastSeen = new Date(user.last_seen_at);
+      const diffMs = now.getTime() - lastSeen.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+      if (diffHours < 1) {
+        timeToUpdate = false;
+      }
+    }
+
+    // اگر نه اطلاعات عوض شده و نه زمان زیادی گذشته، بیخیال آپدیت شو (صرفه‌جویی در دیتابیس)
+    if (!infoChanged && !timeToUpdate) {
+      return user;
+    }
+    // ==========================================================
+
     const displayName =
       user.display_name ||
       tg.first_name ||
@@ -43,10 +68,11 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
         SET username = ?, first_name = ?, last_name = ?, display_name = COALESCE(display_name, ?), last_seen_at = ?, updated_at = ?
         WHERE id = ?
       `,
-      [tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, now, now, user.id]
+      [tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, nowIso, nowIso, user.id]
     );
 
-    // دوباره از دیتابیس بخونیم تا مقدار به‌روز برگردونیم
+    // دوباره از دیتابیس بخونیم (چون ممکنه تریگرها چیزی رو عوض کرده باشن یا برای اطمینان)
+    // نکته: برای سرعت بیشتر می‌تونستیم آبجکت رو دستی آپدیت کنیم، ولی خواندن دوباره امن‌تره.
     user = await queryOne<DbUser>(env, "SELECT * FROM users WHERE id = ?", [user.id]);
     if (!user) {
       throw new Error("User disappeared after update (unexpected).");
@@ -67,10 +93,9 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
       INSERT INTO users (telegram_id, username, first_name, last_name, display_name, last_seen_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `,
-    [tg.id, tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, now]
+    [tg.id, tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, nowIso]
   );
 
-  // کاربر تازه ساخته شده را دوباره بخوانیم
   const newUser = await queryOne<DbUser>(env, "SELECT * FROM users WHERE telegram_id = ?", [tg.id]);
   if (!newUser) {
     throw new Error("Failed to create user.");
@@ -79,21 +104,16 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
   return newUser;
 }
 
-// گرفتن کاربر بر اساس id دیتابیسی (برای پیام دادن در دوئل)
+// توابع کمکی دیگر (بدون تغییر)
 export async function getUserById(env: Env, userId: number): Promise<DbUser | null> {
   const user = await queryOne<DbUser>(
     env,
-    `
-    SELECT *
-    FROM users
-    WHERE id = ?
-    `,
+    `SELECT * FROM users WHERE id = ?`,
     [userId]
   );
   return user ?? null;
 }
 
-// این تابع فقط کاربر را می‌گیرد، اگر نباشد null برمی‌گرداند (چیزی نمی‌سازد)
 export async function getUserByTelegramId(env: Env, telegramId: number): Promise<DbUser | null> {
   return await queryOne<DbUser>(
     env, 
