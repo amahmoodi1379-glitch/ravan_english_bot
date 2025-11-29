@@ -36,7 +36,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const referer = request.headers.get("Referer");
     
     // اگر Origin وجود داشت، باید با آدرس سایت یکی باشد
-    if (origin && new URL(origin).origin !== url.origin) {
+    if (origin && new URL(origin).hostname !== url.hostname) {
       return new Response("Forbidden (CSRF Origin Mismatch)", { status: 403 });
     }
     // اگر Origin نبود ولی Referer بود، باید با آدرس سایت یکی باشد
