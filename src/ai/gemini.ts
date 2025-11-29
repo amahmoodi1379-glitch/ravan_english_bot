@@ -222,16 +222,14 @@ function parseGeminiJson(raw: string, limit: number): AiGeneratedQuestion[] {
   return result;
 }
 
-// --- بخش جدید: برداشت از متن (Reflection) ---
 
 export async function generateReflectionParagraph(
   env: Env,
   words: string[],
-  level: string // ورودی جدید: سطح زبان (A1, A2, B1, B2)
+  level: string 
 ): Promise<string> {
   const wordsList = words.join(", ");
   
-  // پرامپت جدید با تمرکز بر روانشناسی و سطح متغیر
   const prompt = `
 You are an English tutor specializing in Psychology and Mental Health.
 Write a short, engaging paragraph (about 60-100 words) for an English learner at Level ${level}.
