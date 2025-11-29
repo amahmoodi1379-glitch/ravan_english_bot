@@ -11,7 +11,7 @@ export interface ReflectionSession {
   created_at: string;
 }
 
-// ایجاد یک سشن جدید (هنوز کاربر جواب نداده)
+// ایجاد یک سشن جدید (با استفاده از RETURNING برای امنیت و سرعت بیشتر)
 export async function createReflectionSession(
   env: Env,
   userId: number,
@@ -19,25 +19,16 @@ export async function createReflectionSession(
 ): Promise<ReflectionSession> {
   const now = new Date().toISOString();
   
-  // user_answer is NOT NULL in schema, so we insert empty string initially
-  await execute(
+  // اصلاح: استفاده از RETURNING * برای دریافت رکورد ساخته شده در همان لحظه
+  // این کار مشکل همزمانی (Race Condition) را کاملاً حل می‌کند
+  const session = await queryOne<ReflectionSession>(
     env,
     `
     INSERT INTO reflection_sessions (user_id, source_paragraph, user_answer, created_at)
     VALUES (?, ?, '', ?)
+    RETURNING *
     `,
     [userId, paragraph, now]
-  );
-
-  const session = await queryOne<ReflectionSession>(
-    env,
-    `
-    SELECT * FROM reflection_sessions
-    WHERE user_id = ? 
-    ORDER BY id DESC
-    LIMIT 1
-    `,
-    [userId]
   );
 
   if (!session) throw new Error("Failed to create reflection session");
@@ -49,7 +40,6 @@ export async function getPendingReflectionSession(
   env: Env,
   userId: number
 ): Promise<ReflectionSession | null> {
-  // فرض می‌کنیم اگر ai_score نال باشد، یعنی هنوز کامل نشده
   return await queryOne<ReflectionSession>(
     env,
     `
@@ -104,7 +94,8 @@ export async function getUserLearnedWords(
 
   return rows.map(r => r.english);
 }
-// تابع جدید: حذف تمرین ناتمام (برای وقتی که کاربر انصراف می‌دهد)
+
+// حذف تمرین ناتمام
 export async function deletePendingReflectionSession(env: Env, userId: number): Promise<void> {
   await execute(
     env,
