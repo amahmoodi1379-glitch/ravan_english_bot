@@ -29,6 +29,23 @@ async function isAdminAuthed(request: Request, env: Env): Promise<boolean> {
 export async function handleAdminRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
+  // === لایه امنیتی جدید: محافظت CSRF ===
+  // اگر درخواست POST است (یعنی می‌خواهد چیزی را تغییر دهد)، چک کن که از سایت خودمان آمده باشد
+  if (request.method === "POST") {
+    const origin = request.headers.get("Origin");
+    const referer = request.headers.get("Referer");
+    
+    // اگر Origin وجود داشت، باید با آدرس سایت یکی باشد
+    if (origin && new URL(origin).origin !== url.origin) {
+      return new Response("Forbidden (CSRF Origin Mismatch)", { status: 403 });
+    }
+    // اگر Origin نبود ولی Referer بود، باید با آدرس سایت یکی باشد
+    if (!origin && referer && new URL(referer).origin !== url.origin) {
+      return new Response("Forbidden (CSRF Referer Mismatch)", { status: 403 });
+    }
+  }
+  // ======================================
+
   // 1. لاگین و احراز هویت اولیه
   if (url.pathname === "/admin") {
     if (await isAdminAuthed(request, env)) {
@@ -66,6 +83,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const expiresAt = new Date(Date.now() + 86400 * 1000).toISOString();
     await execute(env, "INSERT INTO admin_sessions (token, expires_at) VALUES (?, ?)", [token, expiresAt]);
     
+    // کوکی با امنیت Lax برای جلوگیری از CSRF
     const headers = new Headers();
     headers.append("Set-Cookie", `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
     headers.append("Location", "/admin/words");
@@ -91,12 +109,10 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   // --- مدیریت واژه‌ها (با صفحه‌بندی) ---
   if (url.pathname === "/admin/words") {
     const search = (url.searchParams.get("q") || "").trim();
-    // ۱. گرفتن شماره صفحه از آدرس (اگر نبود، صفحه ۱ فرض می‌شود)
     const page = Math.max(1, Number(url.searchParams.get("page") || 1));
-    const limit = 50; // تعداد واژه در هر صفحه
+    const limit = 50; 
     const offset = (page - 1) * limit;
 
-    // ۲. ساخت شرط‌های جستجو
     let whereSql = "FROM words WHERE 1 = 1";
     const baseParams: any[] = [];
     
@@ -105,7 +121,6 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       baseParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    // ۳. گرفتن تعداد کل واژه‌ها (برای محاسبه تعداد صفحات)
     const countRow = await queryOne<{ total: number }>(
       env, 
       `SELECT COUNT(*) as total ${whereSql}`, 
@@ -114,7 +129,6 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const totalCount = countRow?.total || 0;
     const totalPages = Math.ceil(totalCount / limit) || 1;
 
-    // ۴. گرفتن خود واژه‌ها برای صفحه جاری
     const dataSql = `SELECT id, english, persian, level, lesson_name, is_active ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`;
     const dataParams = [...baseParams, limit, offset];
     
@@ -135,7 +149,6 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       </tr>
     `).join("");
 
-    // دکمه‌های صفحه‌بندی
     const paginationHtml = `
       <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
         ${page > 1 ? `<a href="/admin/words?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
@@ -292,17 +305,13 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     return redirect("/admin/texts");
   }
 
-  // --- مدیریت کاربران ---
   // --- مدیریت کاربران (با صفحه‌بندی) ---
   if (url.pathname === "/admin/users") {
     const search = (url.searchParams.get("q") || "").trim();
-    
-    // ۱. تنظیمات صفحه
     const page = Math.max(1, Number(url.searchParams.get("page") || 1));
     const limit = 50; 
     const offset = (page - 1) * limit;
 
-    // ۲. ساخت شرط‌های جستجو
     let whereSql = "FROM users u LEFT JOIN access_codes ac ON ac.used_by_user_id = u.id WHERE 1 = 1";
     const baseParams: any[] = [];
 
@@ -311,7 +320,6 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       baseParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    // ۳. شمارش کل کاربران (برای دکمه‌های صفحه بعد)
     const countRow = await queryOne<{ total: number }>(
       env,
       `SELECT COUNT(*) as total ${whereSql}`,
@@ -320,7 +328,6 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const totalCount = countRow?.total || 0;
     const totalPages = Math.ceil(totalCount / limit) || 1;
 
-    // ۴. گرفتن اطلاعات کاربران صفحه جاری
     const dataSql = `SELECT u.id, u.telegram_id, u.username, u.display_name, u.xp_total, u.created_at, u.is_approved, ac.code as license_code ${whereSql} ORDER BY u.id DESC LIMIT ? OFFSET ?`;
     const dataParams = [...baseParams, limit, offset];
 
@@ -339,7 +346,6 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       </tr>
     `).join("");
 
-    // دکمه‌های پایین جدول
     const paginationHtml = `
       <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
         ${page > 1 ? `<a href="/admin/users?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
