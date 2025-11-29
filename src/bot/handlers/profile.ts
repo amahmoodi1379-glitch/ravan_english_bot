@@ -12,6 +12,7 @@ import {
   ActivityStats
 } from "../../db/profile";
 import { CB_PREFIX } from "../../config/constants";
+import { CB_PREFIX, TIME_ZONE_OFFSET } from "../../config/constants";
 
 const AVATARS: { code: string; emoji: string; label: string }[] = [
   { code: "cat", emoji: "😺", label: "گربه" },
@@ -39,28 +40,27 @@ async function getStreakInfo(env: Env, userId: number): Promise<number> {
   if (!row) return 0;
   
   const count = (row.streak_count as number) || 0;
-  const lastDate = (row.last_streak_date as string) || ""; // این تاریخ با وقت ایران ذخیره شده
+  const lastDate = (row.last_streak_date as string) || ""; 
   
   if (count === 0) return 0;
 
-  // ۲. گرفتن تاریخ دقیق "امروز" و "دیروز" به وقت ایران مستقیماً از دیتابیس
-  // این کار باعث میشه ساعت سرور (UTC) دخالتی نکنه و باگ برطرف بشه
+  // ۲. گرفتن تاریخ دقیق "امروز" و "دیروز" به وقت ایران
+  // استفاده از TIME_ZONE_OFFSET که از تنظیمات می‌آید
   const dateCheck = await env.DB.prepare(`
     SELECT 
-      date('now', '+3.5 hours') as today_local,
-      date('now', '+3.5 hours', '-1 day') as yesterday_local
-  `).first();
+      date('now', ?) as today_local,
+      date('now', ?, '-1 day') as yesterday_local
+  `).bind(TIME_ZONE_OFFSET, TIME_ZONE_OFFSET).first();
 
   const todayStr = dateCheck?.today_local as string;
   const yesterdayStr = dateCheck?.yesterday_local as string;
 
-  // ۳. مقایسه تاریخ‌ها (چون همه چیز متنی و دقیق شده، دیگه اشتباه نمیشه)
-  // اگر آخرین تمرین "امروز" یا "دیروز" بوده باشه، زنجیره برقراره
+  // ۳. مقایسه تاریخ‌ها
   if (lastDate === todayStr || lastDate === yesterdayStr) {
     return count;
   }
   
-  return 0; // متاسفانه زنجیره پاره شده
+  return 0; 
 }
 
 export async function showProfileHome(env: Env, update: TelegramUpdate): Promise<void> {
