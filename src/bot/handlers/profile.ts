@@ -32,27 +32,31 @@ function getAvatarLabel(code: string | null | undefined): string {
   return found ? found.label : "پیش‌فرض";
 }
 
-// تابع کمکی برای گرفتن اطلاعات زنجیره (مستقیم از دیتابیس)
+// تابع اصلاح شده برای محاسبه دقیق زنجیره با ساعت ایران
 async function getStreakInfo(env: Env, userId: number): Promise<number> {
+  // ۱. گرفتن اطلاعات زنجیره کاربر از دیتابیس
   const row = await env.DB.prepare(`SELECT streak_count, last_streak_date FROM users WHERE id = ?`).bind(userId).first();
   if (!row) return 0;
   
   const count = (row.streak_count as number) || 0;
-  const lastDate = (row.last_streak_date as string) || "";
+  const lastDate = (row.last_streak_date as string) || ""; // این تاریخ با وقت ایران ذخیره شده
   
   if (count === 0) return 0;
 
-  // چک کنیم که آیا تاریخ آخرین استریک، امروز یا دیروز بوده؟ (با تایم‌زون UTC)
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  
-  const todayStr = today.toISOString().split('T')[0];
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-  // تاریخ دیتابیس هم فرمت ISO است (YYYY-MM-DD...)
-  const lastDateStr = lastDate.split('T')[0];
+  // ۲. گرفتن تاریخ دقیق "امروز" و "دیروز" به وقت ایران مستقیماً از دیتابیس
+  // این کار باعث میشه ساعت سرور (UTC) دخالتی نکنه و باگ برطرف بشه
+  const dateCheck = await env.DB.prepare(`
+    SELECT 
+      date('now', '+3.5 hours') as today_local,
+      date('now', '+3.5 hours', '-1 day') as yesterday_local
+  `).first();
 
-  if (lastDateStr === todayStr || lastDateStr === yesterdayStr) {
+  const todayStr = dateCheck?.today_local as string;
+  const yesterdayStr = dateCheck?.yesterday_local as string;
+
+  // ۳. مقایسه تاریخ‌ها (چون همه چیز متنی و دقیق شده، دیگه اشتباه نمیشه)
+  // اگر آخرین تمرین "امروز" یا "دیروز" بوده باشه، زنجیره برقراره
+  if (lastDate === todayStr || lastDate === yesterdayStr) {
     return count;
   }
   
