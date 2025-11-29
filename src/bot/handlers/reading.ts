@@ -18,6 +18,8 @@ import {
   markSessionCompleted,
   insertTextQuestions,
   prepareUpdateSessionXp,
+  getQuestionsCountForText,  
+  getNewCorrectCount,        
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
@@ -286,18 +288,16 @@ async function sendNextReadingQuestion(
   session: ReadingSession,
   chatId: number
 ): Promise<boolean> {
-  let question = await getNextQuestionForSession(env, session, user.id);
-
-  if (!question) {
-    const stats = await getSessionStats(env, session.id);
-    if (stats.total >= (session.num_questions || 3)) {
-      return false;
-    }
-
-    await sendMessage(env, chatId, "⏳ در حال خواندن متن و طراحی سوالات جدید...");
-
+  // 1. بررسی تعداد سوالات موجود برای این متن
+  // اگر کمتر از 18 تا بود، بگو هوش مصنوعی بسازد (حتی اگر سوال تکراری موجود باشد)
+  // این تضمین می‌کند که استخر سوالات به 18 تا می‌رسد.
+  const currentQCount = await getQuestionsCountForText(env, session.text_id);
+  
+  if (currentQCount < 18) {
     const textRow = await getReadingTextById(env, session.text_id);
+    // فقط اگر متن وجود داشت و بادی داشت
     if (textRow && textRow.body_en) {
+      await sendMessage(env, chatId, "⏳ در حال طراحی سوالات جدید توسط هوش مصنوعی...");
       try {
         const aiQuestions = await generateReadingQuestionsWithGemini(env, textRow.body_en, GAME_CONFIG.READING_QUESTION_COUNT);
         if (aiQuestions.length > 0) {
@@ -311,27 +311,27 @@ async function sendNextReadingQuestion(
               explanation: q.explanation
             }))
           );
-          question = await getNextQuestionForSession(env, session, user.id);
         }
       } catch (e) {
-        console.error("Error auto-generating reading questions", e);
+        console.error("Error generating questions:", e);
       }
     }
   }
+
+  // 2. حالا سوال بعدی را انتخاب کن (سیستم خودکار تکراری‌ها را مدیریت می‌کند)
+  let question = await getNextQuestionForSession(env, session, user.id);
 
   if (!question) {
     return false;
   }
 
-  // === تغییر اصلی اینجاست ===
-  // تلاش می‌کنیم سوال رو ثبت کنیم. اگه تکراری باشه، success برابر false میشه
+  // 3. ثبت نمایش سوال
   const success = await recordQuestionShown(env, session, user.id, question.id);
   
   if (!success) {
-      console.warn("Duplicate question detected (Race Condition). Skipping...");
-      return false; // چون تکراری بود، بیخیال میشیم و پیام نمیدیم
+      console.warn("Duplicate question show detected. Skipping...");
+      return false;
   }
-  // ==========================
 
   const messageText = 
     `❓ <b>${question.question_text}</b>\n\n` +
@@ -354,6 +354,7 @@ async function sendNextReadingQuestion(
   await sendMessage(env, chatId, messageText, { reply_markup: replyMarkup });
   return true;
 }
+
 async function sendReadingSummary(
   env: Env,
   user: DbUser,
@@ -364,6 +365,7 @@ async function sendReadingSummary(
   const total = stats.total;
   const correct = stats.correct;
 
+  // دریافت جزئیات پاسخ‌ها برای نمایش
   const rows = await queryAll<SummaryQuestionRow>(
     env,
     `
@@ -383,7 +385,12 @@ async function sendReadingSummary(
     [session.id]
   );
 
-  const { totalXp, stmts: xpStmts } = calculateAndPrepareXpForReading(env, user.id, session.id, correct, total);
+  // === رفع باگ XP ===
+  // فقط بابت سوالاتی XP می‌دهیم که قبلاً درست جواب نداده باشد
+  const newCorrectCount = await getNewCorrectCount(env, session.id, user.id);
+  
+  // محاسبه XP بر اساس تعداد جدید
+  const { totalXp, stmts: xpStmts } = calculateAndPrepareXpForReading(env, user.id, session.id, newCorrectCount, total);
   
   const batchStatements: any[] = [...xpStmts];
 
@@ -392,7 +399,7 @@ async function sendReadingSummary(
   }
   
   const now = new Date().toISOString();
-  // We assume prepare is imported from client (it is imported at top)
+  // ایمپورت داینامیک prepare برای جلوگیری از مشکل circular dependency احتمالی
   const { prepare } = require("../../db/client"); 
   
   batchStatements.push(prepare(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, session.id]));
@@ -410,7 +417,9 @@ async function sendReadingSummary(
   text += `✅ تعداد پاسخ‌های درست: <b>${correct}</b> از <b>${total}</b>\n`;
 
   if (totalXp > 0) {
-    text += `\n⭐️ XP این ست: <b>${totalXp}</b>\n`;
+    text += `\n⭐️ XP دریافتی: <b>${totalXp}</b>\n`;
+  } else if (correct > 0) {
+    text += `\n⭐️ XP دریافتی: <b>0</b> (تکراری)\n`;
   }
 
   if (rows.length > 0) {
@@ -424,14 +433,7 @@ async function sendReadingSummary(
     });
   }
 
-  // اضافه کردن دکمه بازگشت به منوی تمرین‌ها (Inline) چون کیبورد Reply حذف شده
-  await sendMessage(env, chatId, text, {
-      reply_markup: {
-          inline_keyboard: [[{ text: "بازگشت به منوی اصلی", callback_data: "none" }]] // یا می‌تونید کیبورد اصلی رو دوباره بفرستید
-      }
-  });
-  
-  // یا بهتر: برگرداندن کیبورد اصلی (Main Menu)
+  // برگرداندن کیبورد اصلی (Main Menu)
   const { getMainMenuKeyboard } = require("../keyboards");
   await sendMessage(env, chatId, "خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟", {
       reply_markup: getMainMenuKeyboard()
