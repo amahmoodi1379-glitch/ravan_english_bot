@@ -41,50 +41,36 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
   let match = await findWaitingMatch(env, difficulty, user.id);
 
   if (!match) {
-    // ... (کد ساخت مچ جدید بدون تغییر) ...
-// 1. ساخت مچ اولیه
     match = await createDuelMatch(env, difficulty, user.id);
     
-    // 2. تلاش برای ساخت یا پیدا کردن سوال
     await ensureDuelQuestions(env, match.id, difficulty);
 
-    // 3. چک کردن اینکه آیا سوالی وجود دارد؟
     const totalQ = await getTotalQuestionsInMatch(env, match.id);
     
     if (totalQ === 0) {
-        // === بخش اصلاح شده: حذف مچ خراب ===
-        // اگر سوال ساخته نشد، مچ را پاک می‌کنیم تا نفر بعدی در آن گیر نکند
         await env.DB.prepare("DELETE FROM duel_matches WHERE id = ?").bind(match.id).run();
-        // ==================================
-
         await sendMessage(env, chatId, "متاسفانه نتوانستیم سوالات دوئل را آماده کنیم. لطفاً چند لحظه دیگر دوباره تلاش کنید ❗️");
         return;
     }
-    // ... (پیام شروع و ارسال سوال اول) ...
-    const introText = difficulty === "easy" ? "یک دوئل آسان..." : "یک دوئل سخت..."; // متن کامل رو بذارید
+    
+    const introText = difficulty === "easy" ? "یک دوئل آسان ساخته شد. منتظر حریف..." : "یک دوئل سخت ساخته شد. منتظر حریف...";
     await sendMessage(env, chatId, introText);
     await sendNextDuelQuestion(env, match.id, user, chatId);
     return;
   }
 
-  // --- تغییر اصلی اینجاست ---
   if (!match.player2_id) {
-    // تلاش برای جوین شدن
     const joinedMatch = await joinDuelMatch(env, match.id, user.id);
     
     if (!joinedMatch) {
-      // اگر نال برگشت، یعنی در همین لحظه کس دیگری جوین شد (Race Condition)
-      // پس دوباره تلاش می‌کنیم (بازگشتی) تا یک مچ دیگر پیدا کنیم یا بسازیم
       return startDuelForUser(env, update, difficulty);
     }
     
     match = joinedMatch;
   }
-  // ---------------------------
 
   await ensureDuelQuestions(env, match.id, difficulty);
 
-  // ... (بقیه کد بدون تغییر: چک کردن سوالات و شروع بازی) ...
   const totalQ = await getTotalQuestionsInMatch(env, match.id);
   if (totalQ === 0) {
       await sendMessage(env, chatId, "برای این دوئل هنوز سوالی ساخته نشده ❗️");
@@ -132,7 +118,6 @@ async function sendNextDuelQuestion(
     return false;
   }
 
-  // تغییر UI: گزینه‌ها در متن
   const messageText = 
     `❓ <b>${q.question_text}</b>\n\n` +
     `1️⃣ ${q.option_a}\n` +
@@ -140,7 +125,6 @@ async function sendNextDuelQuestion(
     `3️⃣ ${q.option_c}\n` +
     `4️⃣ ${q.option_d}`;
 
-  // === اصلاح شده: حذف duelId از داده‌های دکمه برای کاهش حجم ===
   const replyMarkup = {
     inline_keyboard: [
       [
@@ -151,7 +135,6 @@ async function sendNextDuelQuestion(
       ]
     ]
   };
-  // ==========================================================
 
   await sendMessage(env, chatId, messageText, { reply_markup: replyMarkup });
   return true;
@@ -161,8 +144,6 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
   const data = callbackQuery.data ?? "";
   const parts = data.split(":"); 
   
-  // === تغییر ۱: انتظار داریم ۳ بخش داشته باشیم (قبلاً ۴ تا بود) ===
-  // فرمت جدید: d:questionId:option
   if (parts.length !== 3 || parts[0] !== CB_PREFIX.DUEL) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -175,7 +156,6 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
-  // ============================================================
 
   const tgUser = callbackQuery.from;
   const message = callbackQuery.message;
@@ -187,7 +167,6 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
   const chatId = message.chat.id;
   const user = await getOrCreateUser(env, tgUser);
 
-  // === تغییر ۲: اول سوال رو پیدا می‌کنیم تا شناسه دوئل رو بفهمیم ===
   const q = await getDuelQuestionById(env, duelQuestionId);
   if (!q) {
     await answerCallbackQuery(env, callbackQuery.id, "سوال این دوئل پیدا نشد ❗️");
@@ -195,7 +174,7 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
   }
 
   const duelId = q.duel_id; 
-  // === شروع تغییرات: جلوگیری از پاسخ تکراری ===
+  
   const existingAnswer = await queryOne<{ id: number }>(
     env,
     `SELECT id FROM duel_answers WHERE duel_id = ? AND duel_question_id = ? AND user_id = ?`,
@@ -206,8 +185,6 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
     return;
   }
-  // === پایان تغییرات ===
-  // ============================================================
 
   const match = await getDuelMatchById(env, duelId);
   if (!match) {
@@ -241,8 +218,7 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     }
   };
   const correctNum = getOptionNumber(q.correct_option);
-  // نکته ریز: چون q از جوین جداول آمده، فیلدهای option_a و ... را دارد
-  // ما برای نمایش متن گزینه صحیح از یک ترفند استفاده می‌کنیم یا مستقیم از q می‌خوانیم
+  
   let correctText = "";
   if (q.correct_option === "A") correctText = q.option_a;
   else if (q.correct_option === "B") correctText = q.option_b;
@@ -275,52 +251,91 @@ export async function handleDuelAnswerCallback(env: Env, callbackQuery: Telegram
     return;
   }
 
+  // --- محاسبه نتیجه نهایی ---
   const userCorrect = await getUserCorrectCountInMatch(env, duelId, user.id);
+  
+  // تلاش برای نهایی کردن بازی (حالت عادی: دو نفر تمام می‌کنند)
   const finalizeResult = await maybeFinalizeMatch(env, duelId);
 
-  if (!finalizeResult) {
-    const msg =
-      `تو دوئل رو تموم کردی ✅\n` +
-      `تعداد پاسخ‌های درست تو: <b>${userCorrect}</b> از <b>${totalQ}</b>\n` +
-      `منتظر بمون تا حریف هم سوال‌هاش رو جواب بده؛ بعد نتیجه و XP نهایی برات میاد.`;
-    await sendMessage(env, chatId, msg);
+  // حالت ۱: بازی همین الان به صورت نرمال تمام شد
+  if (finalizeResult) {
+    const { totalQuestions, player1Correct, player2Correct, winnerUserId, isDraw, match: finalMatch } = finalizeResult;
+    await processAndNotifyEndGame(env, finalMatch, player1Correct, player2Correct, isDraw, winnerUserId, totalQuestions);
     return;
   }
 
-  const { totalQuestions, player1Correct, player2Correct, winnerUserId, isDraw, match: finalMatch } = finalizeResult;
+  // حالت ۲: بازی قبلاً "Completed" شده (یعنی حریف انصراف داده یا زودتر تمام شده و باگ خورده بود)
+  // اینجا باگ اصلی فیکس می‌شود: اگر finalizeResult نال بود، چک می‌کنیم شاید بازی تمام شده است.
+  const freshMatch = await getDuelMatchById(env, duelId);
+  if (freshMatch && freshMatch.status === 'completed') {
+    // بازی تمام شده است، پس باید نتیجه را برای "این کاربر" محاسبه و ارسال کنیم.
+    let result: "win" | "draw" | "lose" = "lose";
+    if (freshMatch.is_draw === 1) result = "draw";
+    else if (freshMatch.winner_user_id === user.id) result = "win";
+    else result = "lose"; // یا باخته یا حریف برده
 
-  const player1 = await getUserById(env, finalMatch.player1_id);
-  const player2 = finalMatch.player2_id ? await getUserById(env, finalMatch.player2_id) : null;
+    const xp = await addXpForDuelMatch(env, user.id, freshMatch.id, userCorrect, totalQ, result);
+    const sMsg = await checkAndUpdateStreak(env, user.id);
+    if (sMsg) await sendMessage(env, chatId, sMsg);
 
-  if (player1) {
-    let result: "win" | "draw" | "lose" = "draw";
-    if (isDraw === 1) result = "draw";
-    else if (winnerUserId === player1.id) result = "win";
-    else result = "lose";
+    let endText = "";
+    if (result === "win") endText = "🎉 بازی تمام شده (احتمالاً حریف انصراف داده). تو بردی!";
+    else if (result === "lose") endText = "بازی تمام شده و تو باختی.";
+    else endText = "بازی مساوی شد.";
 
-    const xp = await addXpForDuelMatch(env, player1.id, finalMatch.id, player1Correct, totalQuestions, result);
-    
-    const sMsg1 = await checkAndUpdateStreak(env, player1.id);
-    if (sMsg1) await sendMessage(env, player1.telegram_id, sMsg1);
+    endText += `\n\nامتیاز تو: <b>${userCorrect}</b> از <b>${totalQ}</b>`;
+    endText += `\n⭐️ XP دریافتی: <b>${xp}</b>`;
 
-    const text = buildDuelSummaryText(result, player1Correct, player2Correct, totalQuestions, xp, player2);
-    await sendMessage(env, player1.telegram_id, text);
+    await sendMessage(env, chatId, endText);
+    return;
   }
 
-  if (player2) {
-    let result: "win" | "draw" | "lose" = "draw";
-    if (isDraw === 1) result = "draw";
-    else if (winnerUserId === player2.id) result = "win";
-    else result = "lose";
+  // حالت ۳: هنوز منتظر حریف هستیم
+  const msg =
+    `تو دوئل رو تموم کردی ✅\n` +
+    `تعداد پاسخ‌های درست تو: <b>${userCorrect}</b> از <b>${totalQ}</b>\n` +
+    `منتظر بمون تا حریف هم سوال‌هاش رو جواب بده؛ بعد نتیجه و XP نهایی برات میاد.`;
+  await sendMessage(env, chatId, msg);
+}
 
-    const xp = await addXpForDuelMatch(env, player2.id, finalMatch.id, player2Correct, totalQuestions, result);
-    
-    const sMsg2 = await checkAndUpdateStreak(env, player2.id);
-    if (sMsg2) await sendMessage(env, player2.telegram_id, sMsg2);
+// تابع کمکی برای ارسال پیام‌های پایان بازی (جلوگیری از تکرار کد)
+async function processAndNotifyEndGame(
+    env: Env, 
+    match: any, 
+    p1Correct: number, 
+    p2Correct: number, 
+    isDraw: boolean, 
+    winnerId: number | null, 
+    total: number
+) {
+    const player1 = await getUserById(env, match.player1_id);
+    const player2 = match.player2_id ? await getUserById(env, match.player2_id) : null;
 
-    const text = buildDuelSummaryText(result, player2Correct, player1Correct, totalQuestions, xp, player1);
-    await sendMessage(env, player2.telegram_id, text);
-  }
+    if (player1) {
+        let res: "win" | "draw" | "lose" = "lose";
+        if (isDraw) res = "draw";
+        else if (winnerId === player1.id) res = "win";
+        
+        const xp = await addXpForDuelMatch(env, player1.id, match.id, p1Correct, total, res);
+        const s = await checkAndUpdateStreak(env, player1.id);
+        if (s) await sendMessage(env, player1.telegram_id, s);
+        
+        const txt = buildDuelSummaryText(res, p1Correct, p2Correct, total, xp, player2);
+        await sendMessage(env, player1.telegram_id, txt);
+    }
+
+    if (player2) {
+        let res: "win" | "draw" | "lose" = "lose";
+        if (isDraw) res = "draw";
+        else if (winnerId === player2.id) res = "win";
+        
+        const xp = await addXpForDuelMatch(env, player2.id, match.id, p2Correct, total, res);
+        const s = await checkAndUpdateStreak(env, player2.id);
+        if (s) await sendMessage(env, player2.telegram_id, s);
+        
+        const txt = buildDuelSummaryText(res, p2Correct, p1Correct, total, xp, player1);
+        await sendMessage(env, player2.telegram_id, txt);
+    }
 }
 
 function buildDuelSummaryText(
