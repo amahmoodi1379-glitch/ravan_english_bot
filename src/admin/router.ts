@@ -30,21 +30,17 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   const url = new URL(request.url);
 
   // === لایه امنیتی جدید: محافظت CSRF ===
-  // اگر درخواست POST است (یعنی می‌خواهد چیزی را تغییر دهد)، چک کن که از سایت خودمان آمده باشد
   if (request.method === "POST") {
     const origin = request.headers.get("Origin");
     const referer = request.headers.get("Referer");
     
-    // اگر Origin وجود داشت، باید با آدرس سایت یکی باشد
     if (origin && new URL(origin).hostname !== url.hostname) {
       return new Response("Forbidden (CSRF Origin Mismatch)", { status: 403 });
     }
-    // اگر Origin نبود ولی Referer بود، باید با آدرس سایت یکی باشد
     if (!origin && referer && new URL(referer).origin !== url.origin) {
       return new Response("Forbidden (CSRF Referer Mismatch)", { status: 403 });
     }
   }
-  // ======================================
 
   // 1. لاگین و احراز هویت اولیه
   if (url.pathname === "/admin") {
@@ -83,7 +79,6 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const expiresAt = new Date(Date.now() + 86400 * 1000).toISOString();
     await execute(env, "INSERT INTO admin_sessions (token, expires_at) VALUES (?, ?)", [token, expiresAt]);
     
-    // کوکی با امنیت Lax برای جلوگیری از CSRF
     const headers = new Headers();
     headers.append("Set-Cookie", `admin_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
     headers.append("Location", "/admin/words");
@@ -111,7 +106,9 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const search = (url.searchParams.get("q") || "").trim();
     let rawPage = parseInt(url.searchParams.get("page") || "1");
     if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
-    const page = Math.min(rawPage, 1000000); // سقف میذاریم که از ۱ میلیون بیشتر نشه    const limit = 50; 
+    
+    const page = Math.min(rawPage, 1000000); 
+    const limit = 50; // ✅ اصلاح شد: به خط جدید آمد
     const offset = (page - 1) * limit;
 
     let whereSql = "FROM words WHERE 1 = 1";
@@ -309,10 +306,10 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   // --- مدیریت کاربران (با صفحه‌بندی) ---
   if (url.pathname === "/admin/users") {
     const search = (url.searchParams.get("q") || "").trim();
-// ✅ کد اصلاح شده و ایمن برای شماره صفحه
     let rawPage = parseInt(url.searchParams.get("page") || "1");
     if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
-    const page = Math.min(rawPage, 1000000);    const limit = 50; 
+    const page = Math.min(rawPage, 1000000);    
+    const limit = 50; 
     const offset = (page - 1) * limit;
 
     let whereSql = "FROM users u LEFT JOIN access_codes ac ON ac.used_by_user_id = u.id WHERE 1 = 1";
