@@ -105,18 +105,14 @@ export async function ensureDuelQuestions(env: Env, matchId: number, difficulty:
   const levelCond = difficulty === "easy" ? "AND level IN (1, 2)" : "AND level BETWEEN 1 AND 4";
 
   for (let idx = 1; idx <= QUESTION_COUNT; idx++) {
-    // === تغییر مهم اینجاست ===
-    // ۲. چک کردن دقیق: آیا سوال شماره "idx" (مثلاً سوال ۱) برای این بازی قبلاً ساخته شده؟
-    // اگر نفر قبلی همین الان این سوال رو ساخته باشه، ما دیگه نمیسازیمش.
+    // ۲. چک کردن: آیا سوال شماره "idx" قبلاً ساخته شده؟
     const existing = await queryOne<{ id: number }>(
       env,
       `SELECT id FROM duel_questions WHERE duel_id = ? AND question_index = ?`,
       [matchId, idx]
     );
 
-    // اگر سوال وجود داشت، می‌پریم به دور بعدی حلقه (سوال بعدی)
     if (existing) continue;
-    // ========================
 
     const wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
       env,
@@ -172,10 +168,11 @@ export async function ensureDuelQuestions(env: Env, matchId: number, difficulty:
 
     if (!qRow) continue;
 
-    // ثبت سوال در دیتابیس
+    // ثبت سوال در دیتابیس با "INSERT OR IGNORE"
+    // این یعنی اگر سوال تکراری بود (به خاطر باگ همزمانی)، ارور نده و فقط رد شو
     await execute(
       env,
-      `INSERT INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
       [matchId, idx, wordRow.id, qRow.id]
     );
   }
@@ -281,7 +278,6 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
   };
 }
 
-// پاکسازی هوشمند: پایان دادن به دوئل‌های رها شده و دادن امتیاز
 export async function cleanupOldMatches(env: Env): Promise<void> {
   // 1. پیدا کردن بازی‌هایی که بیش از ۱ ساعت در وضعیت in_progress مانده‌اند
   const stuckMatches = await queryAll<DuelMatch>(
@@ -292,14 +288,12 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
   );
 
   for (const match of stuckMatches) {
-    // محاسبه امتیازات تا این لحظه
     const p1Correct = await getUserCorrectCountInMatch(env, match.id, match.player1_id);
     const p2Correct = match.player2_id ? await getUserCorrectCountInMatch(env, match.id, match.player2_id) : 0;
     
     let winnerUserId: number | null = null;
     let isDraw = 0;
     
-    // تعیین برنده بر اساس امتیازات فعلی (کسی که جا زده احتمالا امتیاز کمتری دارد)
     if (p1Correct > p2Correct) {
        winnerUserId = match.player1_id;
        isDraw = 0;
@@ -313,7 +307,6 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
 
     const now = new Date().toISOString();
 
-    // وضعیت بازی را به 'completed' تغییر می‌دهیم
     await execute(
       env,
       `UPDATE duel_matches 
@@ -327,28 +320,25 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
       [p1Correct, p2Correct, winnerUserId, isDraw, now, match.id]
     );
 
-    // محاسبه و واریز XP برای بازیکن اول
-    const totalQ = 5; // فرض بر ۵ سوال
+    const totalQ = 5; 
     let p1Result: "win" | "draw" | "lose" = "lose";
     if (isDraw) p1Result = "draw";
     else if (winnerUserId === match.player1_id) p1Result = "win";
     
     await addXpForDuelMatch(env, match.player1_id, match.id, p1Correct, totalQ, p1Result);
-    await checkAndUpdateStreak(env, match.player1_id); // حفظ زنجیره
+    await checkAndUpdateStreak(env, match.player1_id);
 
-    // محاسبه و واریز XP برای بازیکن دوم (اگر وجود داشته باشد)
     if (match.player2_id) {
        let p2Result: "win" | "draw" | "lose" = "lose";
        if (isDraw) p2Result = "draw";
        else if (winnerUserId === match.player2_id) p2Result = "win";
        
        await addXpForDuelMatch(env, match.player2_id, match.id, p2Correct, totalQ, p2Result);
-       await checkAndUpdateStreak(env, match.player2_id); // حفظ زنجیره
+       await checkAndUpdateStreak(env, match.player2_id);
     }
   }
 
-  // 2. پاکسازی کامل دوئل‌های 'waiting' خیلی قدیمی (زباله‌روبی)
-  // الف) حذف جواب‌ها
+  // 2. پاکسازی کامل دوئل‌های 'waiting' خیلی قدیمی
   await execute(
     env,
     `DELETE FROM duel_answers 
@@ -358,7 +348,6 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
      )`
   );
 
-  // ب) حذف سوالات
   await execute(
     env,
     `DELETE FROM duel_questions 
@@ -368,7 +357,6 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
      )`
   );
 
-  // ج) حذف خود مچ
   await execute(
     env,
     `DELETE FROM duel_matches 
@@ -376,22 +364,18 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
   );
 }
 
-// تابع جدید: انصراف از بازی فعال (زمانی که دکمه بازگشت زده می‌شود)
 export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
-  // پیدا کردن بازی فعال کاربر
   const match = await queryOne<DuelMatch>(
     env,
     `SELECT * FROM duel_matches WHERE (player1_id = ? OR player2_id = ?) AND status = 'in_progress'`,
     [userId, userId]
   );
 
-  if (!match) return; // اگر بازی فعالی ندارد، کاری نکن
+  if (!match) return; 
 
   const now = new Date().toISOString();
-  // تعیین برنده (حریف برنده می‌شود)
   const winnerId = match.player1_id === userId ? match.player2_id : match.player1_id;
 
-  // پایان بازی
   await execute(
     env,
     `UPDATE duel_matches 
