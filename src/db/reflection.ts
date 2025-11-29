@@ -103,3 +103,24 @@ export async function deletePendingReflectionSession(env: Env, userId: number): 
     [userId]
   );
 }
+
+// فایل: src/db/reflection.ts
+// ... ایمپورت‌های قبلی ...
+import { TIME_ZONE_OFFSET } from "../config/constants"; // این را به ایمپورت‌ها اضافه کنید
+
+// ... توابع قبلی ...
+
+// تابع جدید: دریافت تعداد تمرین‌های امروز کاربر
+export async function getTodayReflectionCount(env: Env, userId: number): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `
+    SELECT COUNT(*) as cnt 
+    FROM reflection_sessions 
+    WHERE user_id = ? 
+      AND date(created_at, ?) = date('now', ?)
+    `,
+    [userId, TIME_ZONE_OFFSET, TIME_ZONE_OFFSET]
+  );
+  return row?.cnt ?? 0;
+}
