@@ -31,7 +31,7 @@ interface LeitnerQuestionRow {
   level: number;
 }
 
-// تعیین نوع سوال بر اساس مرحله (استایل‌های ساده‌تر شده)
+// تعیین نوع سوال بر اساس مرحله
 function getQuestionStyleForStage(stage: number): string | null {
   // مرحله ۱: معنی فارسی
   if (stage <= 1) return "fa_meaning";
@@ -42,7 +42,9 @@ function getQuestionStyleForStage(stage: number): string | null {
   // مرحله ۳: تشخیص کلمه از روی تعریف
   if (stage === 3) return "word_from_definition";
 
-  // مرحله ۴ و بالاتر: هر چیزی می‌تواند باشد (رندوم از موجودی‌ها انتخاب می‌شود)
+  // مرحله ۴ و بالاتر: 
+  // نال برمی‌گرداند تا سیستم به صورت خودکار از تابع pickRandomUnseenQuestion استفاده کند
+  // که باعث می‌شود سوالات از همه انواع (شامل مراحل قبل + مترادف/متضاد اگر باشد) شافل شوند.
   return null; 
 }
 
@@ -65,14 +67,13 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   }
 
   // ۲. تعیین نیاز (آیا باید سوال بسازیم؟)
-  // سهمیه‌ها:
-  // fa_meaning: 2
-  // en_definition: 2
-  // word_from_definition: 3
+  // سهمیه‌ها افزایش یافت:
+  // fa_meaning: 3
+  // en_definition: 3
+  // word_from_definition: 4
   // synonym: 2 (اگر کلمه مترادف داشت)
   // antonym: 2 (اگر کلمه متضاد داشت)
 
-  // شمارش سوالات موجود برای این کلمه
   const countsRows = await queryAll<{ question_style: string; cnt: number }>(
     env,
     `SELECT question_style, COUNT(*) as cnt FROM word_questions WHERE word_id = ? GROUP BY question_style`,
@@ -85,25 +86,25 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   let styleToGenerate: string | null = null;
   let neededCount = 0;
 
-  // بررسی اولویت‌ها برای ساخت سوال جدید
-  if ((counts["fa_meaning"] || 0) < 2) {
+  // اولویت‌ها و سقف‌های جدید
+  if ((counts["fa_meaning"] || 0) < 3) {
       styleToGenerate = "fa_meaning";
-      neededCount = 2 - (counts["fa_meaning"] || 0);
+      neededCount = 3 - (counts["fa_meaning"] || 0);
   } 
-  else if ((counts["en_definition"] || 0) < 2) {
+  else if ((counts["en_definition"] || 0) < 3) {
       styleToGenerate = "en_definition";
-      neededCount = 2 - (counts["en_definition"] || 0);
+      neededCount = 3 - (counts["en_definition"] || 0);
   }
-  else if ((counts["word_from_definition"] || 0) < 3) {
+  else if ((counts["word_from_definition"] || 0) < 4) {
       styleToGenerate = "word_from_definition";
-      neededCount = 3 - (counts["word_from_definition"] || 0);
+      neededCount = 4 - (counts["word_from_definition"] || 0);
   }
-  // فقط اگر کلمه در دیتابیس مترادف داشت، سوال مترادف بساز
+  // شرط هوشمند: فقط اگر در دیتابیس مترادف داشت بساز
   else if (word.synonyms && word.synonyms.trim().length > 1 && (counts["synonym"] || 0) < 2) {
       styleToGenerate = "synonym";
       neededCount = 2 - (counts["synonym"] || 0);
   }
-  // فقط اگر کلمه در دیتابیس متضاد داشت، سوال متضاد بساز
+  // شرط هوشمند: فقط اگر در دیتابیس متضاد داشت بساز
   else if (word.antonyms && word.antonyms.trim().length > 1 && (counts["antonym"] || 0) < 2) {
       styleToGenerate = "antonym";
       neededCount = 2 - (counts["antonym"] || 0);
@@ -119,7 +120,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
         persian: word.persian,
         level: word.level,
         questionStyle: styleToGenerate,
-        count: neededCount // فقط به تعدادی که کم داریم بساز
+        count: neededCount
       });
 
       if (aiQuestions.length > 0) {
@@ -138,7 +139,6 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
       }
     } catch (error) {
       console.error("Error generating questions:", error);
-      // اگر خطا داد، ادامه میدیم تا شاید سوالی از قبل باشه
     }
   }
 
@@ -156,12 +156,14 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     question = await pickQuestionForUserWord(env, user, word, preferredStyle);
   }
 
-  // اگر سوالی با استایل ترجیحی پیدا نشد (یا استایل نال بود)، یک سوال تصادفی که ندیده انتخاب کن
+  // اگر مرحله ۴ به بالا بود (preferredStyle == null) یا سوال ترجیحی پیدا نشد:
+  // یک سوال تصادفی از "هر نوعی" که کاربر ندیده انتخاب کن.
+  // این یعنی شافل کردن همه سوالات موجود (شامل مترادف/متضاد اگر موجود باشند، وگرنه بقیه انواع).
   if (!question) {
      question = await pickRandomUnseenQuestion(env, user, word);
   }
 
-  // اگر باز هم پیدا نشد (یعنی همه سوالات موجود رو دیده)، یک سوال تصادفی از کل سوالات انتخاب کن
+  // اگر باز هم پیدا نشد (یعنی همه سوالات موجود رو دیده)، یک سوال تصادفی از کل سوالات انتخاب کن (تکراری)
   if (!question) {
     question = await pickRandomQuestionAny(env, word);
   }
@@ -175,11 +177,8 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     return;
   }
 
-  // ثبت نمایش
+  // ثبت نمایش (برای جلوگیری از تکرار پشت سر هم در کوتاه مدت)
   const now = new Date().toISOString();
-  // فقط اگر قبلاً ندیده ثبت کن، اما اینجا چون ممکن است تکراری باشد، بهتر است 
-  // تاریخچه را فقط برای جلوگیری از تکرار پشت سر هم استفاده کنیم.
-  // فعلاً طبق روال قبل ثبت می کنیم.
   await execute(
     env,
     `
@@ -240,7 +239,7 @@ async function pickQuestionForUserWord(
   );
 }
 
-// انتخاب هر سوالی که کاربر ندیده (بدون توجه به استایل)
+// انتخاب هر سوالی که کاربر ندیده (بدون توجه به استایل - برای شافل کردن)
 async function pickRandomUnseenQuestion(
   env: Env,
   user: DbUser,
@@ -264,7 +263,7 @@ async function pickRandomUnseenQuestion(
   );
 }
 
-// انتخاب هر سوالی (تکراری هم باشد اشکال ندارد)
+// انتخاب هر سوالی (تکراری هم باشد اشکال ندارد - فال‌بک نهایی)
 async function pickRandomQuestionAny(
   env: Env,
   word: DbWord
@@ -357,7 +356,6 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     const isCorrect = chosenOption === question.correct_option;
     const now = new Date().toISOString();
 
-    // Atomic Update
     const updateResult = await env.DB.prepare(
       `UPDATE user_word_question_history 
        SET is_correct = ?, answered_at = ? 
