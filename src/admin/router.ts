@@ -140,9 +140,13 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         <td>${w.level}</td>
         <td>${w.lesson_name ? escapeHtml(w.lesson_name) : "-"}</td>
         <td><span class="${w.is_active ? "badge active" : "badge inactive"}">${w.is_active ? "فعال" : "غیرفعال"}</span></td>
-        <td class="actions">
+        <td class="actions" style="display:flex; align-items:center; gap:5px;">
           <a href="/admin/words/edit?id=${w.id}">ویرایش</a>
           <a href="/admin/words/questions?word_id=${w.id}">سوالات</a>
+          <form method="post" action="/admin/words/delete" onsubmit="return confirm('⚠️ اخطار: با حذف این واژه، تمام سوابق یادگیری کاربران، سوالات و آمارهای مربوط به آن برای همیشه پاک می‌شود. آیا مطمئن هستید؟');" style="margin:0;">
+            <input type="hidden" name="id" value="${w.id}" />
+            <button type="submit" class="danger" style="padding:2px 6px; font-size:11px;">حذف</button>
+          </form>
         </td>
       </tr>
     `).join("");
@@ -445,6 +449,37 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     }
     return redirect("/admin/licenses");
   }
+// === شروع کد جدید: حذف امن واژه ===
+  if (request.method === "POST" && url.pathname === "/admin/words/delete") {
+    const form = await parseForm(request);
+    const id = Number(form.get("id"));
 
+    if (id) {
+      // ترتیب حذف بسیار مهم است تا دیتابیس ارور ندهد:
+      
+      // ۱. حذف پاسخ‌های مربوط به این واژه در دوئل‌ها
+      await execute(env, `DELETE FROM duel_answers WHERE duel_question_id IN (SELECT id FROM duel_questions WHERE word_id = ?)`, [id]);
+
+      // ۲. حذف سوالات این واژه از جدول دوئل‌ها
+      await execute(env, `DELETE FROM duel_questions WHERE word_id = ?`, [id]);
+
+      // ۳. حذف تاریخچه پاسخ‌های کاربران به سوالات این واژه (در لایتنر)
+      await execute(env, `DELETE FROM user_word_question_history WHERE word_id = ?`, [id]);
+
+      // ۴. حذف وضعیت لایتنر (SM2) مربوط به این واژه برای همه کاربران
+      await execute(env, `DELETE FROM user_words_sm2 WHERE word_id = ?`, [id]);
+
+      // ۵. حذف خود سوالات طراحی شده برای این واژه
+      await execute(env, `DELETE FROM word_questions WHERE word_id = ?`, [id]);
+
+      // ۶. و در نهایت حذف خود واژه از جدول اصلی
+      await execute(env, `DELETE FROM words WHERE id = ?`, [id]);
+    }
+    
+    // بازگشت به صفحه لیست واژه‌ها
+    return redirect("/admin/words");
+  }
+  // === پایان کد جدید ===
+  
   return htmlResponse("Not Found", 404);
 }
