@@ -31,3 +31,7 @@ export const CB_PREFIX = {
   AVATAR: "av",         // قبلاً: avatar
   STATS: "st",          // قبلاً: stats
 };
+
+// تنظیم اختلاف ساعت ایران (یا هر منطقه زمانی دلخواه)
+// چون ایران ساعت تابستانی ندارد، همیشه +3.5 است.
+export const TIME_ZONE_OFFSET = '+3.5 hours';
