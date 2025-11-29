@@ -28,7 +28,7 @@ import {
   startReadingMenuForUser,
   handleReadingTextChosen,
   handleReadingAnswerCallback,
-  handleReadingTitleSelection // <--- تابع جدید اضافه شده
+  handleReadingTitleSelection
 } from "./handlers/reading";
 import {
   startDuelEasyForUser,
@@ -164,77 +164,71 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   if (!user) {
     const inputCode = text.trim();
 
-    // چک می‌کنیم آیا متنی که فرستاده، یک کد لایسنس معتبر و آزاد است؟
-    const codeRow = await queryOne<{ code: string }>(
+    // کاربر را می‌سازیم (اما هنوز تایید نشده)
+    user = await getOrCreateUser(env, tgUser);
+    
+    const now = new Date().toISOString();
+
+    // === اصلاح امنیتی: تلاش برای گرفتن کد به صورت اتمیک ===
+    // این دستور همزمان چک می‌کند کد آزاد باشد و آن را به نام کاربر می‌زند
+    const result = await execute(
       env,
-      `SELECT code FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
-      [inputCode]
+      `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
+      [user.id, now, inputCode]
     );
 
-    if (codeRow) {
-      // عالی! کد درست است. حالا کاربر را در دیتابیس می‌سازیم.
-      user = await getOrCreateUser(env, tgUser);
-
-      // کد را باطل می‌کنیم و کاربر را تایید می‌کنیم
-      const now = new Date().toISOString();
-      await execute(
-        env,
-        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ?`,
-        [user.id, now, inputCode]
-      );
+    // بررسی می‌کنیم آیا دیتابیس تغییری کرد؟ (یعنی آیا کد با موفقیت گرفته شد؟)
+    if (result.meta.changes > 0) {
+      // عالی! کد مال این کاربر شد. حالا کاربر را تایید می‌کنیم
       await execute(
         env,
         `UPDATE users SET is_approved = 1 WHERE id = ?`,
         [user.id]
       );
-
-      // چون تازه ساخته شده، user.is_approved هنوز صفره تو متغیر، دستی یک می‌کنیم
+      // آبجکت کاربر در حافظه را هم آپدیت می‌کنیم
       user.is_approved = 1;
 
       await sendMessage(env, chatId, "✅ تبریک! لایسنس شما تایید شد.\nثبت‌نام شما انجام شد و حالا می‌تونی از ربات استفاده کنی. بزن روی /start");
       return;
     } else {
-      // کاربر نیست و کدش هم غلطه یا اصلاً کد نیست
+      // کد پیدا نشد یا قبلاً توسط کسی دیگر استفاده شده
       await sendMessage(
         env,
         chatId,
-        "⛔️ این ربات خصوصی است.\n\nشما هنوز عضو نشده‌اید. لطفاً **کد لایسنس** خود را ارسال کنید تا اجازه ورود داده شود."
+        "⛔️ این ربات خصوصی است.\n\nکد لایسنس ارسال شده نامعتبر است یا قبلاً استفاده شده. لطفاً کد صحیح را ارسال کنید."
       );
-      return; // مهم: اینجا متوقف می‌شیم و کاربر در دیتابیس ذخیره نمی‌شه!
+      return; 
     }
   }
 
-  // 3. اگر کاربر در دیتابیس هست، اما هنوز تایید نشده (شاید دستی ساختیم یا از قبل بوده)
+  // 3. اگر کاربر در دیتابیس هست، اما هنوز تایید نشده (شاید قبلاً کد غلط زده)
   if (user && !user.is_approved) {
     const inputCode = text.trim();
-    const codeRow = await queryOne<{ code: string }>(
+    const now = new Date().toISOString();
+
+    // === اصلاح امنیتی مشابه بالا ===
+    const result = await execute(
       env,
-      `SELECT code FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
-      [inputCode]
+      `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
+      [user.id, now, inputCode]
     );
 
-    if (codeRow) {
-      const now = new Date().toISOString();
-      await execute(
-        env,
-        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ?`,
-        [user.id, now, inputCode]
-      );
+    if (result.meta.changes > 0) {
       await execute(
         env,
         `UPDATE users SET is_approved = 1 WHERE id = ?`,
         [user.id]
       );
+      user.is_approved = 1;
 
       await sendMessage(env, chatId, "✅ اکانت شما فعال شد! مجدد تلاش کنید.");
     } else {
-      await sendMessage(env, chatId, "⛔️ اکانت شما هنوز تایید نشده است. لطفاً کد لایسنس صحیح را ارسال کنید.");
+      await sendMessage(env, chatId, "⛔️ اکانت شما هنوز تایید نشده است. لطفاً کد لایسنس صحیح و استفاده‌نشده را ارسال کنید.");
     }
     return;
   }
 
   // --- کد جدید: پاکسازی تمرین‌های نیمه‌کاره با تغییر منو ---
-  // لیست تمام دکمه‌های منو که باعث خروج از حالت تمرین می‌شوند
   const EXIT_COMMANDS = [
     "/start",
     MAIN_MENU_BUTTON_TRAINING,
@@ -252,7 +246,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     PROFILE_MENU_BUTTON_SUMMARY
   ];
 
-  // اگر پیام کاربر یکی از دکمه‌های بالا بود، سشن باز (Reflection) را پاک کن
   if (EXIT_COMMANDS.includes(text) || text.startsWith("/setname")) {
      if (user) {
        await deletePendingReflectionSession(env, user.id);
@@ -300,17 +293,13 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // === تغییر جدید: مدیریت دکمه‌های منوی Reading (صفحه‌بندی) ===
-  
   if (text === TRAINING_MENU_BUTTON_READING) {
-    // ورود اولیه به منوی ریدینگ (نمایش صفحه ۱)
     await startReadingMenuForUser(env, update, 1);
     return;
   }
 
-  // بررسی دکمه‌های ناوبری (مثلاً: "صفحه 2 ◀️" یا "▶️ صفحه 1")
   if (text.includes("صفحه") && (text.includes("◀️") || text.includes("▶️"))) {
-     const numMatch = text.match(/\d+/); // پیدا کردن عدد در متن دکمه
+     const numMatch = text.match(/\d+/);
      if (numMatch) {
         const page = parseInt(numMatch[0]);
         if (!isNaN(page)) {
@@ -320,23 +309,18 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
      }
   }
 
-  // بررسی اینکه آیا متن، عنوان یکی از متن‌های موجود است؟
   const isReadingTitle = await handleReadingTitleSelection(env, update, text);
   if (isReadingTitle) {
-    return; // اگر عنوان معتبر بود و پردازش شد، ادامه نده
+    return;
   }
   
-  // ========================================================
-
   if (text === TRAINING_MENU_BUTTON_REFLECTION) {
     await startReflectionForUser(env, update);
     return;
   }
   if (text === TRAINING_MENU_BUTTON_BACK) {
-    // === اصلاح: اگر کاربر وسط دوئل بود، انصراف دهد ===
     const user = await getOrCreateUser(env, tgUser);
     await quitActiveMatch(env, user.id);
-    // ===============================================
 
     await sendMessage(
       env,
