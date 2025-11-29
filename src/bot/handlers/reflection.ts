@@ -6,7 +6,8 @@ import {
   createReflectionSession, 
   getUserLearnedWords, 
   getPendingReflectionSession, 
-  updateReflectionResult 
+  updateReflectionResult,
+  getTodayReflectionCount // <--- تغییر ۱: اضافه شدن این تابع به ایمپورت‌ها
 } from "../../db/reflection";
 import { generateReflectionParagraph, evaluateReflection } from "../../ai/gemini";
 import { getTrainingMenuKeyboard } from "../keyboards";
@@ -18,7 +19,8 @@ export async function startReflectionForUser(env: Env, update: TelegramUpdate): 
   const chatId = message.chat.id;
   const user = await getOrCreateUser(env, message.from);
 
-  // چک کنیم اگر سشن باز دارد، اول آن را ببندد یا ادامه دهد
+  // ۱. بررسی تمرین نیمه‌کاره (مثل قبل)
+  // اگر کاربر قبلاً متنی گرفته و جواب نداده، بهش یادآوری می‌کنیم
   const pending = await getPendingReflectionSession(env, user.id);
   if (pending) {
     await sendMessage(
@@ -30,28 +32,48 @@ export async function startReflectionForUser(env: Env, update: TelegramUpdate): 
     return;
   }
 
-  await sendMessage(env, chatId, "⏳ در حال آماده‌سازی متن اختصاصی برای تو...");
+  // ۲. بررسی محدودیت روزانه (بخش جدید اضافه شده)
+  const todayCount = await getTodayReflectionCount(env, user.id);
+  // اگر ۳ بار یا بیشتر استفاده کرده بود، جلوش رو می‌گیریم
+  if (todayCount >= 3) {
+    await sendMessage(
+      env,
+      chatId,
+      "⛔️ سقف مجاز روزانه شما پر شده است!\n\n" +
+      "شما در هر روز فقط می‌توانید ۳ بار از تمرین «برداشت از متن» استفاده کنید.\n" +
+      "فردا دوباره منتظرت هستیم 👋"
+    );
+    return;
+  }
 
-  // 1. کلمات کاربر را بگیر
+  await sendMessage(env, chatId, "⏳ در حال آماده‌سازی متن روانشناسی اختصاصی برای تو...");
+
+  // ۳. دریافت کلمات یادگرفته شده کاربر
   const words = await getUserLearnedWords(env, user.id, 5);
     
+  // ۴. انتخاب سطح تصادفی (بخش جدید اضافه شده)
+  const levels = ["A1", "A2", "B1", "B2"];
+  const randomLevel = levels[Math.floor(Math.random() * levels.length)];
+
   let paragraph: string;
   try {
-    paragraph = await generateReflectionParagraph(env, words);
+    // تابع generateReflectionParagraph حالا ۳ ورودی می‌گیرد: env, words, level
+    // (مطمئن شو که فایل src/ai/gemini.ts رو هم طبق دستور قبلی آپدیت کرده باشی)
+    paragraph = await generateReflectionParagraph(env, words, randomLevel);
   } catch (error) {
     console.error("Reflection AI Error:", error);
     await sendMessage(env, chatId, "متاسفانه در ارتباط با هوش مصنوعی مشکلی پیش آمد. لطفاً کمی بعد تلاش کن ⚠️");
     return;
   }
-  // =========================================
 
-  // 3. ذخیره در دیتابیس
+  // ۵. ذخیره در دیتابیس
   await createReflectionSession(env, user.id, paragraph);
 
-  // 4. ارسال به کاربر
+  // ۶. ارسال به کاربر (با ذکر سطح و موضوع)
   const text = 
-    `📝 <b>تمرین برداشت از متن</b>\n\n` +
-    `متن زیر رو بخون (شامل کلماتیه که یاد گرفتی):\n\n` +
+    `📝 <b>تمرین برداشت از متن (روانشناسی)</b>\n` +
+    `سطح متن: <b>${randomLevel}</b>\n\n` +
+    `متن زیر رو بخون:\n\n` +
     `<i>${paragraph}</i>\n\n` +
     `حالا برداشت یا خلاصه خودت رو به انگلیسی (یا فینگیلیش/فارسی اگه سخته) در قالب <b>یک پیام متنی</b> بفرست. \n` +
     `هوش مصنوعی بهت نمره و فیدبک میده!`;
@@ -59,7 +81,7 @@ export async function startReflectionForUser(env: Env, update: TelegramUpdate): 
   await sendMessage(env, chatId, text);
 }
 
-// هندل کردن پیامی که کاربر می‌فرستد (به عنوان جواب)
+// هندل کردن پیامی که کاربر می‌فرستد (بدون تغییر نسبت به قبل)
 export async function handleReflectionAnswer(
   env: Env, 
   update: TelegramUpdate, 
