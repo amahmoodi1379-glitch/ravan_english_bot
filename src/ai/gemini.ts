@@ -226,14 +226,22 @@ function parseGeminiJson(raw: string, limit: number): AiGeneratedQuestion[] {
 
 export async function generateReflectionParagraph(
   env: Env,
-  words: string[]
+  words: string[],
+  level: string // ورودی جدید: سطح زبان (A1, A2, B1, B2)
 ): Promise<string> {
   const wordsList = words.join(", ");
+  
+  // پرامپت جدید با تمرکز بر روانشناسی و سطح متغیر
   const prompt = `
-You are an English tutor. Write a short, engaging paragraph (about 60-100 words) suitable for an English learner.
-Try to include some of the following words naturally: ${wordsList}.
-If the list is empty, just write a general paragraph about "Daily Habits" or "Travel".
-The paragraph should be simple and clear (A1/A2 level).
+You are an English tutor specializing in Psychology and Mental Health.
+Write a short, engaging paragraph (about 60-100 words) for an English learner at Level ${level}.
+
+The topic MUST be related to **Psychology** or **Mental Health** (e.g., stress, happiness, habits, emotions, mindfulness).
+
+Try to include some of the following words naturally if they fit the context: ${wordsList}.
+If the words don't fit well, prioritize the flow and the psychology topic.
+
+The text should be suitable for reading comprehension and reflection.
 Return ONLY the paragraph text.
 `.trim();
 
