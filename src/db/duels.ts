@@ -280,11 +280,12 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
 export async function cleanupOldMatches(env: Env): Promise<void> {
   // 1. پیدا کردن بازی‌هایی که بیش از ۱ ساعت در وضعیت in_progress مانده‌اند
   const stuckMatches = await queryAll<DuelMatch>(
-    env,
-    `SELECT * FROM duel_matches 
-     WHERE status = 'in_progress' 
-     AND started_at < datetime('now', '-1 hour')`
-  );
+  env,
+  `SELECT * FROM duel_matches 
+   WHERE status = 'in_progress' 
+   AND started_at < datetime('now', '-1 hour')
+   LIMIT 50` // <--- این خط اضافه شد
+);
 
   for (const match of stuckMatches) {
     // آمار پاسخ‌ها را می‌گیریم
