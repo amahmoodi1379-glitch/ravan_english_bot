@@ -1,6 +1,7 @@
 import { Env } from "../types";
 import { queryOne, execute, prepare } from "./client"; 
 import { sm2 } from "../utils/sm2";
+import { TIME_ZONE_OFFSET } from "../config/constants";
 
 export interface DbWord {
   id: number;
@@ -29,6 +30,7 @@ export interface UserWordState {
 
 export async function pickNextWordForUser(env: Env, userId: number): Promise<DbWord | null> {
   // 1) اولویت مرور
+  // تغییر: اضافه کردن TIME_ZONE_OFFSET برای محاسبه درست زمان محلی
   const dueRow = await queryOne<{ word_id: number }>(
     env,
     `
@@ -38,7 +40,7 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
     WHERE s.user_id = ?
       AND s.ignored = 0
       AND w.is_active = 1
-      AND date(s.next_review_date) <= date('now')
+      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
     ORDER BY date(s.next_review_date) ASC, w.order_index ASC
     LIMIT 1
     `,
