@@ -360,33 +360,29 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
 
-    // === اصلاح باگ همزمانی (Race Condition) ===
-    // چک می‌کنیم آیا کاربر قبلاً به این سوال در همین نوبت پاسخ داده است؟
-    // اگر پاسخ داده باشد، answered_at پر شده است.
-    const historyCheck = await queryOne<{ answered_at: string | null }>(
-      env,
-      `SELECT answered_at FROM user_word_question_history 
-       WHERE user_id = ? AND question_id = ? AND context = 'leitner'`,
-      [user.id, question.id]
-    );
-
-    if (historyCheck && historyCheck.answered_at) {
-      // اگر قبلاً جواب داده، فقط یک پیام پاپ‌آپ بده و هیچ کاری نکن
-      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
-      return;
-    }
-    // ===========================================
-
+    // تعریف متغیرها همین اول کار
     const isCorrect = chosenOption === question.correct_option;
     const now = new Date().toISOString();
 
-    const batchStatements: any[] = [];
+    // === راه حل واقعی همزمانی (Atomic Update) ===
+    // ما سعی می‌کنیم رکورد را آپدیت کنیم، اما شرط می‌گذاریم که answered_at باید NULL باشد
+    const updateResult = await env.DB.prepare(
+      `UPDATE user_word_question_history 
+       SET is_correct = ?, answered_at = ? 
+       WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
+    )
+    .bind(isCorrect ? 1 : 0, now, user.id, question.id)
+    .run();
 
-    batchStatements.push(prepare(
-      env,
-      `UPDATE user_word_question_history SET is_correct = ?, answered_at = ? WHERE user_id = ? AND question_id = ? AND context = 'leitner'`,
-      [isCorrect ? 1 : 0, now, user.id, question.id]
-    ));
+    // اگر meta.changes برابر 0 بود، یعنی هیچ ردیفی آپدیت نشد (چون قبلاً answered_at پر شده بود)
+    if (updateResult.meta.changes === 0) {
+       await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
+       return; 
+    }
+    // ===========================================
+
+    const batchStatements: any[] = [];
+    // نکته: دیگه نیازی نیست دستور آپدیت تاریخچه رو به batch اضافه کنیم چون بالا انجام شد.
 
     const sm2Stmts = await prepareUpdateSm2(env, user.id, question.word_id, isCorrect);
     batchStatements.push(...sm2Stmts);
