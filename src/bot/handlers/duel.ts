@@ -50,6 +50,7 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
       return;
   }
   // ===========================================
+  await sendMessage(env, chatId, "⏳ در حال بررسی و آماده‌سازی دوئل... (ممکن است چند ثانیه طول بکشد)");
 
   let match = await findWaitingMatch(env, difficulty, user.id);
 
