@@ -14,7 +14,7 @@ export interface AiReflectionResult {
 
 // لیست مدل‌ها برای تلاش (اولویت با مدل‌های جدیدتر)
 const MODELS_TO_TRY = [
-  "gemini-2.5-flash", // ✅ مدل جدید که شما تأیید کردید کار می‌کند
+  "gemini-2.0-flash", 
   "gemini-1.5-flash-latest", 
   "gemini-1.5-flash"
 ];
@@ -94,25 +94,32 @@ function buildWordQuestionPrompt(params: {
 }): string {
   const { english, persian, level, questionStyle, count } = params;
 
+  // دستورالعمل جدید با تاکید بر سادگی و حذف مدل‌های اضافی
   return `
 You are an expert English vocabulary quiz generator for Persian (Farsi) learners.
 
 Target word: "${english}"
 Main Persian meaning: "${persian}"
-Approximate difficulty level: ${level} (1 = very easy, 4 = hard).
+Learner Level: A1 (Beginner/Elementary) - Keep it VERY SIMPLE.
 
 question_style = "${questionStyle}"
-Generate ${count} different multiple-choice questions for this word with exactly 4 options each.
+Generate ${count} multiple-choice questions for this word.
+
+IMPORTANT RULES FOR DEFINITIONS:
+- Definitions MUST be very short (max 10-12 words).
+- Use simple words that a beginner understands.
+- Do NOT use complex dictionary definitions.
+- Example for 'Apple': "A round fruit that is red or green." (Good)
+- Example for 'Apple': "The pome fruit of a tree of the rose family..." (Bad - Too hard)
 
 Styles rules:
-- "fa_meaning": Question in Persian asking for meaning of "${english}". Options: 4 Persian meanings.
-- "en_definition": Question in Persian asking "Which definition is correct for ${english}?". Options: 4 English definitions.
-- "word_from_definition": Question is an English definition. Options: 4 English words.
-- "synonym": Question in Persian asking for synonym. Options: 4 English words.
-- "antonym": Question in Persian asking for antonym. Options: 4 English words.
-- "fa_to_en": Question is Persian meaning "${persian}". Options: 4 English words.
+- "fa_meaning": Question: "معنی کلمه ${english} چیست؟". Options: 4 Persian meanings.
+- "en_definition": Question: "Which definition describes '${english}'?". Options: 4 simple English definitions.
+- "word_from_definition": Question: A simple definition is given. Options: 4 English words.
+- "synonym": Question: "Which word is a synonym for ${english}?". Options: 4 English words.
+- "antonym": Question: "Which word is an antonym (opposite) for ${english}?". Options: 4 English words.
 
-For each question, also give a short explanation in Persian.
+For each question, provide a short explanation (in Persian for fa_meaning, in simple English for others).
 
 Return ONLY valid JSON in this format:
 {
@@ -182,7 +189,6 @@ Return ONLY valid JSON in this exact format (no markdown, no extra text):
 function parseGeminiJson(raw: string, limit: number): AiGeneratedQuestion[] {
   let parsed: any;
   try {
-    // استفاده از تابع امن جدید
     parsed = safeExtractJson(raw);
   } catch (err) {
     console.error("Failed to parse Gemini JSON:", raw);
@@ -225,7 +231,7 @@ export async function generateReflectionParagraph(
 You are an English tutor. Write a short, engaging paragraph (about 60-100 words) suitable for an English learner.
 Try to include some of the following words naturally: ${wordsList}.
 If the list is empty, just write a general paragraph about "Daily Habits" or "Travel".
-The paragraph should be simple and clear.
+The paragraph should be simple and clear (A1/A2 level).
 Return ONLY the paragraph text.
 `.trim();
 
@@ -252,7 +258,7 @@ ${userAnswer}
 
 Task:
 1. Give a score from 0 to 10 based on how well the student understood the text and expressed their thoughts.
-2. Provide short feedback in Persian (Farsi). Point out any major grammar mistakes or praise good vocabulary. If it looks like a direct translation, mention it.
+2. Provide short feedback in Persian (Farsi). Point out any major grammar mistakes or praise good vocabulary.
 
 Return ONLY valid JSON in this format:
 {
@@ -264,7 +270,6 @@ Return ONLY valid JSON in this format:
   const raw = await callGemini(env, prompt);
   
   try {
-    // استفاده از تابع امن جدید
     const parsed = safeExtractJson(raw);
     
     return {
@@ -277,19 +282,13 @@ Return ONLY valid JSON in this format:
   }
 }
 
-// تابع کمکی: استخراج امن JSON از میان متن‌های اضافه
+// تابع کمکی: استخراج امن JSON
 function safeExtractJson(raw: string): any {
-  // ۱. حذف مارک‌داون‌های احتمالی
   let text = raw.replace(/```json/g, "").replace(/```/g, "").trim();
-
-  // ۲. تلاش برای پیدا کردن محدوده JSON واقعی
   const firstOpen = text.indexOf("{");
   const lastClose = text.lastIndexOf("}");
-
   if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
     text = text.substring(firstOpen, lastClose + 1);
   }
-
-  // ۳. تلاش برای پارس کردن
   return JSON.parse(text);
 }
