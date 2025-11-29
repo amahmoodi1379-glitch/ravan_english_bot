@@ -207,8 +207,34 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
   const isCorrect = chosenOption === question.correct_option;
 
-  const stmts = prepareRecordAnswer(env, session, user.id, questionId, isCorrect);
-  await env.DB.batch(stmts);
+  const now = new Date().toISOString();
+
+  // === فیکس امنیتی: جلوگیری از دوبار حساب شدن امتیاز ===
+  // 1. تلاش می‌کنیم تاریخچه را آپدیت کنیم، به شرطی که قبلاً پر نشده باشد
+  const updateResult = await env.DB.prepare(
+    `UPDATE user_text_question_history
+     SET is_correct = ?, answered_at = ?
+     WHERE reading_session_id = ?
+       AND user_id = ?
+       AND question_id = ?
+       AND answered_at IS NULL`
+  )
+  .bind(isCorrect ? 1 : 0, now, session.id, user.id, questionId)
+  .run();
+
+  // 2. اگر دیتابیس گفت "هیچ ردیفی تغییر نکرد" (changes = 0)، یعنی قبلاً جواب داده!
+  if (updateResult.meta.changes === 0) {
+     await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
+     return;
+  }
+
+  // 3. اگر واقعاً بار اول بود و جواب درست بود، حالا امتیاز را اضافه کن
+  if (isCorrect) {
+    await env.DB.prepare(
+      `UPDATE reading_sessions SET num_correct = num_correct + 1 WHERE id = ?`
+    ).bind(session.id).run();
+  }
+  // ========================================================
 
   await answerCallbackQuery(env, callbackQuery.id);
 
