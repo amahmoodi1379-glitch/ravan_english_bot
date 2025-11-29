@@ -12,7 +12,6 @@ export interface AiReflectionResult {
   feedback: string;
 }
 
-// لیست مدل‌ها برای تلاش (اولویت با مدل‌های جدیدتر)
 const MODELS_TO_TRY = [
   "gemini-2.0-flash", 
   "gemini-1.5-flash-latest", 
@@ -94,23 +93,28 @@ function buildWordQuestionPrompt(params: {
 }): string {
   const { english, persian, level, questionStyle, count } = params;
 
-  // دستورالعمل جدید با تاکید بر سادگی و حذف مدل‌های اضافی
   return `
 You are an expert English vocabulary quiz generator for Persian (Farsi) learners.
 
 Target word: "${english}"
 Main Persian meaning: "${persian}"
-Learner Level: A1 (Beginner/Elementary) - Keep it VERY SIMPLE.
+Learner Level: A1 (Beginner/Elementary)
 
 question_style = "${questionStyle}"
 Generate ${count} multiple-choice questions for this word.
 
-IMPORTANT RULES FOR DEFINITIONS:
-- Definitions MUST be very short (max 10-12 words).
-- Use simple words that a beginner understands.
-- Do NOT use complex dictionary definitions.
-- Example for 'Apple': "A round fruit that is red or green." (Good)
-- Example for 'Apple': "The pome fruit of a tree of the rose family..." (Bad - Too hard)
+*** CRITICAL RULES FOR OPTIONS (DISTRACTORS) ***
+1. Distractors must be **semantically related** or share the same **part of speech** (noun, verb, adj).
+2. Do NOT use random unrelated words. Make it tricky/professional.
+   - Bad: Apple (Options: Run, Blue, Car, Apple)
+   - Good: Apple (Options: Banana, Orange, Pear, Apple)
+3. For "fa_meaning", distractors must be Persian meanings of *other* related English words.
+
+*** CRITICAL RULES FOR DEFINITIONS ***
+1. Definitions MUST be very short (max 10-12 words).
+2. Use SIMPLE words (A1 level).
+   - Good: "A round fruit that is red or green."
+   - Bad: "The pome fruit of a tree of the rose family..."
 
 Styles rules:
 - "fa_meaning": Question: "معنی کلمه ${english} چیست؟". Options: 4 Persian meanings.
@@ -118,8 +122,6 @@ Styles rules:
 - "word_from_definition": Question: A simple definition is given. Options: 4 English words.
 - "synonym": Question: "Which word is a synonym for ${english}?". Options: 4 English words.
 - "antonym": Question: "Which word is an antonym (opposite) for ${english}?". Options: 4 English words.
-
-For each question, provide a short explanation (in Persian for fa_meaning, in simple English for others).
 
 Return ONLY valid JSON in this format:
 {
@@ -282,7 +284,6 @@ Return ONLY valid JSON in this format:
   }
 }
 
-// تابع کمکی: استخراج امن JSON
 function safeExtractJson(raw: string): any {
   let text = raw.replace(/```json/g, "").replace(/```/g, "").trim();
   const firstOpen = text.indexOf("{");
