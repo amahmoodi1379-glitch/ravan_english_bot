@@ -3,6 +3,9 @@ import { queryOne, queryAll, execute, prepare } from "./client";
 import { addXpForDuelMatch, checkAndUpdateStreak } from "./xp";
 import { generateWordQuestionsWithGemini } from "../ai/gemini";
 import { insertWordQuestions } from "./word_questions";
+// اضافه شدن ایمپورت‌های جدید برای ارسال پیام
+import { getUserById } from "./users"; 
+import { sendMessage } from "../bot/telegram-api";
 
 export type DuelDifficulty = "easy" | "hard";
 
@@ -87,7 +90,6 @@ export async function joinDuelMatch(env: Env, matchId: number, userId: number): 
     [userId, now, matchId]
   );
 
-  // اگر هیچ ردیفی تغییر نکرد، یعنی یک نفر دیگر زودتر جوین شده
   if (result?.meta?.changes === 0) {
     return null;
   }
@@ -98,14 +100,12 @@ export async function joinDuelMatch(env: Env, matchId: number, userId: number): 
 }
 
 export async function ensureDuelQuestions(env: Env, matchId: number, difficulty: DuelDifficulty): Promise<void> {
-  // ۱. چک کردن کلی: اگر ۵ تا سوال کامل داریم، اصلاً ادامه نده
   const totalQ = await getTotalQuestionsInMatch(env, matchId);
   if (totalQ >= QUESTION_COUNT) return;
 
   const levelCond = difficulty === "easy" ? "AND level IN (1, 2)" : "AND level BETWEEN 1 AND 4";
 
   for (let idx = 1; idx <= QUESTION_COUNT; idx++) {
-    // ۲. چک کردن: آیا سوال شماره "idx" قبلاً ساخته شده؟
     const existing = await queryOne<{ id: number }>(
       env,
       `SELECT id FROM duel_questions WHERE duel_id = ? AND question_index = ?`,
@@ -168,8 +168,6 @@ export async function ensureDuelQuestions(env: Env, matchId: number, difficulty:
 
     if (!qRow) continue;
 
-    // ثبت سوال در دیتابیس با "INSERT OR IGNORE"
-    // این یعنی اگر سوال تکراری بود (به خاطر باگ همزمانی)، ارور نده و فقط رد شو
     await execute(
       env,
       `INSERT OR IGNORE INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
@@ -278,6 +276,7 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
   };
 }
 
+// === این بخش کاملاً تغییر کرده است ===
 export async function cleanupOldMatches(env: Env): Promise<void> {
   // 1. پیدا کردن بازی‌هایی که بیش از ۱ ساعت در وضعیت in_progress مانده‌اند
   const stuckMatches = await queryAll<DuelMatch>(
@@ -288,23 +287,24 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
   );
 
   for (const match of stuckMatches) {
-    // === FIX START: چک می‌کنیم آیا اصلاً کسی بازی کرده؟ ===
+    // آمار پاسخ‌ها را می‌گیریم
     const p1Answers = await getUserAnswerCountInMatch(env, match.id, match.player1_id);
     const p2Answers = match.player2_id ? await getUserAnswerCountInMatch(env, match.id, match.player2_id) : 0;
 
-    // اگر هیچکدام حتی یک جواب هم نداده‌اند -> بازی کنسل می‌شود (بدون XP)
+    // اگر هیچکدام حتی یک جواب هم نداده‌اند -> بازی کنسل می‌شود (بدون XP و پیام)
     if (p1Answers === 0 && p2Answers === 0) {
        await execute(env, `UPDATE duel_matches SET status = 'cancelled', completed_at = datetime('now') WHERE id = ?`, [match.id]);
-       continue; // برو سراغ بازی بعدی
+       continue; 
     }
-    // === FIX END ===
 
+    // محاسبه نتیجه بر اساس پاسخ‌های موجود
     const p1Correct = await getUserCorrectCountInMatch(env, match.id, match.player1_id);
     const p2Correct = match.player2_id ? await getUserCorrectCountInMatch(env, match.id, match.player2_id) : 0;
     
     let winnerUserId: number | null = null;
     let isDraw = 0;
     
+    // مقایسه ساده
     if (p1Correct > p2Correct) {
        winnerUserId = match.player1_id;
        isDraw = 0;
@@ -312,12 +312,14 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
        winnerUserId = match.player2_id;
        isDraw = 0;
     } else {
+       // اگر مساوی باشند یا هر دو صفر باشند
        winnerUserId = null;
        isDraw = 1;
     }
 
     const now = new Date().toISOString();
 
+    // بستن بازی در دیتابیس
     await execute(
       env,
       `UPDATE duel_matches 
@@ -332,24 +334,45 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
     );
 
     const totalQ = 5; 
-    
-    // فقط اگر کاربر حداقل ۱ جواب داده باشد به او XP بدهیم
-    if (p1Answers > 0) {
+
+    // === اطلاع‌رسانی به بازیکنان ===
+    // فقط به کسانی پیام می‌دهیم که حداقل ۱ جواب داده باشند
+
+    const p1 = await getUserById(env, match.player1_id);
+    const p2 = match.player2_id ? await getUserById(env, match.player2_id) : null;
+
+    if (p1 && p1Answers > 0) {
         let p1Result: "win" | "draw" | "lose" = "lose";
         if (isDraw) p1Result = "draw";
         else if (winnerUserId === match.player1_id) p1Result = "win";
         
-        await addXpForDuelMatch(env, match.player1_id, match.id, p1Correct, totalQ, p1Result);
-        await checkAndUpdateStreak(env, match.player1_id);
+        const xp = await addXpForDuelMatch(env, match.player1_id, match.id, p1Correct, totalQ, p1Result);
+        const streakMsg = await checkAndUpdateStreak(env, match.player1_id);
+
+        let msg = `⌛️ مهلت بازی تمام شد (حریف پاسخ نداد).\n\n`;
+        msg += p1Result === 'win' ? "🏆 تو بردی!" : (p1Result === 'draw' ? "🤝 مساوی شد." : "❌ باختی.");
+        msg += `\n✅ امتیاز تو: ${p1Correct}\n👤 امتیاز حریف: ${p2Correct}`;
+        if (xp > 0) msg += `\n⭐️ XP دریافتی: ${xp}`;
+        if (streakMsg) msg += `\n\n${streakMsg}`;
+
+        await sendMessage(env, p1.telegram_id, msg);
     }
 
-    if (match.player2_id && p2Answers > 0) {
+    if (p2 && p2Answers > 0) {
        let p2Result: "win" | "draw" | "lose" = "lose";
        if (isDraw) p2Result = "draw";
        else if (winnerUserId === match.player2_id) p2Result = "win";
        
-       await addXpForDuelMatch(env, match.player2_id, match.id, p2Correct, totalQ, p2Result);
-       await checkAndUpdateStreak(env, match.player2_id);
+       const xp = await addXpForDuelMatch(env, match.player2_id, match.id, p2Correct, totalQ, p2Result);
+       const streakMsg = await checkAndUpdateStreak(env, match.player2_id);
+
+       let msg = `⌛️ مهلت بازی تمام شد.\n\n`;
+       msg += p2Result === 'win' ? "🏆 تو بردی!" : (p2Result === 'draw' ? "🤝 مساوی شد." : "❌ باختی.");
+       msg += `\n✅ امتیاز تو: ${p2Correct}\n👤 امتیاز حریف: ${p1Correct}`;
+       if (xp > 0) msg += `\n⭐️ XP دریافتی: ${xp}`;
+       if (streakMsg) msg += `\n\n${streakMsg}`;
+
+       await sendMessage(env, p2.telegram_id, msg);
     }
   }
 
@@ -379,14 +402,12 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
   );
 }
 
-// جایگزین تابع فعلی در src/db/duels.ts شوید:
 export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
-  // ۱. پیدا کردن هر بازی فعالی (چه در انتظار، چه در حال اجرا)
   const match = await queryOne<DuelMatch>(
     env,
     `SELECT * FROM duel_matches 
      WHERE (player1_id = ? OR player2_id = ?) 
-     AND status IN ('waiting', 'in_progress')`, // <--- اصلاح شد
+     AND status IN ('waiting', 'in_progress')`,
     [userId, userId]
   );
 
@@ -394,8 +415,6 @@ export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
 
   const now = new Date().toISOString();
   
-  // اگر بازی هنوز شروع نشده (waiting)، برنده‌ای نداریم (کنسل شده)
-  // اگر بازی شروع شده، نفر دیگر برنده است
   let winnerId: number | null = null;
   if (match.status === 'in_progress') {
       winnerId = match.player1_id === userId ? match.player2_id : match.player1_id;
