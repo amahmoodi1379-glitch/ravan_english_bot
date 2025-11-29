@@ -1,6 +1,7 @@
 import { Env } from "../types";
 import { prepare } from "./client";
 import { XP_VALUES } from "../config/constants";
+import { XP_VALUES, TIME_ZONE_OFFSET } from "../config/constants";
 
 export type ActivityType =
   | "leitner_question"
@@ -141,11 +142,10 @@ export async function addXpForDuelMatch(
 
 // چک کردن و آپدیت زنجیره (Streak) با پشتیبانی از تایم‌زون
 export async function checkAndUpdateStreak(env: Env, userId: number): Promise<string | null> {
-  const TARGET_DAILY_XP = 50; // هدف روزانه
+  const TARGET_DAILY_XP = 50; 
   
-  // تنظیم اختلاف ساعت (مثلاً برای ایران +3.5 ساعت)
-  // این باعث می‌شود "روز جدید" دقیقاً ساعت ۰۰:۰۰ به وقت محلی شروع شود
-  const TIME_MODIFIER = '+3.5 hours';
+  // استفاده از متغیر سراسری به جای هاردکد کردن
+  const TIME_MODIFIER = TIME_ZONE_OFFSET; 
 
   // 1. محاسبه XP امروز (با لحاظ کردن اختلاف ساعت)
   const xpRow = await env.DB.prepare(`
