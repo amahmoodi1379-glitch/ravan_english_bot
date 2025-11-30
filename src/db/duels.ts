@@ -100,79 +100,99 @@ export async function joinDuelMatch(env: Env, matchId: number, userId: number): 
 }
 
 export async function ensureDuelQuestions(env: Env, matchId: number, difficulty: DuelDifficulty): Promise<void> {
+  // تعداد سوالات فعلی را چک می‌کنیم
   const totalQ = await getTotalQuestionsInMatch(env, matchId);
+  // اگر قبلاً ۵ تا سوال ساخته شده، نیازی به کار اضافه نیست
   if (totalQ >= QUESTION_COUNT) return;
 
   const levelCond = difficulty === "easy" ? "AND level IN (1, 2)" : "AND level BETWEEN 1 AND 4";
 
+  // حلقه برای ساخت سوالات از شماره ۱ تا ۵
   for (let idx = 1; idx <= QUESTION_COUNT; idx++) {
+    
+    // ۱. چک می‌کنیم آیا سوال شماره idx (مثلاً ۳) الان وجود دارد؟
     const existing = await queryOne<{ id: number }>(
       env,
       `SELECT id FROM duel_questions WHERE duel_id = ? AND question_index = ?`,
       [matchId, idx]
     );
 
+    // اگر وجود داشت، می‌رویم سراغ شماره بعدی
     if (existing) continue;
 
-    const wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
-      env,
-      `SELECT id, english, persian, level FROM words WHERE is_active = 1 ${levelCond} ORDER BY RANDOM() LIMIT 1`
-    );
-
-    if (!wordRow) break;
-
-    let qRow = await queryOne<{ id: number }>(
-      env,
-      `SELECT id FROM word_questions WHERE word_id = ? ORDER BY RANDOM() LIMIT 1`,
-      [wordRow.id]
-    );
-
-    if (!qRow) {
-      try {
-        const styles = ["fa_meaning", "en_definition", "synonym", "antonym"];
-        const randomStyle = styles[Math.floor(Math.random() * styles.length)];
-
-        const aiQuestions = await generateWordQuestionsWithGemini({
-          env,
-          english: wordRow.english,
-          persian: wordRow.persian,
-          level: wordRow.level,
-          questionStyle: randomStyle,
-          count: 1
-        });
-
-        if (aiQuestions.length > 0) {
-          await insertWordQuestions(
+    // ۲. تلاش برای ساخت سوال (با مکانیزم تلاش مجدد)
+    // اینجا تغییر اصلی است: تا ۳ بار تلاش می‌کنیم این جایگاه خالی را پر کنیم
+    let added = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        
+        // الف) انتخاب یک کلمه تصادفی
+        const wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
             env,
-            wordRow.id,
-            aiQuestions.map((q) => ({
-              wordId: wordRow.id,
-              questionText: q.question,
-              options: q.options,
-              correctIndex: q.correctIndex,
-              explanation: q.explanation,
-              questionStyle: randomStyle
-            }))
-          );
+            `SELECT id, english, persian, level FROM words WHERE is_active = 1 ${levelCond} ORDER BY RANDOM() LIMIT 1`
+        );
 
-          qRow = await queryOne<{ id: number }>(
+        if (!wordRow) break; // اگر دیتابیس کلمات خالی باشد، کاری نمی‌شود کرد
+
+        // ب) انتخاب یک سوال آماده برای آن کلمه
+        let qRow = await queryOne<{ id: number }>(
             env,
-            `SELECT id FROM word_questions WHERE word_id = ? ORDER BY id DESC LIMIT 1`,
+            `SELECT id FROM word_questions WHERE word_id = ? ORDER BY RANDOM() LIMIT 1`,
             [wordRow.id]
-          );
+        );
+
+        // پ) اگر سوال آماده نداشتیم، با هوش مصنوعی می‌سازیم
+        if (!qRow) {
+            try {
+                const styles = ["fa_meaning", "en_definition", "synonym", "antonym"];
+                const randomStyle = styles[Math.floor(Math.random() * styles.length)];
+
+                const aiQuestions = await generateWordQuestionsWithGemini({
+                    env,
+                    english: wordRow.english,
+                    persian: wordRow.persian,
+                    level: wordRow.level,
+                    questionStyle: randomStyle,
+                    count: 1
+                });
+
+                if (aiQuestions.length > 0) {
+                    await insertWordQuestions(
+                        env,
+                        wordRow.id,
+                        aiQuestions.map((q) => ({
+                            wordId: wordRow.id,
+                            questionText: q.question,
+                            options: q.options,
+                            correctIndex: q.correctIndex,
+                            explanation: q.explanation,
+                            questionStyle: randomStyle
+                        }))
+                    );
+
+                    // دوباره سوال ساخته شده را از دیتابیس می‌گیریم
+                    qRow = await queryOne<{ id: number }>(
+                        env,
+                        `SELECT id FROM word_questions WHERE word_id = ? ORDER BY id DESC LIMIT 1`,
+                        [wordRow.id]
+                    );
+                }
+            } catch (err) {
+                console.error("Failed to auto-generate duel question:", err);
+            }
         }
-      } catch (err) {
-        console.error("Failed to auto-generate duel question:", err);
-      }
+
+        // ت) اگر سوال پیدا یا ساخته شد، آن را ثبت می‌کنیم
+        if (qRow) {
+            await execute(
+                env,
+                `INSERT OR IGNORE INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
+                [matchId, idx, wordRow.id, qRow.id]
+            );
+            added = true;
+            break; // موفقیت! از حلقه تلاش خارج می‌شویم و می‌رویم سراغ سوال بعدی (idx بعدی)
+        }
+        // اگر نرسیدیم اینجا، یعنی تلاش ناموفق بود. حلقه attempt دوباره اجرا می‌شود.
     }
-
-    if (!qRow) continue;
-
-    await execute(
-      env,
-      `INSERT OR IGNORE INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
-      [matchId, idx, wordRow.id, qRow.id]
-    );
   }
 }
 
