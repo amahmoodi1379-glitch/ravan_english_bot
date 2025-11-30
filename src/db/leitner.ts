@@ -105,25 +105,36 @@ export async function getOrCreateUserWordState(
   userId: number,
   wordId: number
 ): Promise<UserWordState> {
+  // 1. تلاش اول: آیا قبلاً وضعیت لایتنر برای این کلمه وجود دارد؟
   let state = await queryOne<UserWordState>(
     env,
     `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
     [userId, wordId]
   );
 
+  // اگر بود، همونو برگردون و تمام.
   if (state) return state;
 
   const nowIso = new Date().toISOString();
-  await execute(
-    env,
-    `
-    INSERT INTO user_words_sm2
-      (user_id, word_id, interval_days, repetitions, ease_factor, next_review_date, question_stage, created_at)
-    VALUES (?, ?, 1, 0, 2.5, ?, 1, ?)
-    `,
-    [userId, wordId, nowIso, nowIso]
-  );
 
+  // 2. تلاش برای ساختن رکورد جدید (با محافظت در برابر تداخل)
+  try {
+    await execute(
+      env,
+      `
+      INSERT INTO user_words_sm2
+        (user_id, word_id, interval_days, repetitions, ease_factor, next_review_date, question_stage, created_at)
+      VALUES (?, ?, 1, 0, 2.5, ?, 1, ?)
+      `,
+      [userId, wordId, nowIso, nowIso]
+    );
+  } catch (e) {
+    // اگر ارور داد (مثلاً گفت تکراریه)، یعنی در همین لحظه یکی دیگه ساخته.
+    // پس ارور رو نادیده می‌گیریم و میریم مرحله بعد که دوباره بخونیمش.
+    console.warn("Race condition caught in getOrCreateUserWordState (duplicate insert avoided).");
+  }
+
+  // 3. تلاش دوم: حالا قطعاً باید وجود داشته باشه (چه ما ساخته باشیم، چه قبلاً بوده باشه)
   state = await queryOne<UserWordState>(
     env,
     `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
