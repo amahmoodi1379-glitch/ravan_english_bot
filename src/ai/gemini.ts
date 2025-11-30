@@ -251,17 +251,23 @@ export async function evaluateReflection(
   sourceText: string,
   userAnswer: string
 ): Promise<AiReflectionResult> {
+  
+  // === اصلاح امنیتی: تمیز کردن ورودی‌ها ===
+  const safeSource = sanitizeInput(sourceText);
+  const safeAnswer = sanitizeInput(userAnswer);
+  // ========================================
+
   const prompt = `
 You are an English teacher evaluating a student's reflection.
 
 Source Text:
 """
-${sourceText}
+${safeSource}
 """
 
 Student's Reflection/Summary:
 """
-${userAnswer}
+${safeAnswer}
 """
 
 Task:
@@ -298,4 +304,11 @@ function safeExtractJson(raw: string): any {
     text = text.substring(firstOpen, lastClose + 1);
   }
   return JSON.parse(text);
+}
+
+// تابع کمکی برای تمیز کردن متن و جلوگیری از هک (Sanitization)
+function sanitizeInput(text: string): string {
+  if (!text) return "";
+  // تبدیل تمام " به ' برای جلوگیری از شکستن پرامپت
+  return text.replace(/"/g, "'").trim();
 }
