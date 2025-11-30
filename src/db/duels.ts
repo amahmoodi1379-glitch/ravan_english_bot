@@ -125,11 +125,26 @@ export async function ensureDuelQuestions(env: Env, matchId: number, difficulty:
     let added = false;
     for (let attempt = 0; attempt < 3; attempt++) {
         
-        // الف) انتخاب یک کلمه تصادفی
-        const wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
+        // الف) انتخاب یک کلمه تصادفی (روش بهینه شده: LIMIT OFFSET)
+        // 1. اول تعداد کل کلمات واجد شرایط را می‌گیریم
+        const countRow = await queryOne<{ cnt: number }>(
             env,
-            `SELECT id, english, persian, level FROM words WHERE is_active = 1 ${levelCond} ORDER BY RANDOM() LIMIT 1`
+            `SELECT COUNT(*) as cnt FROM words WHERE is_active = 1 ${levelCond}`
         );
+        const totalWords = countRow?.cnt || 0;
+
+        let wordRow = null;
+        if (totalWords > 0) {
+            // 2. یک آفست تصادفی تولید می‌کنیم
+            const randomOffset = Math.floor(Math.random() * totalWords);
+            
+            // 3. فقط همان یک کلمه را می‌گیریم (بدون سورت سنگین)
+            wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
+                env,
+                `SELECT id, english, persian, level FROM words WHERE is_active = 1 ${levelCond} LIMIT 1 OFFSET ?`,
+                [randomOffset]
+            );
+        }
 
         if (!wordRow) break; // اگر دیتابیس کلمات خالی باشد، کاری نمی‌شود کرد
 
