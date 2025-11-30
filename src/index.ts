@@ -80,9 +80,8 @@ export default {
       // لاگ فعالیت
       await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");
       
-      // سشن‌های ریدینگ نیمه‌کاره
-      await execute(env, `DELETE FROM reading_sessions WHERE status = 'in_progress' AND started_at < datetime('now', '-1 day')`);
-      
+// پاکسازی سشن‌های ریدینگ (هم نیمه‌کاره و هم کنسل‌شده) که قدیمی شده‌اند
+      await execute(env, `DELETE FROM reading_sessions WHERE (status = 'in_progress' OR status = 'cancelled') AND started_at < datetime('now', '-1 day')`);      
       // سشن‌های رفلکشن نیمه‌کاره
       await execute(env, `DELETE FROM reflection_sessions WHERE ai_score IS NULL AND created_at < datetime('now', '-1 day')`);
 
