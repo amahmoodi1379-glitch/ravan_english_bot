@@ -424,6 +424,7 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
 }
 
 export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
+  // ۱. پیدا کردن بازی فعال یا در انتظار کاربر
   const match = await queryOne<DuelMatch>(
     env,
     `SELECT * FROM duel_matches 
@@ -434,12 +435,25 @@ export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
 
   if (!match) return; 
 
+  // حالت الف: بازی در وضعیت انتظار است (هنوز حریف پیدا نشده)
+  // راه حل: حذف کامل رکوردها برای جلوگیری از ایجاد بازی‌های روح (Ghost Matches)
+  if (match.status === 'waiting') {
+      // اول حذف جواب‌های احتمالی (اگر کاربر حین انتظار جواب داده باشد)
+      await execute(env, `DELETE FROM duel_answers WHERE duel_id = ?`, [match.id]);
+      // دوم حذف سوالات ساخته شده برای این بازی
+      await execute(env, `DELETE FROM duel_questions WHERE duel_id = ?`, [match.id]);
+      // سوم حذف خودِ بازی
+      await execute(env, `DELETE FROM duel_matches WHERE id = ?`, [match.id]);
+      return;
+  }
+
+  // حالت ب: بازی در جریان است (حریف دارد)
+  // راه حل: کاربر انصراف داده، پس بازی تمام می‌شود و حریف برنده اعلام می‌شود.
   const now = new Date().toISOString();
   
   let winnerId: number | null = null;
-  if (match.status === 'in_progress') {
-      winnerId = match.player1_id === userId ? match.player2_id : match.player1_id;
-  }
+  // برنده نفر مقابل است
+  winnerId = match.player1_id === userId ? match.player2_id : match.player1_id;
 
   await execute(
     env,
