@@ -173,18 +173,24 @@ export async function prepareUpdateSm2(
   const nowIso = now.toISOString();
   const quality = isCorrect ? 5 : 2;
 
-  // === تغییر اصلاحی: استفاده از فاصله زمانی واقعی ===
+  // === اصلاح شده: محاسبه هوشمند فاصله مرور (Fix Bug) ===
   let usedInterval = state.interval_days || 1;
 
   if (state.last_reviewed_at) {
     const lastReviewDate = new Date(state.last_reviewed_at);
-    // اختلاف زمانی به میلی‌ثانیه
     const diffMs = now.getTime() - lastReviewDate.getTime();
-    // تبدیل به روز
-    const diffDays = diffMs / (1000 * 60 * 60 * 24);
-    // اگر فاصله بیشتر از 1 روز بود، از فاصله واقعی استفاده کن (رند شده)
-    // اگر کمتر بود (مثلاً همون روز دوباره مرور کرده)، حداقل 1 رو در نظر بگیر
-    usedInterval = Math.max(1, Math.round(diffDays));
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    // اگر کاربر دیرتر از موعد مرور کرده، فاصله واقعی را حساب کن
+    if (diffDays > state.interval_days) {
+      usedInterval = diffDays;
+    } 
+    // اگر زودتر مرور کرده (زودتر از موعد)، همون برنامه قبلی رو نگه دار تا عقب نیفتد
+    else {
+      usedInterval = state.interval_days;
+    }
+
+    if (usedInterval < 1) usedInterval = 1;
   }
   // ================================================
 
