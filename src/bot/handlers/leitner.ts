@@ -356,28 +356,29 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     const isCorrect = chosenOption === question.correct_option;
     const now = new Date().toISOString();
 
-    const updateResult = await env.DB.prepare(
+    // === اصلاح: استفاده از تراکنش واقعی (Batch) برای همه عملیات‌ها ===
+    const batchStatements: any[] = [];
+
+    // 1. آپدیت تاریخچه (اضافه شده به بچ برای اتمیک بودن)
+    batchStatements.push(prepare(
+      env,
       `UPDATE user_word_question_history 
        SET is_correct = ?, answered_at = ? 
-       WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
-    )
-    .bind(isCorrect ? 1 : 0, now, user.id, question.id)
-    .run();
+       WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`,
+      [isCorrect ? 1 : 0, now, user.id, question.id]
+    ));
 
-    if (updateResult.meta.changes === 0) {
-       await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
-       return; 
-    }
-
-    const batchStatements: any[] = [];
+    // 2. آپدیت الگوریتم SM2 (زمان مرور بعدی)
     const sm2Stmts = await prepareUpdateSm2(env, user.id, question.word_id, isCorrect);
     batchStatements.push(...sm2Stmts);
+
+    // 3. آپدیت امتیاز (XP)
     const xpStmts = prepareXpForLeitner(env, user.id, question.word_id, question.level, isCorrect);
     batchStatements.push(...xpStmts);
 
-    if (batchStatements.length > 0) {
-      await env.DB.batch(batchStatements);
-    }
+    // اجرای همه دستورات با هم (یا همه انجام می‌شوند یا هیچکدام)
+    await env.DB.batch(batchStatements);
+    // ================================================
 
     if (isCorrect) {
       const streakMsg = await checkAndUpdateStreak(env, user.id);
