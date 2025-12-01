@@ -124,18 +124,24 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
       });
 
       if (aiQuestions.length > 0) {
-        await insertWordQuestions(
-          env,
-          word.id,
-          aiQuestions.map((q) => ({
+        // === کد جدید: جایگزینی معنی فارسی دقیق ===
+        const finalQuestions = aiQuestions.map((q) => {
+          // اگر نوع سوال "معنی فارسی" بود
+          if (styleToGenerate === "fa_meaning") {
+             // گزینه صحیح را با چیزی که در دیتابیس است عوض کن
+             q.options[q.correctIndex] = word.persian;
+          }
+          return {
             wordId: word.id,
             questionText: q.question,
             options: q.options,
             correctIndex: q.correctIndex,
             explanation: q.explanation,
             questionStyle: styleToGenerate!
-          }))
-        );
+          };
+        });
+
+        await insertWordQuestions(env, word.id, finalQuestions);
       }
     } catch (error) {
       console.error("Error generating questions:", error);
