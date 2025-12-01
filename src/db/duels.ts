@@ -171,17 +171,25 @@ export async function ensureDuelQuestions(env: Env, matchId: number, difficulty:
                 });
 
                 if (aiQuestions.length > 0) {
-                    await insertWordQuestions(
-                        env,
-                        wordRow.id,
-                        aiQuestions.map((q) => ({
+                    // === کد جدید: جایگزینی معنی فارسی دقیق در دوئل ===
+                    const finalDuelQuestions = aiQuestions.map((q) => {
+                        if (randomStyle === "fa_meaning") {
+                            q.options[q.correctIndex] = wordRow.persian;
+                        }
+                        return {
                             wordId: wordRow.id,
                             questionText: q.question,
                             options: q.options,
                             correctIndex: q.correctIndex,
                             explanation: q.explanation,
                             questionStyle: randomStyle
-                        }))
+                        };
+                    });
+
+                    await insertWordQuestions(
+                        env,
+                        wordRow.id,
+                        finalDuelQuestions
                     );
 
                     // دوباره سوال ساخته شده را از دیتابیس می‌گیریم
