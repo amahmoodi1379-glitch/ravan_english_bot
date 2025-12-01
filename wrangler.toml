@@ -1,4 +1,4 @@
-name = "ravan_english_bot"
+name = "ravan-english-bot"
 main = "src/index.ts"
 compatibility_date = "2024-09-01"
 
