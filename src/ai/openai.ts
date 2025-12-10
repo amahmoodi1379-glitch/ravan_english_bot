@@ -13,8 +13,8 @@ export interface AiReflectionResult {
 }
 
 /**
- * تابع اصلی صحبت با OpenAI
- * از Responses API استفاده می‌کنیم: POST https://api.openai.com/v1/responses
+ * تابع اصلی برای صحبت با OpenAI از طریق Responses API
+ * اینجا فقط model + input می‌فرستیم (مثل /debug/openai-ping که جواب داد)
  */
 async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): Promise<string> {
   const apiKey = env.OPENAI_API_KEY;
@@ -23,11 +23,13 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
     throw new Error("OPENAI_API_KEY is not set");
   }
 
-  // اگر خواستی بعداً از AI Gateway یا proxy استفاده کنی:
-  // در env می‌تونی OPENAI_BASE_URL تنظیم کنی
-  const baseUrl = (env as any).OPENAI_BASE_URL || "https://api.openai.com";
-  const url = `${baseUrl}/v1/responses`;
+  // آدرس مستقیم OpenAI – هیچ BASE_URL جداگانه‌ای استفاده نکن
+  const url = "https://api.openai.com/v1/responses";
 
+  // متن نهایی ورودی مدل (system + user در یک رشته)
+  const combinedInput = `SYSTEM:\n${systemPrompt}\n\nUSER:\n${userPrompt}`;
+
+  // Timeout برای جلوگیری از گیر کردن Worker
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     console.warn("[OpenAI] Aborting /v1/responses request after 20000ms timeout");
@@ -35,7 +37,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
   }, 20000); // ۲۰ ثانیه
 
   try {
-    console.log("[OpenAI] Calling gpt-5-nano via Responses API...");
+    console.log("[OpenAI] Calling gpt-5-nano via Responses API (combined input)...");
 
     const resp = await fetch(url, {
       method: "POST",
@@ -45,17 +47,13 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini-2024-07-18",
-        instructions: systemPrompt,   // نقش system message
-        input: userPrompt,            // متن کاربر
+        model: "gpt-5-nano",
+        input: combinedInput,
         max_output_tokens: 1024,
         temperature: 1,
-        text: {
-          format: {
-            type: "text",
-          },
+        reasoning: {
+          effort: "low", // برای سرعت بیشتر
         },
-        store: false, // برای این‌که فقط همین درخواست ذخیره نشه، اختیاری
       }),
     });
 
@@ -80,8 +78,11 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
 }
 
 /**
- * خروجی Responses API این شکلیه:
- * data.output[0].content[0].text
+ * خروجی Responses API برای gpt-5-nano چیزی شبیه همینیه که خودت از /debug/openai-ping دیدی:
+ * output: [
+ *   { type: "reasoning", ... },
+ *   { type: "message", content: [ { type: "output_text", text: "..." } ] }
+ * ]
  * این تابع متن رو از اون ساختار درمیاره.
  */
 function extractTextFromResponse(data: any): string {
@@ -120,7 +121,9 @@ export async function generateWordQuestionsWithOpenAI(params: {
 Target word: "${english}" (${persian})
 Level: ${level}
 Question style: ${questionStyle}
+
 Generate ${count} multiple-choice vocabulary questions.
+Each question MUST have exactly 4 options.
 Return ONLY valid JSON with this structure exactly:
 {
   "questions": [
@@ -134,7 +137,7 @@ Return ONLY valid JSON with this structure exactly:
 }
 `;
 
-  const systemPrompt = "You are a vocabulary quiz generator. Always answer with strict JSON only.";
+  const systemPrompt = "You are a vocabulary quiz generator. Always answer with strict JSON only, no extra text.";
 
   const raw = await callOpenAI(env, systemPrompt, userPrompt);
   return parseJsonResult(raw, count);
@@ -165,7 +168,7 @@ Return ONLY valid JSON with this structure exactly:
 }
 `;
 
-  const systemPrompt = "You are an English reading comprehension test generator. Always answer with strict JSON only.";
+  const systemPrompt = "You are an English reading comprehension test generator. Always answer with strict JSON only, no extra text.";
   const raw = await callOpenAI(env, systemPrompt, userPrompt);
   return parseJsonResult(raw, count);
 }
@@ -180,7 +183,7 @@ export async function generateReflectionParagraph(
   const userPrompt = `
 Write a short psychology-related English paragraph (about 80-120 words) for learner level ${level}.
 Try to naturally use these words: ${words.join(", ")}.
-Output only the paragraph, no explanations, no translation.
+Output only the paragraph in English, no explanations, no translation.
 `;
   const systemPrompt = "You are a psychology English tutor writing simple but natural English.";
 
@@ -219,7 +222,7 @@ Return ONLY valid JSON like:
       feedback: typeof parsed.feedback === "string" ? parsed.feedback : "",
     };
   } catch (e) {
-    console.error("evaluateReflection JSON parse error:", e);
+    console.error("evaluateReflection JSON parse error:", e, "raw:", raw);
     return { score: 0, feedback: "⚠️ خطا در تحلیل پاسخ. لطفاً بعداً دوباره امتحان کنید." };
   }
 }
