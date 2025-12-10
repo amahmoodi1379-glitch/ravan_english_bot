@@ -26,10 +26,11 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
   const combinedInput = `SYSTEM:\n${systemPrompt}\n\nUSER:\n${userPrompt}`;
 
   const controller = new AbortController();
+  // تغییر: افزایش زمان انتظار به ۶۰ ثانیه (۶۰۰۰۰ میلی‌ثانیه)
   const timeoutId = setTimeout(() => {
     console.warn("[OpenAI] Timeout - Aborting request");
     controller.abort();
-  }, 25000);
+  }, 60000);
 
   try {
     const resp = await fetch(url, {
@@ -42,7 +43,6 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
       body: JSON.stringify({
         model: "gpt-5-nano",
         input: combinedInput,
-        // تغییر مهم: افزایش سقف توکن‌ها برای جلوگیری از نصفه ماندن پاسخ
         max_output_tokens: 4096, 
         temperature: 1, 
       }),
@@ -82,7 +82,7 @@ function extractTextFromResponse(data: any): string {
   }
 }
 
-// -------------------- لایتنر واژگان (با اصلاح گزینه‌های غلط) --------------------
+// -------------------- لایتنر واژگان --------------------
 
 export async function generateWordQuestionsWithOpenAI(params: {
   env: Env;
@@ -106,8 +106,6 @@ Exactly 4 options per question.
 1. The correct answer MUST be clear and exactly matches the target meaning.
 2. The wrong options (distractors) must be COMPLETELY DIFFERENT from the correct meaning.
 3. DO NOT use synonyms or related words as distractors.
-   - Bad Example for 'Happy': Options: [Joyful, Glad, Blue, Happy] -> 'Joyful' is too close!
-   - Good Example for 'Happy': Options: [Angry, Table, Running, Happy] -> Clear distinction.
 4. If style is "fa_meaning", the distractors must be Persian meanings of UNRELATED words.
 
 Return ONLY valid JSON:
