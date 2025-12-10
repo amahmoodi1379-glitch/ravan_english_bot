@@ -26,15 +26,13 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
   const combinedInput = `SYSTEM:\n${systemPrompt}\n\nUSER:\n${userPrompt}`;
 
   const controller = new AbortController();
-  // تایم‌اوت را روی ۲۵ ثانیه نگه می‌داریم
+  // تایم‌اوت را روی ۲۸ ثانیه می‌گذاریم (حداکثر زمان مجاز ورکر)
   const timeoutId = setTimeout(() => {
     console.warn("[OpenAI] Timeout - Aborting request");
     controller.abort();
-  }, 25000);
+  }, 28000);
 
   try {
-    console.log("[OpenAI] Sending request..."); // لاگ شروع
-
     const resp = await fetch(url, {
       method: "POST",
       signal: controller.signal,
@@ -45,34 +43,24 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
       body: JSON.stringify({
         model: "gpt-5-nano",
         input: combinedInput,
-        max_output_tokens: 1024, 
-        temperature: 1, // برگشت به دمای پیش‌فرض
+        // تغییر ۱: افزایش توکن به ۲۰۰۰ تا اگر فکر کرد، جا برای نوشتن جواب هم داشته باشد
+        max_output_tokens: 2000, 
+        temperature: 1,
+        // تغییر ۲: بازگرداندن تنظیمات "تفکر کم" برای سرعت بیشتر و جلوگیری از هدر رفتن توکن
+        reasoning: {
+          effort: "low"
+        }
       }),
     });
 
-    console.log("[OpenAI] Response Status:", resp.status); // لاگ وضعیت
-
     if (!resp.ok) {
       const errText = await resp.text();
-      console.error("[OpenAI Error Body]:", errText);
+      console.error("[OpenAI Error]:", errText);
       throw new Error(`OpenAI API Error: ${resp.status}`);
     }
 
     const data: any = await resp.json();
-    
-    // استخراج متن
-    const text = extractTextFromResponse(data);
-    
-    // اگر متن خالی بود، کل دیتای دریافتی را لاگ می‌کنیم تا بفهمیم ساختار چیست
-    if (!text) {
-        console.error("[OpenAI] No text extracted! Full response:", JSON.stringify(data));
-    } else {
-        console.log("[OpenAI] Text extracted length:", text.length);
-        // console.log("[OpenAI] Snippet:", text.substring(0, 100));
-    }
-
-    return text.trim();
-
+    return extractTextFromResponse(data).trim();
   } catch (err) {
     console.error("[OpenAI Fetch Error]:", err);
     throw err;
@@ -112,21 +100,18 @@ export async function generateWordQuestionsWithOpenAI(params: {
 }): Promise<AiGeneratedQuestion[]> {
   const { env, english, persian, level, questionStyle, count } = params;
 
+  // پرامپت با تاکید بر فرمت صحیح
   const userPrompt = `
-Target word: "${english}" (Persian meaning: ${persian})
+Target word: "${english}" (Persian: ${persian})
 Level: ${level}
-Question style: ${questionStyle}
+Style: ${questionStyle}
 
-Generate ${count} multiple-choice questions.
-Exactly 4 options per question.
+Generate ${count} multiple-choice question(s).
+- Correct answer must be clear.
+- Distractors must be strictly related (same part of speech) but clearly wrong in meaning.
+- Return ONLY raw JSON. No markdown formatting.
 
-*** RULES ***
-1. Correct answer must be clear.
-2. Distractors must be same part of speech.
-3. Distractors must be different in meaning (balanced difficulty).
-4. Return ONLY valid JSON.
-
-JSON Format:
+Format:
 {
   "questions": [
     {
@@ -139,7 +124,7 @@ JSON Format:
 }
 `;
 
-  const systemPrompt = "You are an English vocabulary quiz generator. Return valid JSON only.";
+  const systemPrompt = "You are a quiz generator. Output strict JSON only. No reasoning text in output.";
 
   const raw = await callOpenAI(env, systemPrompt, userPrompt);
   return parseJsonResult(raw, count);
@@ -155,8 +140,11 @@ export async function generateReadingQuestionsWithOpenAI(
   const userPrompt = `
 Text: """${textBody}"""
 
-Generate ${count} reading comprehension questions (4 options).
-Return ONLY valid JSON:
+Generate ${count} reading questions.
+- 4 options each.
+- Strict JSON output.
+
+Format:
 {
   "questions": [
     {
@@ -169,7 +157,7 @@ Return ONLY valid JSON:
 }
 `;
 
-  const systemPrompt = "You are a reading comprehension test generator. Return JSON only.";
+  const systemPrompt = "You are a reading test generator. Output strict JSON only.";
   const raw = await callOpenAI(env, systemPrompt, userPrompt);
   return parseJsonResult(raw, count);
 }
@@ -182,11 +170,11 @@ export async function generateReflectionParagraph(
   level: string
 ): Promise<string> {
   const userPrompt = `
-Write a short psychology English paragraph (80-100 words) for level ${level}.
-Use words: ${words.join(", ")}.
-Output only the text.
+Write a short psychology text (80 words) for level ${level}.
+Use: ${words.join(", ")}.
+Output only the English text.
 `;
-  const systemPrompt = "You are a psychology English tutor.";
+  const systemPrompt = "You are an English tutor.";
 
   return await callOpenAI(env, systemPrompt, userPrompt);
 }
@@ -202,14 +190,14 @@ export async function evaluateReflection(
 Text: """${sourceText}"""
 Summary: """${userAnswer}"""
 
-Evaluate understanding (0-10) and feedback in Persian.
-JSON Only:
+Evaluate (0-10) & feedback (Persian).
+JSON:
 {
   "score": 0,
   "feedback": "string"
 }
 `;
-  const systemPrompt = "English teacher. Reply JSON.";
+  const systemPrompt = "Teacher. Reply JSON.";
 
   const raw = await callOpenAI(env, systemPrompt, userPrompt);
 
@@ -220,7 +208,7 @@ JSON Only:
       feedback: typeof parsed.feedback === "string" ? parsed.feedback : "",
     };
   } catch (e) {
-    return { score: 0, feedback: "خطا در تحلیل." };
+    return { score: 0, feedback: "Error parsing result." };
   }
 }
 
@@ -238,14 +226,14 @@ function parseJsonResult(raw: string, limit: number): AiGeneratedQuestion[] {
       explanation: q.explanation ?? "",
     }));
   } catch (e) {
-    console.error("JSON Parse Error:", e);
-    console.error("Raw text was:", raw); // لاگ متن خام برای دیباگ
+    console.error("JSON Parse Error. Raw:", raw);
     return [];
   }
 }
 
 function parseSafeJson(text: string): any {
   if (!text) return {};
+  // حذف مارک‌داون‌های احتمالی که مدل ممکن است اضافه کند
   const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
   return JSON.parse(clean);
 }
