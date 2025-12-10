@@ -44,7 +44,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
         model: "gpt-5-nano",
         input: combinedInput,
         max_output_tokens: 4096, 
-        temperature: 0.7, 
+        temperature: 1, 
       }),
     });
 
