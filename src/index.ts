@@ -10,6 +10,50 @@ import { htmlResponse } from "./utils/response";
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
     const url = new URL(request.url);
+        // ===== DEBUG ROUTES FOR OPENAI =====
+    if (request.method === "GET" && url.pathname === "/debug/openai-models") {
+      try {
+        const res = await fetch("https://api.openai.com/v1/models", {
+          headers: {
+            "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+          },
+        });
+        const text = await res.text();
+        return new Response("status: " + res.status + "\n\n" + text, {
+          status: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      } catch (e: any) {
+        return new Response("openai models error: " + (e?.message || String(e)), { status: 500 });
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/debug/openai-ping") {
+      try {
+        const body = JSON.stringify({
+          model: "gpt-5-nano",
+          input: "ping",
+        });
+        const res = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+          },
+          body,
+        });
+
+        const text = await res.text();
+        return new Response("status: " + res.status + "\n\n" + text, {
+          status: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      } catch (e: any) {
+        return new Response("openai ping error: " + (e?.message || String(e)), { status: 500 });
+      }
+    }
+    // ===== END DEBUG ROUTES =====
+
 
     try {
       // 1. وب‌هوک تلگرام
