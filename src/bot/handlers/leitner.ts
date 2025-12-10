@@ -12,7 +12,7 @@ import {
   DbWord
 } from "../../db/leitner";
 import { addXpForLeitnerQuestion, prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
-import { generateWordQuestionsWithGemini } from "../../ai/gemini";
+import { generateWordQuestionsWithOpenAI } from "../../ai/openai";
 import { insertWordQuestions } from "../../db/word_questions";
 import { CB_PREFIX } from "../../config/constants";
 
@@ -114,7 +114,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   if (styleToGenerate) {
     await sendMessage(env, chatId, "⏳ در حال طراحی سوال جدید با هوش مصنوعی...");
     try {
-      const aiQuestions = await generateWordQuestionsWithGemini({
+      const aiQuestions = await generateWordQuestionsWithOpenAI({
         env,
         english: word.english,
         persian: word.persian,
