@@ -2,42 +2,35 @@ import { Env } from "../types";
 
 export interface AiGeneratedQuestion {
   question: string;
-  options: string[];
-  correctIndex: number;
+  options: string[]; // length = 4
+  correctIndex: number; // 0..3
   explanation: string;
 }
 
 export interface AiReflectionResult {
-  score: number;
+  score: number; // 0-10
   feedback: string;
 }
 
-/**
- * تابع اصلی برای صحبت با OpenAI از طریق Responses API
- * اینجا فقط model + input می‌فرستیم (مثل /debug/openai-ping که جواب داد)
- */
-async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): Promise<string> {
+// ---------- تابع اصلی تماس با OpenAI ----------
+
+async function callOpenAI(env: Env, prompt: string): Promise<string> {
   const apiKey = env.OPENAI_API_KEY;
   if (!apiKey) {
     console.error("OPENAI_API_KEY is not set");
     throw new Error("OPENAI_API_KEY is not set");
   }
 
-  // آدرس مستقیم OpenAI – هیچ BASE_URL جداگانه‌ای استفاده نکن
   const url = "https://api.openai.com/v1/responses";
 
-  // متن نهایی ورودی مدل (system + user در یک رشته)
-  const combinedInput = `SYSTEM:\n${systemPrompt}\n\nUSER:\n${userPrompt}`;
-
-  // Timeout برای جلوگیری از گیر کردن Worker
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     console.warn("[OpenAI] Aborting /v1/responses request after 20000ms timeout");
     controller.abort();
-  }, 20000); // ۲۰ ثانیه
+  }, 20000);
 
   try {
-    console.log("[OpenAI] Calling gpt-5-nano via Responses API (combined input)...");
+    console.log("[OpenAI] Calling gpt-5-nano with combined prompt...");
 
     const resp = await fetch(url, {
       method: "POST",
@@ -48,11 +41,11 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
       },
       body: JSON.stringify({
         model: "gpt-5-nano",
-        input: combinedInput,
+        input: prompt,
         max_output_tokens: 1024,
         temperature: 1,
         reasoning: {
-          effort: "low", // برای سرعت بیشتر
+          effort: "low",
         },
       }),
     });
@@ -67,7 +60,6 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
 
     const data: any = await resp.json();
     const text = extractTextFromResponse(data);
-
     return (text || "").trim();
   } catch (err) {
     console.error("[OpenAI Fetch Error]:", err);
@@ -78,12 +70,11 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
 }
 
 /**
- * خروجی Responses API برای gpt-5-nano چیزی شبیه همینیه که خودت از /debug/openai-ping دیدی:
+ * خروجی Responses API شبیه چیزی است که در /debug/openai-ping دیدی:
  * output: [
  *   { type: "reasoning", ... },
  *   { type: "message", content: [ { type: "output_text", text: "..." } ] }
  * ]
- * این تابع متن رو از اون ساختار درمیاره.
  */
 function extractTextFromResponse(data: any): string {
   try {
@@ -105,7 +96,62 @@ function extractTextFromResponse(data: any): string {
   }
 }
 
-// -------------------- لایتنر واژگان --------------------
+// ---------- ساخت پرامپت واژگان (دقیقاً مثل جمینی) ----------
+
+function buildWordQuestionPrompt(params: {
+  english: string;
+  persian: string;
+  level: number;
+  questionStyle: string;
+  count: number;
+}): string {
+  const { english, persian, level, questionStyle, count } = params;
+
+  return `
+You are an expert English vocabulary quiz generator for Persian (Farsi) learners.
+
+Target word: "${english}"
+Main Persian meaning: "${persian}"
+Learner Level: A1 (Beginner/Elementary)
+
+question_style = "${questionStyle}"
+Generate ${count} multiple-choice questions for this word.
+
+*** CRITICAL RULES FOR OPTIONS (DISTRACTORS) ***
+1. Distractors must be **semantically related** or share the same **part of speech** (noun, verb, adj).
+2. Do NOT use random unrelated words. Make it tricky/professional.
+   - Bad: Apple (Options: Run, Blue, Car, Apple)
+   - Good: Apple (Options: Banana, Orange, Pear, Apple)
+3. For "fa_meaning", distractors must be Persian meanings of *other* related English words.
+
+*** CRITICAL RULES FOR DEFINITIONS ***
+1. Definitions MUST be very short (max 10-12 words).
+2. Use SIMPLE words (A1 level).
+   - Good: "A round fruit that is red or green."
+   - Bad: "The pome fruit of a tree of the rose family..."
+
+Styles rules:
+- "fa_meaning": Question: "معنی کلمه ${english} چیست؟". Options: 4 Persian meanings.
+- "en_definition": Question: "Which definition describes '${english}'?". Options: 4 simple English definitions.
+- "word_from_definition": Question: A simple definition is given. Options: 4 English words.
+- "synonym": Question: "Which word is a synonym for ${english}?". Options: 4 English words.
+- "antonym": Question: "Which word is an antonym (opposite) for ${english}?". Options: 4 English words.
+
+Return ONLY valid JSON in this format:
+{
+  "questions": [
+    {
+      "question": "...",
+      "options": ["...", "...", "...", "..."],
+      "correct_index": 0,
+      "explanation": "..."
+    }
+  ]
+}
+`.trim();
+}
+
+// ---------- توابع اصلی که بقیه‌ی پروژه ازشون استفاده می‌کند ----------
 
 export async function generateWordQuestionsWithOpenAI(params: {
   env: Env;
@@ -115,139 +161,174 @@ export async function generateWordQuestionsWithOpenAI(params: {
   questionStyle: string;
   count: number;
 }): Promise<AiGeneratedQuestion[]> {
-  const { env, english, persian, level, questionStyle, count } = params;
-
-  const userPrompt = `
-Target word: "${english}" (${persian})
-Level: ${level}
-Question style: ${questionStyle}
-
-Generate ${count} multiple-choice vocabulary questions.
-Each question MUST have exactly 4 options.
-Return ONLY valid JSON with this structure exactly:
-{
-  "questions": [
-    {
-      "question": "string",
-      "options": ["string","string","string","string"],
-      "correct_index": 0,
-      "explanation": "string"
-    }
-  ]
-}
-`;
-
-  const systemPrompt = "You are a vocabulary quiz generator. Always answer with strict JSON only, no extra text.";
-
-  const raw = await callOpenAI(env, systemPrompt, userPrompt);
-  return parseJsonResult(raw, count);
+  const prompt = buildWordQuestionPrompt(params);
+  const raw = await callOpenAI(params.env, prompt);
+  return parseOpenAIJson(raw, params.count);
 }
 
-// -------------------- درک مطلب --------------------
+// --- بخش درک مطلب (Reading) ---
 
 export async function generateReadingQuestionsWithOpenAI(
   env: Env,
   textBody: string,
   count: number = 3
 ): Promise<AiGeneratedQuestion[]> {
-  const userPrompt = `
-Text:
-"""${textBody}"""
+  const prompt = `
+You are an expert English reading comprehension test generator.
 
-Generate ${count} reading comprehension multiple-choice questions (۴ options).
-Return ONLY valid JSON with this structure exactly:
+Read the following text carefully:
+"""
+${textBody}
+"""
+
+Generate ${count} multiple-choice questions based on the text above.
+- The questions must be in English.
+- The options must be in English.
+- There must be exactly 4 options per question.
+- Provide a short explanation (in English) why the answer is correct, referencing the text.
+
+Return ONLY valid JSON in this exact format (no markdown, no extra text):
 {
   "questions": [
     {
-      "question": "string",
-      "options": ["string","string","string","string"],
+      "question": "Question text here?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
       "correct_index": 0,
-      "explanation": "string"
+      "explanation": "Explanation here."
     }
   ]
 }
-`;
+`.trim();
 
-  const systemPrompt = "You are an English reading comprehension test generator. Always answer with strict JSON only, no extra text.";
-  const raw = await callOpenAI(env, systemPrompt, userPrompt);
-  return parseJsonResult(raw, count);
+  const raw = await callOpenAI(env, prompt);
+  return parseOpenAIJson(raw, count);
 }
 
-// -------------------- پاراگراف روانشناسی --------------------
+// --- بخش متن روانشناسی (Reflection Paragraph) ---
 
 export async function generateReflectionParagraph(
   env: Env,
   words: string[],
   level: string
 ): Promise<string> {
-  const userPrompt = `
-Write a short psychology-related English paragraph (about 80-120 words) for learner level ${level}.
-Try to naturally use these words: ${words.join(", ")}.
-Output only the paragraph in English, no explanations, no translation.
-`;
-  const systemPrompt = "You are a psychology English tutor writing simple but natural English.";
+  const wordsList = words.join(", ");
 
-  return await callOpenAI(env, systemPrompt, userPrompt);
+  const prompt = `
+You are an English tutor specializing in Psychology and Mental Health.
+Write a short, engaging paragraph (about 60-100 words) for an English learner at Level ${level}.
+
+The topic MUST be related to **Psychology** or **Mental Health** (e.g., stress, happiness, habits, emotions, mindfulness).
+
+Try to include some of the following words naturally if they fit the context: ${wordsList}.
+If the words don't fit well, prioritize the flow and the psychology topic.
+
+The text should be suitable for reading comprehension and reflection.
+Return ONLY the paragraph text.
+`.trim();
+
+  return await callOpenAI(env, prompt);
 }
 
-// -------------------- تصحیح خلاصه‌ی کاربر --------------------
+// --- بخش تصحیح خلاصه‌ی کاربر (Reflection Evaluation) ---
 
 export async function evaluateReflection(
   env: Env,
   sourceText: string,
   userAnswer: string
 ): Promise<AiReflectionResult> {
-  const userPrompt = `
-Original text:
-"""${sourceText}"""
 
-Student summary:
-"""${userAnswer}"""
+  // Sanitization مشابه جمینی
+  const safeSource = sanitizeInput(sourceText);
+  const safeAnswer = sanitizeInput(userAnswer);
 
-Evaluate how well the student understood the text.
-Return ONLY valid JSON like:
+  const prompt = `
+You are an English teacher evaluating a student's reflection.
+
+Source Text:
+"""
+${safeSource}
+"""
+
+Student's Reflection/Summary:
+"""
+${safeAnswer}
+"""
+
+Task:
+1. Give a score from 0 to 10 based on how well the student understood the text and expressed their thoughts.
+2. Provide short feedback in Persian (Farsi). Point out any major grammar mistakes or praise good vocabulary.
+
+Return ONLY valid JSON in this format:
 {
-  "score": 0-10,
-  "feedback": "Persian feedback for the student"
+  "score": 8,
+  "feedback": "..."
 }
-`;
-  const systemPrompt = "You are a bilingual (English/Persian) English teacher. Reply only JSON, feedback in Persian.";
+`.trim();
 
-  const raw = await callOpenAI(env, systemPrompt, userPrompt);
+  const raw = await callOpenAI(env, prompt);
 
   try {
-    const parsed = parseSafeJson(raw);
+    const parsed = safeExtractJson(raw);
+
     return {
       score: typeof parsed.score === "number" ? parsed.score : 0,
-      feedback: typeof parsed.feedback === "string" ? parsed.feedback : "",
+      feedback: typeof parsed.feedback === "string" ? parsed.feedback : "بازخوردی ثبت نشد.",
     };
   } catch (e) {
-    console.error("evaluateReflection JSON parse error:", e, "raw:", raw);
-    return { score: 0, feedback: "⚠️ خطا در تحلیل پاسخ. لطفاً بعداً دوباره امتحان کنید." };
+    console.error("Failed to parse reflection evaluation:", raw);
+    return { score: 0, feedback: "خطا در دریافت بازخورد هوش مصنوعی." };
   }
 }
 
-// -------------------- توابع کمکی JSON --------------------
+// ---------- توابع کمکی JSON و Sanitization (مثل جمینی) ----------
 
-function parseJsonResult(raw: string, limit: number): AiGeneratedQuestion[] {
+function parseOpenAIJson(raw: string, limit: number): AiGeneratedQuestion[] {
+  let parsed: any;
   try {
-    const parsed = parseSafeJson(raw);
-    const list = Array.isArray(parsed.questions) ? parsed.questions : [];
-
-    return list.slice(0, limit).map((q: any) => ({
-      question: q.question ?? "",
-      options: q.options ?? [],
-      correctIndex: q.correct_index ?? q.correctIndex ?? 0,
-      explanation: q.explanation ?? "",
-    }));
-  } catch (e) {
-    console.error("parseJsonResult error:", e, "raw:", raw);
-    return [];
+    parsed = safeExtractJson(raw);
+  } catch (err) {
+    console.error("Failed to parse OpenAI JSON:", raw);
+    throw err;
   }
+
+  const list = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const result: AiGeneratedQuestion[] = [];
+
+  for (const q of list) {
+    if (!q || typeof q.question !== "string" || !Array.isArray(q.options) || q.options.length < 4) {
+      continue;
+    }
+    const opts = q.options.slice(0, 4).map((o: any) => String(o));
+    let idx = 0;
+    if (typeof q.correct_index === "number") idx = q.correct_index;
+    else if (typeof q.correctIndex === "number") idx = q.correctIndex;
+    if (idx < 0 || idx > 3) idx = 0;
+
+    result.push({
+      question: q.question,
+      options: opts,
+      correctIndex: idx,
+      explanation: typeof q.explanation === "string" ? q.explanation : "",
+    });
+
+    if (result.length >= limit) break;
+  }
+  return result;
 }
 
-function parseSafeJson(text: string): any {
-  if (!text) throw new Error("Empty JSON text");
-  const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
-  return JSON.parse(clean);
+function safeExtractJson(raw: string): any {
+  let text = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+  const firstOpen = text.indexOf("{");
+  const lastClose = text.lastIndexOf("}");
+  if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+    text = text.substring(firstOpen, lastClose + 1);
+  }
+  return JSON.parse(text);
+}
+
+// تابع کمکی برای تمیز کردن متن و جلوگیری از هک (Sanitization)
+function sanitizeInput(text: string): string {
+  if (!text) return "";
+  // تبدیل تمام " به ' برای جلوگیری از شکستن پرامپت
+  return text.replace(/"/g, "'").trim();
 }
