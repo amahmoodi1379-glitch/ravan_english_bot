@@ -26,7 +26,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
       "Authorization": `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: "gpt-5-nano-2025-08-07",
+      model: "gpt-5-nano",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
