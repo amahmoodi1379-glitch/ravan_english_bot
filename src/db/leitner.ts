@@ -1,7 +1,7 @@
 import { Env } from "../types";
 import { queryOne, execute, prepare } from "./client"; 
 import { sm2 } from "../utils/sm2";
-import { TIME_ZONE_OFFSET } from "../config/constants";
+// TIME_ZONE_OFFSET را حذف کردیم چون برای دقت ۱۰ دقیقه، باید از ساعت جهانی استفاده کنیم
 
 export interface DbWord {
   id: number;
@@ -29,8 +29,8 @@ export interface UserWordState {
 }
 
 export async function pickNextWordForUser(env: Env, userId: number): Promise<DbWord | null> {
-  // 1) اولویت مرور
-  // تغییر: اضافه کردن TIME_ZONE_OFFSET برای محاسبه درست زمان محلی
+  // 1) اولویت مرور (واژه‌هایی که زمان مرورشان رسیده است)
+  // تغییر: استفاده از datetime('now') برای مقایسه دقیق زمانی (پشتیبانی از مرور ۱۰ دقیقه‌ای)
   const dueRow = await queryOne<{ word_id: number }>(
     env,
     `
@@ -40,8 +40,8 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
     WHERE s.user_id = ?
       AND s.ignored = 0
       AND w.is_active = 1
-      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
-    ORDER BY date(s.next_review_date) ASC, w.order_index ASC
+      AND s.next_review_date <= datetime('now')
+    ORDER BY s.next_review_date ASC, w.order_index ASC
     LIMIT 1
     `,
     [userId]
@@ -52,7 +52,7 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
   if (dueRow) {
     wordId = dueRow.word_id;
   } else {
-    // 2) واژه‌های جدید
+    // 2) واژه‌های جدید (که هنوز وارد لایتنر نشده‌اند)
     const newRow = await queryOne<{ id: number }>(
       env,
       `
@@ -72,7 +72,8 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
     if (newRow) {
       wordId = newRow.id;
     } else {
-      // 3) پیش‌خوانی
+      // 3) پیش‌خوانی (اگر همه چیز تمام شده، واژه‌های آینده را بیار)
+      // تغییر مهم: اضافه کردن شرط last_reviewed_at برای جلوگیری از تکرار واژه‌ای که همین الان دیدیم
       const anyRow = await queryOne<{ word_id: number }>(
         env,
         `
@@ -82,7 +83,8 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
         WHERE s.user_id = ?
           AND s.ignored = 0
           AND w.is_active = 1
-        ORDER BY date(s.next_review_date) ASC, w.order_index ASC
+          AND (s.last_reviewed_at IS NULL OR s.last_reviewed_at < datetime('now', '-1 hour'))
+        ORDER BY s.next_review_date ASC, w.order_index ASC
         LIMIT 1
         `,
         [userId]
@@ -117,7 +119,7 @@ export async function getOrCreateUserWordState(
 
   const nowIso = new Date().toISOString();
 
-  // 2. تلاش برای ساختن رکورد جدید (با محافظت در برابر تداخل)
+  // 2. تلاش برای ساختن رکورد جدید
   try {
     await execute(
       env,
@@ -129,12 +131,10 @@ export async function getOrCreateUserWordState(
       [userId, wordId, nowIso, nowIso]
     );
   } catch (e) {
-    // اگر ارور داد (مثلاً گفت تکراریه)، یعنی در همین لحظه یکی دیگه ساخته.
-    // پس ارور رو نادیده می‌گیریم و میریم مرحله بعد که دوباره بخونیمش.
     console.warn("Race condition caught in getOrCreateUserWordState (duplicate insert avoided).");
   }
 
-  // 3. تلاش دوم: حالا قطعاً باید وجود داشته باشه (چه ما ساخته باشیم، چه قبلاً بوده باشه)
+  // 3. تلاش دوم
   state = await queryOne<UserWordState>(
     env,
     `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
@@ -147,11 +147,12 @@ export async function getOrCreateUserWordState(
 
 function addDaysToIso(iso: string, days: number): string {
   const d = new Date(iso);
+  // استفاده از UTC برای دقت بیشتر
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString();
 }
 
-// تابع اصلی که تغییر کرده است
+// تابع اصلی که منطق آن اصلاح شده است
 export async function prepareUpdateSm2(
   env: Env,
   userId: number,
@@ -173,45 +174,62 @@ export async function prepareUpdateSm2(
   const nowIso = now.toISOString();
   const quality = isCorrect ? 5 : 2;
 
-  // === اصلاح شده: محاسبه هوشمند فاصله مرور (Fix Bug) ===
+  // محاسبه بازه فعلی
   let usedInterval = state.interval_days || 1;
 
+  // اگر کاربر واژه را زودتر از موعد دیده، بازه را خراب نمی‌کنیم
+  // اما اگر دیرتر دیده، بازه واقعی را حساب می‌کنیم
   if (state.last_reviewed_at) {
     const lastReviewDate = new Date(state.last_reviewed_at);
     const diffMs = now.getTime() - lastReviewDate.getTime();
     const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
-    // اگر کاربر دیرتر از موعد مرور کرده، فاصله واقعی را حساب کن
     if (diffDays > state.interval_days) {
       usedInterval = diffDays;
-    } 
-    // اگر زودتر مرور کرده (زودتر از موعد)، همون برنامه قبلی رو نگه دار تا عقب نیفتد
-    else {
+    } else {
       usedInterval = state.interval_days;
     }
-
     if (usedInterval < 1) usedInterval = 1;
   }
-  // ================================================
 
+  // اجرای الگوریتم SM2
   const sm2Result = sm2(
     {
-      interval: usedInterval, // اینجا قبلاً state.interval_days بود
+      interval: usedInterval,
       repetition: state.repetitions || 0,
       ef: state.ease_factor || 2.5
     },
     quality
   );
 
-  const nextReviewIso = addDaysToIso(nowIso, sm2Result.interval);
-
+  let nextReviewIso: string;
+  let finalInterval = sm2Result.interval;
+  let finalRepetition = sm2Result.repetition;
   let newStage = state.question_stage || 1;
   let newCorrectStreak = state.correct_streak || 0;
 
   if (!isCorrect) {
+    // === منطق جدید برای پاسخ غلط ===
+    // ۱. مرور بعدی: ۱۰ دقیقه دیگر (به جای فردا)
+    const tenMinutesLater = new Date(now.getTime() + 10 * 60000); // 10 minutes in ms
+    nextReviewIso = tenMinutesLater.toISOString();
+    
+    // ۲. بازه را صفر می‌کنیم تا سیستم بفهمد این واژه در حال یادگیری مجدد است
+    finalInterval = 0; 
+    
+    // ۳. ریست کردن پیشرفت
     newStage = 1;
     newCorrectStreak = 0;
+    finalRepetition = 0;
   } else {
+    // === منطق برای پاسخ درست ===
+    // اگر بازه قبلی ۰ بود (یعنی تازه از غلط درآمده)، حالا باید بشود ۱ روز
+    if (state.interval_days === 0) {
+        finalInterval = 1;
+    }
+    
+    nextReviewIso = addDaysToIso(nowIso, finalInterval);
+    
     newCorrectStreak += 1;
     if (newStage < 4) newStage++;
   }
@@ -231,8 +249,8 @@ export async function prepareUpdateSm2(
     WHERE id = ?
     `,
     [
-      sm2Result.interval,
-      sm2Result.repetition,
+      finalInterval,
+      finalRepetition,
       sm2Result.ef,
       nextReviewIso,
       nowIso,
