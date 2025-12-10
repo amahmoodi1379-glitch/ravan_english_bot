@@ -1,7 +1,7 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare } from "./client";
 import { addXpForDuelMatch, checkAndUpdateStreak } from "./xp";
-import { generateWordQuestionsWithGemini } from "../ai/gemini";
+import { generateWordQuestionsWithOpenAI } from "../../ai/openai"
 import { insertWordQuestions } from "./word_questions";
 // اضافه شدن ایمپورت‌های جدید برای ارسال پیام
 import { getUserById } from "./users"; 
@@ -161,7 +161,7 @@ export async function ensureDuelQuestions(env: Env, matchId: number, difficulty:
                 const styles = ["fa_meaning", "en_definition", "synonym", "antonym"];
                 const randomStyle = styles[Math.floor(Math.random() * styles.length)];
 
-                const aiQuestions = await generateWordQuestionsWithGemini({
+                const aiQuestions = await generateWordQuestionsWithOpenAI({
                     env,
                     english: wordRow.english,
                     persian: wordRow.persian,
