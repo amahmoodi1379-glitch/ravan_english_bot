@@ -1,7 +1,7 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare } from "./client";
 import { addXpForDuelMatch, checkAndUpdateStreak } from "./xp";
-import { generateWordQuestionsWithOpenAI } from "../../ai/openai"
+import { generateWordQuestionsWithOpenAI } from "../ai/openai"
 import { insertWordQuestions } from "./word_questions";
 // اضافه شدن ایمپورت‌های جدید برای ارسال پیام
 import { getUserById } from "./users"; 
