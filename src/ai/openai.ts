@@ -44,7 +44,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
         input: combinedInput,
         // تغییر مهم: افزایش سقف توکن‌ها برای جلوگیری از نصفه ماندن پاسخ
         max_output_tokens: 4096, 
-        temperature: 0.7, 
+        temperature: 1, 
       }),
     });
 
