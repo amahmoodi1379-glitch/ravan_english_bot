@@ -9,7 +9,7 @@ import {
   updateReflectionResult,
   getTodayReflectionCount // <--- تغییر ۱: اضافه شدن این تابع به ایمپورت‌ها
 } from "../../db/reflection";
-import { generateReflectionParagraph, evaluateReflection } from "../../ai/gemini";
+import { generateReflectionParagraph, evaluateReflection } from "../../ai/openai"
 import { getTrainingMenuKeyboard } from "../keyboards";
 
 // شروع تمرین
