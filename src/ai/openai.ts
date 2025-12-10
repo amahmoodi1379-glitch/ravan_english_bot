@@ -26,7 +26,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
   const combinedInput = `SYSTEM:\n${systemPrompt}\n\nUSER:\n${userPrompt}`;
 
   const controller = new AbortController();
-  // تغییر: افزایش زمان انتظار به ۶۰ ثانیه (۶۰۰۰۰ میلی‌ثانیه)
+  // زمان انتظار ۶۰ ثانیه برای جلوگیری از تایم‌اوت در سوالات طولانی
   const timeoutId = setTimeout(() => {
     console.warn("[OpenAI] Timeout - Aborting request");
     controller.abort();
@@ -44,7 +44,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
         model: "gpt-5-nano",
         input: combinedInput,
         max_output_tokens: 4096, 
-        temperature: 1, 
+        temperature: 0.7, 
       }),
     });
 
@@ -82,7 +82,7 @@ function extractTextFromResponse(data: any): string {
   }
 }
 
-// -------------------- لایتنر واژگان --------------------
+// -------------------- لایتنر واژگان (با منطق متعادل) --------------------
 
 export async function generateWordQuestionsWithOpenAI(params: {
   env: Env;
@@ -94,6 +94,7 @@ export async function generateWordQuestionsWithOpenAI(params: {
 }): Promise<AiGeneratedQuestion[]> {
   const { env, english, persian, level, questionStyle, count } = params;
 
+  // پرامپت جدید با منطق "متعادل" (Balanced Difficulty)
   const userPrompt = `
 Target word: "${english}" (Persian meaning: ${persian})
 Level: ${level}
@@ -102,11 +103,19 @@ Question style: ${questionStyle}
 Generate ${count} multiple-choice questions.
 Exactly 4 options per question.
 
-*** CRITICAL RULES FOR OPTIONS ***
-1. The correct answer MUST be clear and exactly matches the target meaning.
-2. The wrong options (distractors) must be COMPLETELY DIFFERENT from the correct meaning.
-3. DO NOT use synonyms or related words as distractors.
-4. If style is "fa_meaning", the distractors must be Persian meanings of UNRELATED words.
+*** CRITICAL RULES FOR OPTIONS (BALANCED DIFFICULTY) ***
+1. The correct answer MUST be clear and exactly match the target meaning.
+2. Distractors (wrong options) MUST be the **same part of speech** (noun, verb, adj) as the correct answer.
+3. Distractors should be **conceptually related** (same category) but **clearly different** in meaning.
+   - Avoid "too easy": Do NOT use random, unrelated words (e.g. don't use 'Table' for 'Run').
+   - Avoid "too hard": Do NOT use synonyms or ambiguous close meanings (e.g. don't use 'Sprint' for 'Run').
+   
+   * Example for 'Blue':
+     - Bad (Too Easy): Car, Book, Eat, Blue
+     - Bad (Too Hard): Azure, Navy, Indigo, Blue
+     - Good (Balanced): Red, Green, Yellow, Blue
+
+4. If style is "fa_meaning", the distractors must be Persian meanings of words in the **same category** but different meaning.
 
 Return ONLY valid JSON:
 {
@@ -121,7 +130,7 @@ Return ONLY valid JSON:
 }
 `;
 
-  const systemPrompt = "You are a strict English vocabulary quiz generator. No synonyms in options. Return JSON only.";
+  const systemPrompt = "You are an expert English teacher. Create balanced vocabulary quizzes. Return JSON only.";
 
   const raw = await callOpenAI(env, systemPrompt, userPrompt);
   return parseJsonResult(raw, count);
@@ -140,7 +149,7 @@ Text:
 
 Generate ${count} reading comprehension multiple-choice questions (4 options).
 The correct option must be strictly based on the text.
-The wrong options must be clearly incorrect based on the text.
+The wrong options must be plausible but clearly incorrect according to the text.
 
 Return ONLY valid JSON:
 {
