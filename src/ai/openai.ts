@@ -45,7 +45,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-5-nano",
+        model: "gpt-5-nano-2025-08-07",
         instructions: systemPrompt,   // نقش system message
         input: userPrompt,            // متن کاربر
         max_output_tokens: 1024,
