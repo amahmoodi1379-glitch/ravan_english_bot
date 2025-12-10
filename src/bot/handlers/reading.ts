@@ -26,7 +26,7 @@ import {
 } from "../../db/reading";
 import { queryAll, queryOne } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
-import { generateReadingQuestionsWithGemini } from "../../ai/gemini";
+import { generateReadingQuestionsWithOpenAI } from "../../ai/openai";
 import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
 import { getPaginatedReadingKeyboard } from "../keyboards";
 
@@ -311,7 +311,7 @@ async function sendNextReadingQuestion(
     if (textRow && textRow.body_en) {
       await sendMessage(env, chatId, "⏳ همه سوالات قبلی رو دیدی! در حال طراحی سوالات جدید...");
       try {
-        const aiQuestions = await generateReadingQuestionsWithGemini(env, textRow.body_en, GAME_CONFIG.READING_QUESTION_COUNT);
+        const aiQuestions = await generateReadingQuestionsWithOpenAI(env, textRow.body_en, GAME_CONFIG.READING_QUESTION_COUNT);
         if (aiQuestions.length > 0) {
           await insertTextQuestions(
             env,
