@@ -31,7 +31,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      temperature: 0.7
+      temperature: 1
     })
   });
 
