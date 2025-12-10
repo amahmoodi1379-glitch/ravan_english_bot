@@ -14,35 +14,58 @@ export interface AiReflectionResult {
 
 // تابع اصلی ارتباط با ChatGPT
 async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): Promise<string> {
-  const apiKey = env.OPENAI_API_KEY; // نام متغیر محیطی جدید
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+  const apiKey = env.OPENAI_API_KEY; // نام متغیر محیطی
+  if (!apiKey) {
+    console.error("OPENAI_API_KEY is not set");
+    throw new Error("OPENAI_API_KEY is not set");
+  }
 
   const url = "https://api.openai.com/v1/chat/completions";
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: "gpt-5-nano",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      temperature: 1
-    })
-  });
+  // Timeout دستی برای اینکه Worker ۳۰ ثانیه معطل نشود
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    console.warn("[OpenAI] Aborting request after 15000ms timeout");
+    controller.abort();
+  }, 15000); // ۱۵ ثانیه
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    console.error("OpenAI Error:", errText);
-    throw new Error(`OpenAI API Error: ${resp.status}`);
+  try {
+    console.log("[OpenAI] Calling gpt-5-nano...");
+
+    const resp = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-5-nano",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ]
+        // اگر خواستی بعداً temperature هم اضافه کن:
+        // ,temperature: 1
+      })
+    });
+
+    console.log("[OpenAI] Response status", resp.status);
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("[OpenAI Error]:", errText);
+      throw new Error(`OpenAI API Error: ${resp.status}`);
+    }
+
+    const data: any = await resp.json();
+    return data.choices?.[0]?.message?.content?.trim() || "";
+  } catch (err) {
+    console.error("[OpenAI Fetch Error]:", err);
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data: any = await resp.json();
-  return data.choices?.[0]?.message?.content?.trim() || "";
 }
 
 // --- بخش لایتنر ---
@@ -59,10 +82,14 @@ Target word: "${params.english}" (${params.persian})
 Level: A1-A2
 Style: ${params.questionStyle}
 Generate ${params.count} multiple-choice questions.
-JSON format only: { "questions": [{ "question": "...", "options": ["A","B","C","D"], "correct_index": 0, "explanation": "..." }] }
+JSON format only: { "questions": [{ "question": "...", "options"...["A","B","C","D"], "correct_index": 0, "explanation": "..." }] }
 `;
 
-  const raw = await callOpenAI(params.env, "You are a vocabulary quiz generator. Output valid JSON only.", prompt);
+  const raw = await callOpenAI(
+    params.env,
+    "You are a vocabulary quiz generator. Output valid JSON only.",
+    prompt
+  );
   return parseJsonResult(raw, params.count);
 }
 
@@ -75,10 +102,14 @@ export async function generateReadingQuestionsWithOpenAI(
   const prompt = `
 Text: """${textBody}"""
 Generate ${count} reading comprehension questions.
-JSON format only: { "questions": [{ "question": "...", "options": ["...","...","...","..."], "correct_index": 0, "explanation": "..." }] }
+JSON format only: { "questions": [{ "question": "...", "options"......","...","..."], "correct_index": 0, "explanation": "..." }] }
 `;
 
-  const raw = await callOpenAI(env, "You are a reading test generator. Output valid JSON only.", prompt);
+  const raw = await callOpenAI(
+    env,
+    "You are a reading test generator. Output valid JSON only.",
+    prompt
+  );
   return parseJsonResult(raw, count);
 }
 
@@ -86,7 +117,7 @@ JSON format only: { "questions": [{ "question": "...", "options": ["...","...","
 export async function generateReflectionParagraph(
   env: Env,
   words: string[],
-  level: string 
+  level: string
 ): Promise<string> {
   const prompt = `Write a short Psychology-related paragraph (60-100 words) for English learner level ${level}.
 Try to use these words: ${words.join(", ")}.`;
@@ -107,7 +138,11 @@ Evaluate comprehension (0-10) and give Persian feedback.
 JSON format only: { "score": 8, "feedback": "..." }
 `;
 
-  const raw = await callOpenAI(env, "You are an English teacher. Output valid JSON only.", prompt);
+  const raw = await callOpenAI(
+    env,
+    "You are an English teacher. Output valid JSON only.",
+    prompt
+  );
   try {
     const parsed = parseSafeJson(raw);
     return { score: parsed.score || 0, feedback: parsed.feedback || "" };
