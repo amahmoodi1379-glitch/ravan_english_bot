@@ -43,13 +43,8 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string): P
       body: JSON.stringify({
         model: "gpt-5-nano",
         input: combinedInput,
-        // تغییر ۱: افزایش توکن به ۲۰۰۰ تا اگر فکر کرد، جا برای نوشتن جواب هم داشته باشد
-        max_output_tokens: 2000, 
-        temperature: 1,
-        // تغییر ۲: بازگرداندن تنظیمات "تفکر کم" برای سرعت بیشتر و جلوگیری از هدر رفتن توکن
-        reasoning: {
-          effort: "low"
-        }
+        max_output_tokens: 1000, 
+        temperature: 1,      
       }),
     });
 
