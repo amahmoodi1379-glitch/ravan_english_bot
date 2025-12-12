@@ -1,5 +1,5 @@
 name = "ravan_english_bot"
-main = "src/index.ts"
+restored-version = "src/index.ts"
 compatibility_date = "2024-09-01"
 
 [vars]
