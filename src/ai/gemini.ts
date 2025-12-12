@@ -312,3 +312,5 @@ function sanitizeInput(text: string): string {
   // تبدیل تمام " به ' برای جلوگیری از شکستن پرامپت
   return text.replace(/"/g, "'").trim();
 }
+
+
