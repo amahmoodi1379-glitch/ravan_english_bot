@@ -1,316 +1,482 @@
+// ⚠️ اسم فایل هنوز gemini.ts است تا هیچ جای دیگر پروژه نیاز به تغییر نداشته باشد.
+// اما از این به بعد، این فایل با OpenAI (GPT) کار می‌کند.
+
 import { Env } from "../types";
 
-export interface AiGeneratedQuestion {
+export interface WordQuestion {
+  questionStyle: string;
   question: string;
-  options: string[]; // length = 4
-  correctIndex: number; // 0..3
+  options: string[];
+  correctOption: string;
   explanation: string;
 }
 
-export interface AiReflectionResult {
-  score: number; // 0-10
-  feedback: string;
+export interface ReadingQuestion {
+  question: string;
+  options: string[];
+  correctOption: string;
+  explanation: string;
 }
 
-const MODELS_TO_TRY = [
-  "gemini-2.0-flash", 
-  "gemini-1.5-flash-latest", 
-  "gemini-1.5-flash"
-];
+// -------------------------------
+// Internal helpers
+// -------------------------------
 
-async function callGemini(env: Env, prompt: string): Promise<string> {
-  const apiKey = env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error("GEMINI_API_KEY is not set");
-    throw new Error("GEMINI_API_KEY is not set");
+const OPENAI_URL = "https://api.openai.com/v1/responses";
+const DEFAULT_MODEL = "gpt-5-nano";
+
+function pickModel(env: Env): string {
+  // اگر دوست داشتی بعداً مدل را تغییر دهی، می‌توانی در wrangler.toml یک VAR بسازی:
+  // OPENAI_MODEL = "gpt-5-mini"  (یا gpt-5.2 / gpt-5.1 و ...)
+  // ولی اگر نخواستی، همین پیش‌فرض gpt-5-nano است.
+  return (env as any).OPENAI_MODEL || DEFAULT_MODEL;
+}
+
+function extractOutputText(resp: any): string {
+  // بعضی SDKها output_text را می‌دهند، اما در fetch خام، باید از output آرایه بخوانیم
+  if (typeof resp?.output_text === "string" && resp.output_text.trim()) return resp.output_text;
+
+  const out = resp?.output;
+  if (!Array.isArray(out)) return "";
+
+  for (const item of out) {
+    if (item?.type !== "message") continue;
+    const content = item?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part?.type === "output_text" && typeof part?.text === "string") {
+        return part.text;
+      }
+      // بعضی خروجی‌ها ممکن است این شکل باشند
+      if (typeof part?.text === "string") return part.text;
+    }
   }
 
-  let lastError: any;
+  return "";
+}
 
-  for (const model of MODELS_TO_TRY) {
+function cleanJsonText(s: string): string {
+  const t = (s || "").trim();
+  // حذف بک‌تیک‌ها اگر مدل داخل ```json ...``` داده باشد
+  return t
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+}
+
+async function callOpenAI(
+  env: Env,
+  args: {
+    instructions: string;
+    input: string;
+    maxOutputTokens: number;
+    schema?: any;
+    jsonObject?: boolean;
+  }
+): Promise<any> {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY تنظیم نشده. با wrangler secret put OPENAI_API_KEY ستش کن.");
+  }
+
+  const model = pickModel(env);
+
+  const payload: any = {
+    model,
+    instructions: args.instructions,
+    input: args.input,
+    // برای ربات تلگرام بهتره ذخیره نشه
+    store: false,
+    // برای GPT-5-nano سرعت مهمه → effort پایین
+    reasoning: { effort: "low" },
+    max_output_tokens: args.maxOutputTokens,
+    text: {
+      verbosity: "low",
+    },
+  };
+
+  if (args.schema) {
+    // Structured Outputs (JSON Schema) — مطمئن‌تر از "فقط JSON بده"
+    payload.text.format = {
+      type: "json_schema",
+      strict: true,
+      schema: args.schema,
+    };
+  } else if (args.jsonObject) {
+    // JSON mode (valid JSON ولی بدون چک کردن schema)
+    payload.text.format = { type: "json_object" };
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = 25_000;
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+
+  try {
+    const res = await fetch(OPENAI_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const raw = await res.text();
+    let json: any = null;
     try {
-      console.log(`Trying Gemini model: ${model}...`);
-      const url =
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=` +
-        encodeURIComponent(apiKey);
-
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: prompt }]
-            }
-          ]
-        })
-      });
-
-      if (!resp.ok) {
-        const text = await resp.text();
-        if (resp.status === 404) {
-          console.warn(`Model ${model} not found (404). Trying next...`);
-          lastError = new Error(`Gemini ${model} 404: ${text}`);
-          continue;
-        }
-        console.error(`Gemini HTTP error for ${model}`, resp.status, text);
-        lastError = new Error(`Gemini HTTP error: ${resp.status}`);
-        continue;
-      }
-
-      const data = await resp.json();
-      const text =
-        data?.candidates?.[0]?.content?.parts?.[0]?.text ??
-        data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-      if (typeof text !== "string") {
-        console.error(`Gemini response for ${model} has no text`, JSON.stringify(data));
-        lastError = new Error("Gemini response has no text");
-        continue;
-      }
-
-      return text.trim();
-
-    } catch (err) {
-      console.error(`Exception calling model ${model}:`, err);
-      lastError = err;
+      json = JSON.parse(raw);
+    } catch {
+      // اگر JSON نبود
     }
+
+    if (!res.ok) {
+      const msg = json?.error?.message || raw || `OpenAI error: ${res.status}`;
+      throw new Error(msg);
+    }
+
+    return json;
+  } finally {
+    clearTimeout(timer);
   }
-
-  throw lastError || new Error("All Gemini models failed.");
 }
 
-// --- بخش لایتنر ---
+async function callOpenAIJson<T>(
+  env: Env,
+  args: {
+    instructions: string;
+    input: string;
+    maxOutputTokens: number;
+    schema: any;
+  }
+): Promise<T> {
+  // تلاش 1: Structured Outputs
+  try {
+    const resp = await callOpenAI(env, args);
+    const text = extractOutputText(resp);
+    const cleaned = cleanJsonText(text);
+    return JSON.parse(cleaned) as T;
+  } catch (e: any) {
+    // تلاش 2 (fallback): JSON mode (کمتر سختگیر) — اگر مدل/اکانت structured را ساپورت نکند
+    const msg = String(e?.message || "");
+    const shouldFallback =
+      msg.includes("json_schema") ||
+      msg.includes("text.format") ||
+      msg.includes("format") ||
+      msg.includes("schema");
 
-function buildWordQuestionPrompt(params: {
-  english: string;
-  persian: string;
-  level: number;
-  questionStyle: string;
-  count: number;
-}): string {
-  const { english, persian, level, questionStyle, count } = params;
+    if (!shouldFallback) throw e;
 
-  return `
-You are an expert English vocabulary quiz generator for Persian (Farsi) learners.
-
-Target word: "${english}"
-Main Persian meaning: "${persian}"
-Learner Level: A1 (Beginner/Elementary)
-
-question_style = "${questionStyle}"
-Generate ${count} multiple-choice questions for this word.
-
-*** CRITICAL RULES FOR OPTIONS (DISTRACTORS) ***
-1. Distractors must be **semantically related** or share the same **part of speech** (noun, verb, adj).
-2. Do NOT use random unrelated words. Make it tricky/professional.
-   - Bad: Apple (Options: Run, Blue, Car, Apple)
-   - Good: Apple (Options: Banana, Orange, Pear, Apple)
-3. For "fa_meaning", distractors must be Persian meanings of *other* related English words.
-
-*** CRITICAL RULES FOR DEFINITIONS ***
-1. Definitions MUST be very short (max 10-12 words).
-2. Use SIMPLE words (A1 level).
-   - Good: "A round fruit that is red or green."
-   - Bad: "The pome fruit of a tree of the rose family..."
-
-Styles rules:
-- "fa_meaning": Question: "معنی کلمه ${english} چیست؟". Options: 4 Persian meanings.
-- "en_definition": Question: "Which definition describes '${english}'?". Options: 4 simple English definitions.
-- "word_from_definition": Question: A simple definition is given. Options: 4 English words.
-- "synonym": Question: "Which word is a synonym for ${english}?". Options: 4 English words.
-- "antonym": Question: "Which word is an antonym (opposite) for ${english}?". Options: 4 English words.
-
-Return ONLY valid JSON in this format:
-{
-  "questions": [
-    {
-      "question": "...",
-      "options": ["...", "...", "...", "..."],
-      "correct_index": 0,
-      "explanation": "..."
-    }
-  ]
-}
-`.trim();
+    const fallbackPayloadResp = await callOpenAI(env, {
+      instructions: `${args.instructions}\n\nIMPORTANT: پاسخ را فقط به صورت JSON بده.`,
+      input: `${args.input}\n\nReturn ONLY valid JSON.`,
+      maxOutputTokens: args.maxOutputTokens,
+      jsonObject: true,
+    });
+    const text2 = extractOutputText(fallbackPayloadResp);
+    const cleaned2 = cleanJsonText(text2);
+    return JSON.parse(cleaned2) as T;
+  }
 }
 
-export async function generateWordQuestionsWithGemini(params: {
+// -------------------------------
+// 1) Word questions (Leitner + Duel)
+// -------------------------------
+
+type WordQuestionStyle =
+  | "fa_meaning"
+  | "en_meaning"
+  | "fill_blank"
+  | "synonym"
+  | "antonym"
+  | "sentence"
+  // استایل‌هایی که در پروژه شما استفاده می‌شوند:
+  | "en_definition"
+  | "word_from_definition";
+
+interface GenerateWordQuestionsInput {
   env: Env;
   english: string;
   persian: string;
   level: number;
-  questionStyle: string;
+  questionStyle: WordQuestionStyle | string;
   count: number;
-}): Promise<AiGeneratedQuestion[]> {
-  const prompt = buildWordQuestionPrompt(params);
-  let raw = await callGemini(params.env, prompt);
-  return parseGeminiJson(raw, params.count);
+  // (اختیاری) اگر موجود باشد کیفیت synonym/antonym بهتر می‌شود
+  synonyms?: string | null;
+  antonyms?: string | null;
 }
 
-// --- بخش درک مطلب (Reading) ---
+export async function generateWordQuestionsWithGemini(
+  input: GenerateWordQuestionsInput
+): Promise<
+  {
+    question: string;
+    options: string[];
+    correctIndex: number;
+    explanation: string;
+  }[]
+> {
+  const { env, english, persian, level, questionStyle, count, synonyms, antonyms } = input;
+
+  const styleHelp: Record<string, string> = {
+    fa_meaning:
+      "Question is English word, options are 4 Persian meanings. Correct option is the exact Persian meaning.",
+    en_meaning:
+      "Question is English word, options are 4 English meanings/definitions. Correct is the best definition.",
+    en_definition:
+      "Question asks: 'Which definition matches <word>?' options are 4 short simple English definitions; exactly one correct.",
+    word_from_definition:
+      "Question is a short simple English definition; options are 4 English words; exactly one is the defined word.",
+    fill_blank:
+      "Question is a sentence with a blank (____) where the word fits; options are 4 English words.",
+    synonym:
+      "Question asks for closest synonym of the word; options are 4 English words.",
+    antonym:
+      "Question asks for closest antonym of the word; options are 4 English words.",
+    sentence:
+      "Question asks to choose the best sentence using the word correctly; options are 4 short sentences.",
+  };
+
+  const extraLex =
+    (synonyms && synonyms.trim() ? `\nKnown synonyms from DB: ${synonyms}` : "") +
+    (antonyms && antonyms.trim() ? `\nKnown antonyms from DB: ${antonyms}` : "");
+
+  const prompt = `Generate ${count} multiple-choice question(s) for the following vocabulary item.
+
+Word: ${english}
+Persian meaning (ground truth): ${persian}
+Difficulty level (1 easiest): ${level}
+Requested style: ${questionStyle}
+Style rule: ${styleHelp[String(questionStyle)] || "Follow the requested style."}
+${extraLex}
+
+Hard rules:
+- Exactly 4 options.
+- Exactly one correct option.
+- Options must be distinct (no duplicates).
+- Keep Persian options in Persian and English options in English.
+- For fa_meaning: the correct option MUST be exactly the provided Persian meaning string (ground truth).
+- Provide a short explanation.
+`;
+
+  const schema = {
+    type: "object",
+    properties: {
+      questions: {
+        type: "array",
+        minItems: count,
+        maxItems: count,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            questionStyle: {
+              type: "string",
+              enum: [
+                "fa_meaning",
+                "en_meaning",
+                "en_definition",
+                "word_from_definition",
+                "fill_blank",
+                "synonym",
+                "antonym",
+                "sentence",
+              ],
+            },
+            question: { type: "string" },
+            options: {
+              type: "array",
+              minItems: 4,
+              maxItems: 4,
+              items: { type: "string" },
+            },
+            correctOption: { type: "string" },
+            explanation: { type: "string" },
+          },
+          required: ["questionStyle", "question", "options", "correctOption", "explanation"],
+        },
+      },
+    },
+    required: ["questions"],
+    additionalProperties: false,
+  };
+
+  const data = await callOpenAIJson<{ questions: WordQuestion[] }>(env, {
+    instructions:
+      "You are a professional English vocabulary teacher. Create clean exam-style multiple choice questions.",
+    input: prompt,
+    maxOutputTokens: Math.min(1200, 250 + count * 220),
+    schema,
+  });
+
+  const questions = (data?.questions || []).slice(0, count);
+
+  // تبدیل به فرمت مورد نیاز پروژه
+  return questions.map((q) => {
+    const correctIndex = q.options.findIndex((opt) => opt === q.correctOption);
+    return {
+      question: q.question,
+      options: q.options,
+      correctIndex: correctIndex >= 0 ? correctIndex : 0,
+      explanation: q.explanation,
+    };
+  });
+}
+
+// -------------------------------
+// 2) Reading questions
+// -------------------------------
+
+interface GenerateReadingQuestionsInput {
+  env: Env;
+  text: string;
+  count: number;
+  level: number;
+}
 
 export async function generateReadingQuestionsWithGemini(
-  env: Env,
-  textBody: string,
-  count: number = 3
-): Promise<AiGeneratedQuestion[]> {
-  const prompt = `
-You are an expert English reading comprehension test generator.
+  input: GenerateReadingQuestionsInput
+): Promise<
+  {
+    question: string;
+    options: string[];
+    correctIndex: number;
+    explanation: string;
+  }[]
+> {
+  const { env, text, count, level } = input;
 
-Read the following text carefully:
-"""
-${textBody}
-"""
+  const prompt = `Create ${count} reading comprehension multiple-choice question(s) based ONLY on the following passage.
 
-Generate ${count} multiple-choice questions based on the text above.
-- The questions must be in English.
-- The options must be in English.
-- There must be exactly 4 options per question.
-- Provide a short explanation (in English) why the answer is correct, referencing the text.
+PASSAGE:\n${text}\n\n
+Rules:
+- Each question must be answerable strictly from the passage.
+- Exactly 4 options.
+- Exactly one correct option.
+- Provide a short explanation referencing the passage.
+- Difficulty level: ${level} (1 easiest).
+`;
 
-Return ONLY valid JSON in this exact format (no markdown, no extra text):
-{
-  "questions": [
-    {
-      "question": "Question text here?",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correct_index": 0,
-      "explanation": "Explanation here."
-    }
-  ]
-}
-`.trim();
+  const schema = {
+    type: "object",
+    properties: {
+      questions: {
+        type: "array",
+        minItems: count,
+        maxItems: count,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            question: { type: "string" },
+            options: {
+              type: "array",
+              minItems: 4,
+              maxItems: 4,
+              items: { type: "string" },
+            },
+            correctOption: { type: "string" },
+            explanation: { type: "string" },
+          },
+          required: ["question", "options", "correctOption", "explanation"],
+        },
+      },
+    },
+    required: ["questions"],
+    additionalProperties: false,
+  };
 
-  let raw = await callGemini(env, prompt);
-  return parseGeminiJson(raw, count);
-}
+  const data = await callOpenAIJson<{ questions: ReadingQuestion[] }>(env, {
+    instructions:
+      "You are an expert English reading teacher. Generate high-quality reading comprehension questions.",
+    input: prompt,
+    maxOutputTokens: Math.min(1600, 300 + count * 260),
+    schema,
+  });
 
-function parseGeminiJson(raw: string, limit: number): AiGeneratedQuestion[] {
-  let parsed: any;
-  try {
-    parsed = safeExtractJson(raw);
-  } catch (err) {
-    console.error("Failed to parse Gemini JSON:", raw);
-    throw err;
-  }
+  const questions = (data?.questions || []).slice(0, count);
 
-  const list = Array.isArray(parsed?.questions) ? parsed.questions : [];
-  const result: AiGeneratedQuestion[] = [];
-
-  for (const q of list) {
-    if (!q || typeof q.question !== "string" || !Array.isArray(q.options) || q.options.length < 4) {
-      continue;
-    }
-    const opts = q.options.slice(0, 4).map((o: any) => String(o));
-    let idx = 0;
-    if (typeof q.correct_index === "number") idx = q.correct_index;
-    else if (typeof q.correctIndex === "number") idx = q.correctIndex;
-    if (idx < 0 || idx > 3) idx = 0;
-
-    result.push({
-      question: q.question,
-      options: opts,
-      correctIndex: idx,
-      explanation: typeof q.explanation === "string" ? q.explanation : ""
-    });
-
-    if (result.length >= limit) break;
-  }
-  return result;
-}
-
-
-export async function generateReflectionParagraph(
-  env: Env,
-  words: string[],
-  level: string 
-): Promise<string> {
-  const wordsList = words.join(", ");
-  
-  const prompt = `
-You are an English tutor specializing in Psychology and Mental Health.
-Write a short, engaging paragraph (about 60-100 words) for an English learner at Level ${level}.
-
-The topic MUST be related to **Psychology** or **Mental Health** (e.g., stress, happiness, habits, emotions, mindfulness).
-
-Try to include some of the following words naturally if they fit the context: ${wordsList}.
-If the words don't fit well, prioritize the flow and the psychology topic.
-
-The text should be suitable for reading comprehension and reflection.
-Return ONLY the paragraph text.
-`.trim();
-
-  return await callGemini(env, prompt);
-}
-
-export async function evaluateReflection(
-  env: Env,
-  sourceText: string,
-  userAnswer: string
-): Promise<AiReflectionResult> {
-  
-  // === اصلاح امنیتی: تمیز کردن ورودی‌ها ===
-  const safeSource = sanitizeInput(sourceText);
-  const safeAnswer = sanitizeInput(userAnswer);
-  // ========================================
-
-  const prompt = `
-You are an English teacher evaluating a student's reflection.
-
-Source Text:
-"""
-${safeSource}
-"""
-
-Student's Reflection/Summary:
-"""
-${safeAnswer}
-"""
-
-Task:
-1. Give a score from 0 to 10 based on how well the student understood the text and expressed their thoughts.
-2. Provide short feedback in Persian (Farsi). Point out any major grammar mistakes or praise good vocabulary.
-
-Return ONLY valid JSON in this format:
-{
-  "score": 8,
-  "feedback": "..."
-}
-`.trim();
-
-  const raw = await callGemini(env, prompt);
-  
-  try {
-    const parsed = safeExtractJson(raw);
-    
+  return questions.map((q) => {
+    const correctIndex = q.options.findIndex((opt) => opt === q.correctOption);
     return {
-      score: typeof parsed.score === 'number' ? parsed.score : 0,
-      feedback: typeof parsed.feedback === 'string' ? parsed.feedback : "بازخوردی ثبت نشد."
+      question: q.question,
+      options: q.options,
+      correctIndex: correctIndex >= 0 ? correctIndex : 0,
+      explanation: q.explanation,
     };
-  } catch (e) {
-    console.error("Failed to parse reflection evaluation:", raw);
-    return { score: 0, feedback: "خطا در دریافت بازخورد هوش مصنوعی." };
-  }
+  });
 }
 
-function safeExtractJson(raw: string): any {
-  let text = raw.replace(/```json/g, "").replace(/```/g, "").trim();
-  const firstOpen = text.indexOf("{");
-  const lastClose = text.lastIndexOf("}");
-  if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-    text = text.substring(firstOpen, lastClose + 1);
-  }
-  return JSON.parse(text);
+// -------------------------------
+// 3) Reflection paragraph
+// -------------------------------
+
+interface GenerateReflectionParagraphInput {
+  env: Env;
+  topic: string;
+  level: number;
 }
 
-// تابع کمکی برای تمیز کردن متن و جلوگیری از هک (Sanitization)
-function sanitizeInput(text: string): string {
-  if (!text) return "";
-  // تبدیل تمام " به ' برای جلوگیری از شکستن پرامپت
-  return text.replace(/"/g, "'").trim();
+export async function generateReflectionParagraph(input: GenerateReflectionParagraphInput): Promise<string> {
+  const { env, topic, level } = input;
+
+  const prompt = `Write one English paragraph (80–120 words) suitable for ESL learners.
+Topic: ${topic}
+Difficulty: ${level} (1 easiest)
+
+Rules:
+- Clear, natural English.
+- No markdown.
+- One paragraph only.
+`;
+
+  const resp = await callOpenAI(env, {
+    instructions: "You are a helpful ESL writing assistant.",
+    input: prompt,
+    maxOutputTokens: 350,
+  });
+
+  const out = extractOutputText(resp);
+  return out.trim();
 }
 
+// -------------------------------
+// 4) Evaluate reflection
+// -------------------------------
 
+interface EvaluateReflectionInput {
+  env: Env;
+  userAnswer: string;
+  topic: string;
+}
+
+export async function evaluateReflection(input: EvaluateReflectionInput): Promise<{ score: number; feedback: string }> {
+  const { env, userAnswer, topic } = input;
+
+  const prompt = `You are grading an ESL learner's paragraph.
+Topic: ${topic}
+
+Student answer:\n${userAnswer}\n\n
+Return JSON with:
+- score: integer 0 to 10
+- feedback: Persian feedback (helpful, short, and practical)
+`;
+
+  const schema = {
+    type: "object",
+    properties: {
+      score: { type: "integer", minimum: 0, maximum: 10 },
+      feedback: { type: "string" },
+    },
+    required: ["score", "feedback"],
+    additionalProperties: false,
+  };
+
+  return await callOpenAIJson<{ score: number; feedback: string }>(env, {
+    instructions:
+      "You are a strict but kind ESL teacher. Always be fair. Give feedback in Persian.",
+    input: prompt,
+    maxOutputTokens: 260,
+    schema,
+  });
+}
