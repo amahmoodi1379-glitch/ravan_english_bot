@@ -66,6 +66,10 @@ function getStylesForType(testType: LeitnerTestType): string[] {
   return TEST_TYPE_STYLE_ALIASES[testType] || [];
 }
 
+function isManualQuestionMode(env: Env): boolean {
+  return env.MANUAL_QUESTION_MODE === "1";
+}
+
 export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
   if (!message || !message.from) return;
@@ -78,6 +82,7 @@ export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Pro
 async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Promise<void> {
   // ۱. انتخاب واژه
   const word = await pickNextWordForUser(env, user.id);
+  const manualQuestionMode = isManualQuestionMode(env);
 
   if (!word) {
     await sendMessage(env, chatId, "فعلاً هیچ واژه‌ای برای تمرین در سیستم ثبت نشده (یا همه رو بلدی!) 👏");
@@ -137,8 +142,8 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
       neededCount = 2 - (counts["antonym"] || 0);
   }
 
-  // ۳. اگر نیاز به ساخت بود، بساز
-  if (styleToGenerate) {
+  // ۳. اگر نیاز به ساخت بود، بساز (در حالت دستی غیرفعال است)
+  if (styleToGenerate && !manualQuestionMode) {
     await sendMessage(env, chatId, "⏳ در حال طراحی سوال جدید با هوش مصنوعی...");
     try {
       const aiQuestions = await generateWordQuestionsWithGemini({
@@ -183,32 +188,33 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   const prioritizedTypes = getQuestionStyleForStage(stage);
 
   let question: LeitnerQuestionRow | null = null;
+  const allowedSources: Array<"manual" | "ai" | "seed"> | undefined = manualQuestionMode ? ["manual"] : undefined;
 
   for (const testType of prioritizedTypes) {
     const styles = getStylesForType(testType);
     if (styles.length === 0) continue;
 
-    question = await pickQuestionForUserWord(env, user, word, styles);
+    question = await pickQuestionForUserWord(env, user, word, styles, allowedSources);
     if (question) break;
   }
 
   // اگر هیچ سوالی با اولویت‌های فعلی پیدا نشد، از کل سوالات ندیده انتخاب کن
   // (شامل استایل‌های legacy مثل synonym/antonym)
   if (!question) {
-     question = await pickRandomUnseenQuestion(env, user, word);
+     question = await pickRandomUnseenQuestion(env, user, word, allowedSources);
   }
 
   // اگر باز هم پیدا نشد (یعنی همه سوالات موجود رو دیده)، یک سوال تصادفی از کل سوالات انتخاب کن (تکراری)
   if (!question) {
-    question = await pickRandomQuestionAny(env, word);
+    question = await pickRandomQuestionAny(env, word, allowedSources);
   }
 
   if (!question) {
-    await sendMessage(
-      env,
-      chatId,
-      `برای واژه‌ی <b>${word.english}</b> سوالی پیدا نشد و ساخت خودکار هم ناموفق بود ❗️`
-    );
+    const notFoundMessage = manualQuestionMode
+      ? `برای واژه‌ی <b>${word.english}</b> هنوز تست دستی ثبت نشده ❗️`
+      : `برای واژه‌ی <b>${word.english}</b> سوالی پیدا نشد و ساخت خودکار هم ناموفق بود ❗️`;
+
+    await sendMessage(env, chatId, notFoundMessage);
     return;
   }
 
@@ -253,11 +259,17 @@ async function pickQuestionForUserWord(
   env: Env,
   user: DbUser,
   word: DbWord,
-  styles: string[]
+  styles: string[],
+  allowedSources?: Array<"manual" | "ai" | "seed">
 ): Promise<LeitnerQuestionRow | null> {
   if (styles.length === 0) return null;
 
   const placeholders = styles.map(() => "?").join(", ");
+  const sourceFilter = allowedSources && allowedSources.length > 0
+    ? ` AND q.source IN (${allowedSources.map(() => "?").join(", ")})`
+    : "";
+  const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+
   return await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -266,6 +278,7 @@ async function pickQuestionForUserWord(
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
       AND q.question_style IN (${placeholders})
+      ${sourceFilter}
       AND NOT EXISTS (
         SELECT 1 FROM user_word_question_history h
         WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
@@ -273,7 +286,7 @@ async function pickQuestionForUserWord(
     ORDER BY RANDOM()
     LIMIT 1
     `,
-    [word.id, ...styles, user.id]
+    [word.id, ...styles, ...sourceParams, user.id]
   );
 }
 
@@ -281,8 +294,14 @@ async function pickQuestionForUserWord(
 async function pickRandomUnseenQuestion(
   env: Env,
   user: DbUser,
-  word: DbWord
+  word: DbWord,
+  allowedSources?: Array<"manual" | "ai" | "seed">
 ): Promise<LeitnerQuestionRow | null> {
+  const sourceFilter = allowedSources && allowedSources.length > 0
+    ? ` AND q.source IN (${allowedSources.map(() => "?").join(", ")})`
+    : "";
+  const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+
   return await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -290,6 +309,7 @@ async function pickRandomUnseenQuestion(
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
+      ${sourceFilter}
       AND NOT EXISTS (
         SELECT 1 FROM user_word_question_history h
         WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
@@ -297,15 +317,21 @@ async function pickRandomUnseenQuestion(
     ORDER BY RANDOM()
     LIMIT 1
     `,
-    [word.id, user.id]
+    [word.id, ...sourceParams, user.id]
   );
 }
 
 // انتخاب هر سوالی (تکراری هم باشد اشکال ندارد - فال‌بک نهایی)
 async function pickRandomQuestionAny(
   env: Env,
-  word: DbWord
+  word: DbWord,
+  allowedSources?: Array<"manual" | "ai" | "seed">
 ): Promise<LeitnerQuestionRow | null> {
+  const sourceFilter = allowedSources && allowedSources.length > 0
+    ? ` AND q.source IN (${allowedSources.map(() => "?").join(", ")})`
+    : "";
+  const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+
   return await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -313,10 +339,11 @@ async function pickRandomQuestionAny(
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
+      ${sourceFilter}
     ORDER BY RANDOM()
     LIMIT 1
     `,
-    [word.id]
+    [word.id, ...sourceParams]
   );
 }
 

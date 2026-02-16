@@ -42,6 +42,10 @@ interface SummaryQuestionRow {
 
 const ITEMS_PER_PAGE = 6; // تعداد متن‌ها در هر صفحه
 
+function isManualQuestionMode(env: Env): boolean {
+  return env.MANUAL_QUESTION_MODE === "1";
+}
+
 // نمایش منوی انتخاب متن (با قابلیت صفحه‌بندی)
 export async function startReadingMenuForUser(env: Env, update: TelegramUpdate, page: number = 1): Promise<void> {
   const message = update.message;
@@ -109,7 +113,7 @@ export async function handleReadingTitleSelection(env: Env, update: TelegramUpda
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   
-  if (!sent) {
+  if (!sent && !isManualQuestionMode(env)) {
     await sendMessage(env, chatId, "مشکلی در دریافت سوال پیش آمد ❗️");
   }
   return true;
@@ -147,7 +151,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   await sendMessage(env, chatId, "تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
-  if (!sent) {
+  if (!sent && !isManualQuestionMode(env)) {
     await sendMessage(env, chatId, "مشکلی در دریافت سوال پیش آمد ❗️");
   }
 }
@@ -290,7 +294,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
     if (stats.total >= limit) {
       await sendReadingSummary(env, user, freshSession, chatId);
-    } else {
+    } else if (!isManualQuestionMode(env)) {
       await sendMessage(env, chatId, "متاسفانه در تولید سوال بعدی مشکلی پیش آمد. لطفاً کمی بعد تلاش کنید ❗️");
     }
   }
@@ -302,11 +306,14 @@ async function sendNextReadingQuestion(
   session: ReadingSession,
   chatId: number
 ): Promise<boolean> {
+  const manualQuestionMode = isManualQuestionMode(env);
+  const allowedSources: Array<"manual" | "ai" | "seed"> | undefined = manualQuestionMode ? ["manual"] : undefined;
+
   // 1. منطق هوشمند تولید سوال
-  const currentQCount = await getQuestionsCountForText(env, session.text_id);
+  const currentQCount = await getQuestionsCountForText(env, session.text_id, allowedSources);
   const userSeenCount = await getDistinctSeenCount(env, user.id, session.text_id);
 
-  if (currentQCount < 18 && userSeenCount >= currentQCount) {
+  if (!manualQuestionMode && currentQCount < 18 && userSeenCount >= currentQCount) {
     const textRow = await getReadingTextById(env, session.text_id);
     if (textRow && textRow.body_en) {
       await sendMessage(env, chatId, "⏳ همه سوالات قبلی رو دیدی! در حال طراحی سوالات جدید...");
@@ -320,7 +327,8 @@ async function sendNextReadingQuestion(
               questionText: q.question,
               options: q.options,
               correctIndex: q.correctIndex,
-              explanation: q.explanation
+              explanation: q.explanation,
+              source: "ai"
             }))
           );
         }
@@ -331,9 +339,12 @@ async function sendNextReadingQuestion(
   }
 
   // 2. انتخاب سوال
-  let question = await getNextQuestionForSession(env, session, user.id);
+  let question = await getNextQuestionForSession(env, session, user.id, allowedSources);
 
   if (!question) {
+    if (manualQuestionMode) {
+      await sendMessage(env, chatId, "برای این مورد هنوز تست دستی ثبت نشده ❗️");
+    }
     return false;
   }
 

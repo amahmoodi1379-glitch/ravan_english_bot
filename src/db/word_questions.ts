@@ -8,6 +8,7 @@ export interface NewWordQuestionRow {
   correctIndex: number; // 0..3
   explanation: string;
   questionStyle: string;
+  source?: "manual" | "ai" | "seed";
 }
 
 // تابع کمکی برای بر هم زدن آرایه (Shuffle)
@@ -54,8 +55,8 @@ export async function insertWordQuestions(
       env,
       `
       INSERT INTO word_questions
-        (word_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_style)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (word_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_style, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         wordId,
@@ -66,7 +67,8 @@ export async function insertWordQuestions(
         d,
         correctLetter,
         q.explanation || null,
-        q.questionStyle
+        q.questionStyle,
+        q.source || "ai"
       ]
     );
   }
