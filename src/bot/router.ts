@@ -18,7 +18,7 @@ import {
   PROFILE_MENU_BUTTON_STATS,
   PROFILE_MENU_BUTTON_SUMMARY
 } from "./keyboards";
-import { sendMessage } from "./telegram-api";
+import { sendMessage, answerCallbackQuery } from "./telegram-api";
 import { handleStartCommand } from "./handlers/start";
 import {
   startLeitnerForUser,
@@ -143,6 +143,9 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
     await handleStatsCallback(env, callbackQuery);
     return;
   }
+
+  // اگر دکمه ناشناس بود، لودینگ را ببند تا کاربر معطل نشود
+  await answerCallbackQuery(env, callbackQuery.id);
 }
 
 async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
