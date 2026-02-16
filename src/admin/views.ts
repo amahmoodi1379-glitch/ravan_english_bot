@@ -163,6 +163,25 @@ function renderQuestionManager(
         <button type="submit">افزودن سوال</button>
       </form>
     </div>
+    <div class="q-box" style="border: 2px solid #2563eb; background:#eff6ff; margin-top: 20px;">
+      <details>
+        <summary style="cursor:pointer; font-weight:bold; color:#2563eb; padding: 10px;">📂 ورود دسته‌جمعی سوالات (JSON)</summary>
+        <div style="padding:10px;">
+          <p style="font-size:12px; color:#555;">
+            فرمت: آرایه‌ای از آبجکت‌ها شامل questionText, options (۴تا), correctIndex (۰-۳)
+          </p>
+          <form method="post" action="${basePath}/import_json">
+            <input type="hidden" name="${parentField}" value="${parentId}" />
+            <input type="hidden" name="return_to" value="edit" />
+            
+            <label>کد JSON را اینجا پیست کنید:</label>
+            <textarea name="json_data" style="min-height:200px; width:100%; font-family:monospace; direction:ltr;"></textarea>
+            
+            <button type="submit" style="background:#059669; color:white; margin-top:10px;">📥 ثبت همه سوالات</button>
+          </form>
+        </div>
+      </details>
+    </div>
   `;
 }
 
