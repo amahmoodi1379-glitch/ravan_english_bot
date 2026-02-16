@@ -90,97 +90,6 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     return;
   }
 
-  // ۲. تعیین نیاز (آیا باید سوال بسازیم؟)
-  // سهمیه‌ها بر اساس نوع تست جدید (با پشتیبانی از استایل‌های legacy)
-
-  const countsRows = await queryAll<{ question_style: string; cnt: number }>(
-    env,
-    `SELECT question_style, COUNT(*) as cnt FROM word_questions WHERE word_id = ? GROUP BY question_style`,
-    [word.id]
-  );
-  
-  const counts: Record<string, number> = {};
-  countsRows.forEach(r => counts[r.question_style] = r.cnt);
-
-  let styleToGenerate: string | null = null;
-  let neededCount = 0;
-
-  // اولویت نوع تست: شماره کمتر اول
-  const enToFaCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.EN_TO_FA);
-  const faToEnCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.FA_TO_EN);
-  const definitionToWordCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.DEFINITION_TO_WORD);
-  const wordToDefinitionCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.WORD_TO_DEFINITION);
-  const clozeCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.CLOZE);
-
-  if (enToFaCount < 3) {
-      styleToGenerate = LEITNER_TEST_TYPES.EN_TO_FA;
-      neededCount = 3 - enToFaCount;
-  }
-  else if (faToEnCount < 3) {
-      styleToGenerate = LEITNER_TEST_TYPES.FA_TO_EN;
-      neededCount = 3 - faToEnCount;
-  }
-  else if (definitionToWordCount < 4) {
-      styleToGenerate = LEITNER_TEST_TYPES.DEFINITION_TO_WORD;
-      neededCount = 4 - definitionToWordCount;
-  }
-  else if (wordToDefinitionCount < 3) {
-      styleToGenerate = LEITNER_TEST_TYPES.WORD_TO_DEFINITION;
-      neededCount = 3 - wordToDefinitionCount;
-  }
-  else if (clozeCount < 3) {
-      styleToGenerate = LEITNER_TEST_TYPES.CLOZE;
-      neededCount = 3 - clozeCount;
-  }
-  // شرط هوشمند: فقط اگر در دیتابیس مترادف داشت بساز
-  else if (word.synonyms && word.synonyms.trim().length > 1 && (counts["synonym"] || 0) < 2) {
-      styleToGenerate = "synonym";
-      neededCount = 2 - (counts["synonym"] || 0);
-  }
-  // شرط هوشمند: فقط اگر در دیتابیس متضاد داشت بساز
-  else if (word.antonyms && word.antonyms.trim().length > 1 && (counts["antonym"] || 0) < 2) {
-      styleToGenerate = "antonym";
-      neededCount = 2 - (counts["antonym"] || 0);
-  }
-
-  // ۳. اگر نیاز به ساخت بود، بساز (در حالت دستی غیرفعال است)
-  if (styleToGenerate && !manualQuestionMode) {
-    await sendMessage(env, chatId, "⏳ در حال طراحی سوال جدید با هوش مصنوعی...");
-    try {
-      const aiQuestions = await generateWordQuestionsWithGemini({
-        env,
-        english: word.english,
-        persian: word.persian,
-        level: word.level,
-        questionStyle: styleToGenerate,
-        count: neededCount
-      });
-
-      if (aiQuestions.length > 0) {
-        // === کد جدید: جایگزینی معنی فارسی دقیق ===
-        const finalQuestions = aiQuestions.map((q) => {
-          // اگر نوع سوال "معنی فارسی" بود
-          if (styleToGenerate === LEITNER_TEST_TYPES.EN_TO_FA) {
-             // گزینه صحیح را با چیزی که در دیتابیس است عوض کن
-             q.options[q.correctIndex] = word.persian;
-          }
-          return {
-            wordId: word.id,
-            questionText: q.question,
-            options: q.options,
-            correctIndex: q.correctIndex,
-            explanation: q.explanation,
-            questionStyle: styleToGenerate!
-          };
-        });
-
-        await insertWordQuestions(env, word.id, finalQuestions);
-      }
-    } catch (error) {
-      console.error("Error generating questions:", error);
-    }
-  }
-
   // ۴. انتخاب سوال برای نمایش به کاربر
   const state = await getOrCreateUserWordState(env, user.id, word.id);
   const stage = state.question_stage || 1;
@@ -189,7 +98,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   const prioritizedTypes = getQuestionStyleForStage(stage);
 
   let question: LeitnerQuestionRow | null = null;
-  const allowedSources: Array<"manual" | "ai" | "seed"> | undefined = manualQuestionMode ? ["manual"] : undefined;
+  const allowedSources = undefined;
 
   for (const testType of prioritizedTypes) {
     const styles = getStylesForType(testType);
