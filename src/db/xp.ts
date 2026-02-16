@@ -1,6 +1,5 @@
 import { Env } from "../types";
 import { prepare } from "./client";
-import { XP_VALUES } from "../config/constants";
 import { XP_VALUES, TIME_ZONE_OFFSET } from "../config/constants";
 
 export type ActivityType =
