@@ -461,7 +461,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         ${nextText ? `<a href="/admin/texts/edit?id=${nextText.id}"><button type="button" class="secondary">متن بعدی</button></a>` : ""}
       </div>
     `;
-    const questions = await queryAll<any>(env, "SELECT id, text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source, 'reading' AS question_type FROM text_questions WHERE text_id = ? ORDER BY id DESC", [id]);
+    const questions = await queryAll<any>(env, "SELECT id, text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source, COALESCE(question_type, 'reading') AS question_type FROM text_questions WHERE text_id = ? ORDER BY id DESC", [id]);
     return htmlResponse(renderAdminLayout("ویرایش متن", `${navigation}${renderTextForm(textRow, "ویرایش متن", questions)}`, "texts"));
   }
 
@@ -471,11 +471,11 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     if (!textId) return htmlResponse("شناسه متن نامعتبر است.", 400);
     const text = await queryOne<any>(env, "SELECT * FROM reading_texts WHERE id = ?", [textId]);
     if (!text) return htmlResponse("متن پیدا نشد.", 404);
-    const questions = await queryAll<any>(env, "SELECT * FROM text_questions WHERE text_id = ? ORDER BY id DESC", [textId]);
+    const questions = await queryAll<any>(env, "SELECT *, COALESCE(question_type, 'reading') AS question_type FROM text_questions WHERE text_id = ? ORDER BY id DESC", [textId]);
 
     const questionsHtml = questions.length === 0 ? "<p>هنوز سوالی برای این متن ثبت نشده است.</p>" : questions.map((q: any) => `
       <div class="q-box">
-        <div class="q-meta">ID: ${q.id} | Source: ${q.source}</div>
+        <div class="q-meta">ID: ${q.id} | Type: ${escapeHtml(q.question_type || "reading")} | Source: ${q.source}</div>
         <div class="q-text">${escapeHtml(q.question_text)}</div>
         <div>
           <span class="q-opt ${q.correct_option === 'A' ? 'q-correct' : ''}">A) ${escapeHtml(q.option_a)}</span>
@@ -519,8 +519,8 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const q = validation.data;
     await execute(
       env,
-      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [textId, q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.explanationText, q.source]
+      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_type, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [textId, q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.explanationText, q.questionStyle, q.source]
     );
 
     return redirect(getQuestionRedirectPath("text", textId, returnTo));
@@ -544,8 +544,8 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const q = validation.data;
     await execute(
       env,
-      `UPDATE text_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, correct_option=?, explanation_text=?, source=? WHERE id=? AND text_id=?`,
-      [q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.explanationText, q.source, id, textId]
+      `UPDATE text_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, correct_option=?, explanation_text=?, question_type=?, source=? WHERE id=? AND text_id=?`,
+      [q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.explanationText, q.questionStyle, q.source, id, textId]
     );
 
     return redirect(getQuestionRedirectPath("text", textId, returnTo));
