@@ -162,51 +162,66 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
   // 2. اگر کاربر در دیتابیس نیست (یعنی هنوز ثبت نام نشده)
   if (!user) {
-    const inputCode = text.trim();
+    // اصلاح باگ: جدا کردن دستور /start از کد لایسنس
+    let inputCode = text.trim();
+    if (inputCode.startsWith("/start")) {
+      inputCode = inputCode.replace("/start", "").trim();
+    }
 
-    // کاربر را می‌سازیم (اما هنوز تایید نشده)
+    // اگر کاربر فقط /start خالی فرستاده بود (بدون کد)
+    if (!inputCode) {
+      await sendMessage(env, chatId, "👋 سلام! به ربات خوش اومدی.\n\nاین یک ربات خصوصی است. لطفاً کد لایسنس (Access Code) خودتون رو ارسال کنید تا اکانت شما فعال شود.");
+      return;
+    }
+
+    // کاربر را می‌سازیم
     user = await getOrCreateUser(env, tgUser);
     
     const now = new Date().toISOString();
 
-    // === اصلاح امنیتی: تلاش برای گرفتن کد به صورت اتمیک ===
-    // این دستور همزمان چک می‌کند کد آزاد باشد و آن را به نام کاربر می‌زند
+    // تلاش برای تایید کد
     const result = await execute(
       env,
       `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
       [user.id, now, inputCode]
     );
 
-    // بررسی می‌کنیم آیا دیتابیس تغییری کرد؟ (یعنی آیا کد با موفقیت گرفته شد؟)
     if (result.meta.changes > 0) {
-      // عالی! کد مال این کاربر شد. حالا کاربر را تایید می‌کنیم
+      // کد صحیح بود
       await execute(
         env,
         `UPDATE users SET is_approved = 1 WHERE id = ?`,
         [user.id]
       );
-      // آبجکت کاربر در حافظه را هم آپدیت می‌کنیم
       user.is_approved = 1;
-
-      await sendMessage(env, chatId, "✅ تبریک! لایسنس شما تایید شد.\nثبت‌نام شما انجام شد و حالا می‌تونی از ربات استفاده کنی. بزن روی /start");
+      await sendMessage(env, chatId, "✅ تبریک! لایسنس شما تایید شد.\nحالا می‌تونی از ربات استفاده کنی. برای شروع روی /start بزن یا از منو استفاده کن.");
       return;
     } else {
-      // کد پیدا نشد یا قبلاً توسط کسی دیگر استفاده شده
+      // کد غلط بود
       await sendMessage(
         env,
         chatId,
-        "⛔️ این ربات خصوصی است.\n\nکد لایسنس ارسال شده نامعتبر است یا قبلاً استفاده شده. لطفاً کد صحیح را ارسال کنید."
+        "⛔️ کد لایسنس نامعتبر است یا قبلاً استفاده شده.\nلطفاً کد صحیح را ارسال کنید."
       );
       return; 
     }
   }
 
-  // 3. اگر کاربر در دیتابیس هست، اما هنوز تایید نشده (شاید قبلاً کد غلط زده)
+ // 3. اگر کاربر در دیتابیس هست، اما هنوز تایید نشده
   if (user && !user.is_approved) {
-    const inputCode = text.trim();
+    // اصلاح باگ: اینجا هم باید /start رو تمیز کنیم
+    let inputCode = text.trim();
+    if (inputCode.startsWith("/start")) {
+      inputCode = inputCode.replace("/start", "").trim();
+    }
+
+    if (!inputCode) {
+      await sendMessage(env, chatId, "لطفاً کد لایسنس خود را ارسال کنید:");
+      return;
+    }
+
     const now = new Date().toISOString();
 
-    // === اصلاح امنیتی مشابه بالا ===
     const result = await execute(
       env,
       `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
@@ -221,9 +236,9 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
       );
       user.is_approved = 1;
 
-      await sendMessage(env, chatId, "✅ اکانت شما فعال شد! مجدد تلاش کنید.");
+      await sendMessage(env, chatId, "✅ اکانت شما فعال شد! حالا می‌تونید از ربات استفاده کنید.");
     } else {
-      await sendMessage(env, chatId, "⛔️ اکانت شما هنوز تایید نشده است. لطفاً کد لایسنس صحیح و استفاده‌نشده را ارسال کنید.");
+      await sendMessage(env, chatId, "⛔️ کد وارد شده معتبر نیست. لطفاً کد صحیح را ارسال کنید.");
     }
     return;
   }
