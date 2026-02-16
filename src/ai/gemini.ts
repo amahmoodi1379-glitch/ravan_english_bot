@@ -351,6 +351,11 @@ function faMeaningQuestionTemplate(english: string): string {
 // -------------------------------
 
 type WordQuestionStyle =
+  | "en_to_fa"
+  | "fa_to_en"
+  | "definition_to_word"
+  | "word_to_definition"
+  | "cloze"
   | "fa_meaning"
   | "en_meaning"
   | "fill_blank"
@@ -359,6 +364,18 @@ type WordQuestionStyle =
   | "sentence"
   | "en_definition"
   | "word_from_definition";
+
+function normalizeWordQuestionStyle(style: string): string {
+  const styleMap: Record<string, string> = {
+    en_to_fa: "fa_meaning",
+    fa_to_en: "en_meaning",
+    definition_to_word: "word_from_definition",
+    word_to_definition: "en_definition",
+    cloze: "fill_blank",
+  };
+
+  return styleMap[style] || style;
+}
 
 interface GenerateWordQuestionsInput {
   env: Env;
@@ -382,13 +399,14 @@ export async function generateWordQuestionsWithGemini(
   }[]
 > {
   const { env, english, persian, level, questionStyle, count, synonyms, antonyms } = input;
+  const normalizedQuestionStyle = normalizeWordQuestionStyle(String(questionStyle));
 
   // ✅ FIX اصلی: برای fa_meaning، گزینه‌های غلط را از دیتابیس می‌کشیم (نه از مدل)
   // نتیجه:
   // - تکراری نمی‌شود
   // - گزینه‌های غلط خیلی نزدیک/هم‌معنی نمی‌شوند
   // - همیشه فقط یکی درست است (همان ground truth)
-  if (String(questionStyle) === "fa_meaning") {
+  if (normalizedQuestionStyle === "fa_meaning") {
     const candidates = await fetchPersianCandidates(env, english, level, 40);
 
     const out: {
@@ -427,6 +445,16 @@ export async function generateWordQuestionsWithGemini(
   }
 
   const styleHelp: Record<string, string> = {
+    en_to_fa:
+      "Question asks meaning of the English word; options are 4 Persian meanings and exactly one correct.",
+    fa_to_en:
+      "Question asks for the English word from a Persian meaning; options are 4 English words and exactly one correct.",
+    definition_to_word:
+      "Question is a short simple English definition; options are 4 English words; exactly one is the defined word.",
+    word_to_definition:
+      "Question asks: Which definition matches the given English word? options are 4 short simple English definitions; exactly one correct.",
+    cloze:
+      "Question is a sentence with a blank (____) where the target word fits; options are 4 English words.",
     en_meaning:
       "Question is English word, options are 4 English meanings/definitions. Correct is the best definition.",
     en_definition:
@@ -453,7 +481,8 @@ Word: ${english}
 Persian meaning (ground truth): ${persian}
 Difficulty level (1 easiest): ${level}
 Requested style: ${questionStyle}
-Style rule: ${styleHelp[String(questionStyle)] || "Follow the requested style."}
+Normalized style used for generation: ${normalizedQuestionStyle}
+Style rule: ${styleHelp[String(questionStyle)] || styleHelp[normalizedQuestionStyle] || "Follow the requested style."}
 ${extraLex}
 
 Hard rules (VERY IMPORTANT):

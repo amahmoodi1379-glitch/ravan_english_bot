@@ -14,7 +14,12 @@ import {
 import { addXpForLeitnerQuestion, prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
 import { generateWordQuestionsWithGemini } from "../../ai/gemini";
 import { insertWordQuestions } from "../../db/word_questions";
-import { CB_PREFIX } from "../../config/constants";
+import {
+  CB_PREFIX,
+  LEITNER_TEST_TYPE_ORDER,
+  LEITNER_TEST_TYPES,
+  LeitnerTestType
+} from "../../config/constants";
 
 interface LeitnerQuestionRow {
   id: number;
@@ -31,21 +36,34 @@ interface LeitnerQuestionRow {
   level: number;
 }
 
-// تعیین نوع سوال بر اساس مرحله
-function getQuestionStyleForStage(stage: number): string | null {
-  // مرحله ۱: معنی فارسی
-  if (stage <= 1) return "fa_meaning";
-  
-  // مرحله ۲: تعریف ساده انگلیسی
-  if (stage === 2) return "en_definition";
-  
-  // مرحله ۳: تشخیص کلمه از روی تعریف
-  if (stage === 3) return "word_from_definition";
+const TEST_TYPE_STAGE: Record<LeitnerTestType, number> = {
+  [LEITNER_TEST_TYPES.EN_TO_FA]: 1,
+  [LEITNER_TEST_TYPES.FA_TO_EN]: 2,
+  [LEITNER_TEST_TYPES.DEFINITION_TO_WORD]: 3,
+  [LEITNER_TEST_TYPES.WORD_TO_DEFINITION]: 4,
+  [LEITNER_TEST_TYPES.CLOZE]: 5,
+};
 
-  // مرحله ۴ و بالاتر: 
-  // نال برمی‌گرداند تا سیستم به صورت خودکار از تابع pickRandomUnseenQuestion استفاده کند
-  // که باعث می‌شود سوالات از همه انواع (شامل مراحل قبل + مترادف/متضاد اگر باشد) شافل شوند.
-  return null; 
+// نگاشت استایل‌های جدید و قدیمی (Legacy) برای سازگاری با داده‌های قبلی
+const TEST_TYPE_STYLE_ALIASES: Record<LeitnerTestType, string[]> = {
+  [LEITNER_TEST_TYPES.EN_TO_FA]: ["en_to_fa", "fa_meaning"],
+  [LEITNER_TEST_TYPES.FA_TO_EN]: ["fa_to_en", "en_meaning"],
+  [LEITNER_TEST_TYPES.DEFINITION_TO_WORD]: ["definition_to_word", "word_from_definition"],
+  [LEITNER_TEST_TYPES.WORD_TO_DEFINITION]: ["word_to_definition", "en_definition"],
+  [LEITNER_TEST_TYPES.CLOZE]: ["cloze", "fill_blank"],
+};
+
+function getQuestionStyleForStage(stage: number): LeitnerTestType[] {
+  const normalizedStage = Math.max(1, Math.min(5, stage || 1));
+  return LEITNER_TEST_TYPE_ORDER.filter((testType) => TEST_TYPE_STAGE[testType] <= normalizedStage);
+}
+
+function getStyleCountByType(counts: Record<string, number>, testType: LeitnerTestType): number {
+  return TEST_TYPE_STYLE_ALIASES[testType].reduce((sum, style) => sum + (counts[style] || 0), 0);
+}
+
+function getStylesForType(testType: LeitnerTestType): string[] {
+  return TEST_TYPE_STYLE_ALIASES[testType] || [];
 }
 
 export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Promise<void> {
@@ -67,12 +85,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   }
 
   // ۲. تعیین نیاز (آیا باید سوال بسازیم؟)
-  // سهمیه‌ها افزایش یافت:
-  // fa_meaning: 3
-  // en_definition: 3
-  // word_from_definition: 4
-  // synonym: 2 (اگر کلمه مترادف داشت)
-  // antonym: 2 (اگر کلمه متضاد داشت)
+  // سهمیه‌ها بر اساس نوع تست جدید (با پشتیبانی از استایل‌های legacy)
 
   const countsRows = await queryAll<{ question_style: string; cnt: number }>(
     env,
@@ -86,18 +99,32 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   let styleToGenerate: string | null = null;
   let neededCount = 0;
 
-  // اولویت‌ها و سقف‌های جدید
-  if ((counts["fa_meaning"] || 0) < 3) {
-      styleToGenerate = "fa_meaning";
-      neededCount = 3 - (counts["fa_meaning"] || 0);
-  } 
-  else if ((counts["en_definition"] || 0) < 3) {
-      styleToGenerate = "en_definition";
-      neededCount = 3 - (counts["en_definition"] || 0);
+  // اولویت نوع تست: شماره کمتر اول
+  const enToFaCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.EN_TO_FA);
+  const faToEnCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.FA_TO_EN);
+  const definitionToWordCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.DEFINITION_TO_WORD);
+  const wordToDefinitionCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.WORD_TO_DEFINITION);
+  const clozeCount = getStyleCountByType(counts, LEITNER_TEST_TYPES.CLOZE);
+
+  if (enToFaCount < 3) {
+      styleToGenerate = LEITNER_TEST_TYPES.EN_TO_FA;
+      neededCount = 3 - enToFaCount;
   }
-  else if ((counts["word_from_definition"] || 0) < 4) {
-      styleToGenerate = "word_from_definition";
-      neededCount = 4 - (counts["word_from_definition"] || 0);
+  else if (faToEnCount < 3) {
+      styleToGenerate = LEITNER_TEST_TYPES.FA_TO_EN;
+      neededCount = 3 - faToEnCount;
+  }
+  else if (definitionToWordCount < 4) {
+      styleToGenerate = LEITNER_TEST_TYPES.DEFINITION_TO_WORD;
+      neededCount = 4 - definitionToWordCount;
+  }
+  else if (wordToDefinitionCount < 3) {
+      styleToGenerate = LEITNER_TEST_TYPES.WORD_TO_DEFINITION;
+      neededCount = 3 - wordToDefinitionCount;
+  }
+  else if (clozeCount < 3) {
+      styleToGenerate = LEITNER_TEST_TYPES.CLOZE;
+      neededCount = 3 - clozeCount;
   }
   // شرط هوشمند: فقط اگر در دیتابیس مترادف داشت بساز
   else if (word.synonyms && word.synonyms.trim().length > 1 && (counts["synonym"] || 0) < 2) {
@@ -127,7 +154,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
         // === کد جدید: جایگزینی معنی فارسی دقیق ===
         const finalQuestions = aiQuestions.map((q) => {
           // اگر نوع سوال "معنی فارسی" بود
-          if (styleToGenerate === "fa_meaning") {
+          if (styleToGenerate === LEITNER_TEST_TYPES.EN_TO_FA) {
              // گزینه صحیح را با چیزی که در دیتابیس است عوض کن
              q.options[q.correctIndex] = word.persian;
           }
@@ -152,19 +179,21 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   const state = await getOrCreateUserWordState(env, user.id, word.id);
   const stage = state.question_stage || 1;
   
-  // استایل ترجیحی بر اساس مرحله
-  const preferredStyle = getQuestionStyleForStage(stage);
+  // اولویت نوع تست بر اساس مرحله (شماره کمتر اول)
+  const prioritizedTypes = getQuestionStyleForStage(stage);
 
   let question: LeitnerQuestionRow | null = null;
 
-  if (preferredStyle) {
-    // تلاش برای پیدا کردن سوال با استایل مشخص که کاربر ندیده باشد
-    question = await pickQuestionForUserWord(env, user, word, preferredStyle);
+  for (const testType of prioritizedTypes) {
+    const styles = getStylesForType(testType);
+    if (styles.length === 0) continue;
+
+    question = await pickQuestionForUserWord(env, user, word, styles);
+    if (question) break;
   }
 
-  // اگر مرحله ۴ به بالا بود (preferredStyle == null) یا سوال ترجیحی پیدا نشد:
-  // یک سوال تصادفی از "هر نوعی" که کاربر ندیده انتخاب کن.
-  // این یعنی شافل کردن همه سوالات موجود (شامل مترادف/متضاد اگر موجود باشند، وگرنه بقیه انواع).
+  // اگر هیچ سوالی با اولویت‌های فعلی پیدا نشد، از کل سوالات ندیده انتخاب کن
+  // (شامل استایل‌های legacy مثل synonym/antonym)
   if (!question) {
      question = await pickRandomUnseenQuestion(env, user, word);
   }
@@ -224,8 +253,11 @@ async function pickQuestionForUserWord(
   env: Env,
   user: DbUser,
   word: DbWord,
-  style: string
+  styles: string[]
 ): Promise<LeitnerQuestionRow | null> {
+  if (styles.length === 0) return null;
+
+  const placeholders = styles.map(() => "?").join(", ");
   return await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -233,7 +265,7 @@ async function pickQuestionForUserWord(
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
-      AND q.question_style = ?
+      AND q.question_style IN (${placeholders})
       AND NOT EXISTS (
         SELECT 1 FROM user_word_question_history h
         WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
@@ -241,7 +273,7 @@ async function pickQuestionForUserWord(
     ORDER BY RANDOM()
     LIMIT 1
     `,
-    [word.id, style, user.id]
+    [word.id, ...styles, user.id]
   );
 }
 
