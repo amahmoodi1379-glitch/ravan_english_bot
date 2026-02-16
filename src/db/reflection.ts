@@ -1,4 +1,5 @@
 import { Env } from "../types";
+import { TIME_ZONE_OFFSET } from "../config/constants";
 import { execute, queryOne, queryAll } from "./client";
 
 export interface ReflectionSession {
@@ -104,13 +105,6 @@ export async function deletePendingReflectionSession(env: Env, userId: number): 
   );
 }
 
-// فایل: src/db/reflection.ts
-// ... ایمپورت‌های قبلی ...
-import { TIME_ZONE_OFFSET } from "../config/constants"; // این را به ایمپورت‌ها اضافه کنید
-
-// ... توابع قبلی ...
-
-// تابع جدید: دریافت تعداد تمرین‌های امروز کاربر
 export async function getTodayReflectionCount(env: Env, userId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
     env,
