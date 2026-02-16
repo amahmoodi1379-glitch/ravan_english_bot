@@ -120,11 +120,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   }
 
   if (!question) {
-    const notFoundMessage = manualQuestionMode
-      ? `برای واژه‌ی <b>${word.english}</b> هنوز تست دستی ثبت نشده ❗️`
-      : `برای واژه‌ی <b>${word.english}</b> سوالی پیدا نشد و ساخت خودکار هم ناموفق بود ❗️`;
-
-    await sendMessage(env, chatId, notFoundMessage);
+    await sendMessage(env, chatId, `برای واژه‌ی <b>${word.english}</b> هنوز سوالی در سیستم ثبت نشده است ❗️`);
     return;
   }
 
