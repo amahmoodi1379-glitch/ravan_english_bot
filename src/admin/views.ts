@@ -61,7 +61,101 @@ export function renderAdminLayout(title: string, content: string, section: strin
 </html>`;
 }
 
-export function renderWordForm(word: any, heading: string): string {
+function renderQuestionManager(
+  type: "word" | "text",
+  parentId: number,
+  questions: any[] = [],
+  styleValueKey: string = "question_style"
+): string {
+  const basePath = type === "word" ? "/admin/words/questions" : "/admin/texts/questions";
+  const parentField = type === "word" ? "word_id" : "text_id";
+  const heading = type === "word" ? "مدیریت تست واژه" : "مدیریت تست متن";
+  const styleLabel = type === "word" ? "سبک سوال" : "نوع/سبک سوال";
+
+  const listHtml = questions.length === 0
+    ? "<p>هنوز سوالی ثبت نشده است.</p>"
+    : questions.map((q: any) => {
+      const styleValue = q[styleValueKey] || "";
+      return `
+        <div class="q-box">
+          <div class="q-meta">ID: ${q.id} | ${escapeHtml(styleLabel)}: ${escapeHtml(styleValue || "-")} | Source: ${escapeHtml(q.source || "-")}</div>
+          <form method="post" action="${basePath}/update">
+            <input type="hidden" name="id" value="${q.id}" />
+            <input type="hidden" name="${parentField}" value="${parentId}" />
+            <input type="hidden" name="return_to" value="edit" />
+            <input type="hidden" name="source" value="manual" />
+            <label>متن سوال:</label>
+            <textarea name="question_text" rows="2">${escapeHtml(q.question_text || "")}</textarea>
+            <label>گزینه A:</label>
+            <input type="text" name="option_a" value="${escapeHtml(q.option_a || "")}" />
+            <label>گزینه B:</label>
+            <input type="text" name="option_b" value="${escapeHtml(q.option_b || "")}" />
+            <label>گزینه C:</label>
+            <input type="text" name="option_c" value="${escapeHtml(q.option_c || "")}" />
+            <label>گزینه D:</label>
+            <input type="text" name="option_d" value="${escapeHtml(q.option_d || "")}" />
+            <label>گزینه صحیح:</label>
+            <select name="correct_option">
+              ${["A", "B", "C", "D"].map((opt) => `<option value="${opt}" ${q.correct_option === opt ? "selected" : ""}>${opt}</option>`).join("")}
+            </select>
+            <label>${escapeHtml(styleLabel)}:</label>
+            <input type="text" name="question_style" value="${escapeHtml(styleValue)}" placeholder="مثلاً multiple_choice" />
+            <label>توضیح پاسخ (اختیاری):</label>
+            <textarea name="explanation_text" rows="2">${escapeHtml(q.explanation_text || "")}</textarea>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+              <button type="submit">ذخیره تغییرات سوال</button>
+          </form>
+              <form method="post" action="${basePath}/delete" onsubmit="return confirm('آیا مطمئنی؟');" style="margin:0;">
+                <input type="hidden" name="id" value="${q.id}" />
+                <input type="hidden" name="${parentField}" value="${parentId}" />
+                <input type="hidden" name="return_to" value="edit" />
+                <button type="submit" class="danger">حذف سوال</button>
+              </form>
+            </div>
+        </div>
+      `;
+    }).join("");
+
+  return `
+    <hr style="margin:20px 0;" />
+    <h3>${heading}</h3>
+    ${listHtml}
+
+    <div class="q-box" style="border-style:dashed;">
+      <h4 style="margin-top:0;">افزودن سوال جدید</h4>
+      <form method="post" action="${basePath}/create">
+        <input type="hidden" name="${parentField}" value="${parentId}" />
+        <input type="hidden" name="return_to" value="edit" />
+        <input type="hidden" name="source" value="manual" />
+        <label>متن سوال:</label>
+        <textarea name="question_text" rows="2"></textarea>
+        <label>گزینه A:</label>
+        <input type="text" name="option_a" />
+        <label>گزینه B:</label>
+        <input type="text" name="option_b" />
+        <label>گزینه C:</label>
+        <input type="text" name="option_c" />
+        <label>گزینه D:</label>
+        <input type="text" name="option_d" />
+        <label>گزینه صحیح:</label>
+        <select name="correct_option">
+          <option value="A">A</option>
+          <option value="B">B</option>
+          <option value="C">C</option>
+          <option value="D">D</option>
+        </select>
+        <label>${escapeHtml(styleLabel)}:</label>
+        <input type="text" name="question_style" placeholder="مثلاً multiple_choice" />
+        <label>توضیح پاسخ (اختیاری):</label>
+        <textarea name="explanation_text" rows="2"></textarea>
+        <button type="submit">افزودن سوال</button>
+      </form>
+    </div>
+  `;
+}
+
+export function renderWordForm(word: any, heading: string, questions: any[] = []): string {
+  const hasId = Number(word.id) > 0;
   return `
     <h2>${escapeHtml(heading)}</h2>
     <form method="post" action="/admin/words/save">
@@ -89,10 +183,12 @@ export function renderWordForm(word: any, heading: string): string {
         <a href="/admin/words"><button type="button" class="secondary">انصراف</button></a>
       </div>
     </form>
+    ${hasId ? renderQuestionManager("word", Number(word.id), questions, "question_style") : ""}
   `;
 }
 
-export function renderTextForm(text: any, heading: string): string {
+export function renderTextForm(text: any, heading: string, questions: any[] = []): string {
+  const hasId = Number(text.id) > 0;
   return `
     <h2>${escapeHtml(heading)}</h2>
     <form method="post" action="/admin/texts/save">
@@ -112,6 +208,7 @@ export function renderTextForm(text: any, heading: string): string {
         <a href="/admin/texts"><button type="button" class="secondary">انصراف</button></a>
       </div>
     </form>
+    ${hasId ? renderQuestionManager("text", Number(text.id), questions, "question_type") : ""}
   `;
 }
 

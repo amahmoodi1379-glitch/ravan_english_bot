@@ -3,6 +3,57 @@ import { queryAll, queryOne, execute } from "../db/client";
 import { htmlResponse, redirect, parseForm, escapeHtml } from "../utils/response";
 import { renderAdminLayout, renderWordForm, renderTextForm, renderUserForm } from "./views";
 
+type QuestionFormPayload = {
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctOption: "A" | "B" | "C" | "D";
+  questionStyle: string;
+  explanationText: string | null;
+  source: "manual";
+};
+
+function parseAndValidateQuestionForm(form: FormData): { error?: string; data?: QuestionFormPayload } {
+  const questionText = (form.get("question_text") || "").toString().trim();
+  const optionA = (form.get("option_a") || "").toString().trim();
+  const optionB = (form.get("option_b") || "").toString().trim();
+  const optionC = (form.get("option_c") || "").toString().trim();
+  const optionD = (form.get("option_d") || "").toString().trim();
+  const correctOptionRaw = (form.get("correct_option") || "").toString().trim().toUpperCase();
+  const questionStyle = ((form.get("question_style") || form.get("question_type") || "").toString().trim());
+  const explanationText = (form.get("explanation_text") || "").toString().trim() || null;
+  const source = (form.get("source") || "").toString().trim();
+
+  if (!questionText) return { error: "متن سوال الزامی است." };
+  if (!optionA || !optionB || !optionC || !optionD) return { error: "تمام گزینه‌های A تا D الزامی هستند." };
+  if (!["A", "B", "C", "D"].includes(correctOptionRaw)) return { error: "گزینه صحیح باید یکی از A/B/C/D باشد." };
+  if (!questionStyle) return { error: "فیلد نوع/سبک سوال الزامی است." };
+  if (source !== "manual") return { error: "منبع سوال باید manual باشد." };
+
+  return {
+    data: {
+      questionText,
+      optionA,
+      optionB,
+      optionC,
+      optionD,
+      correctOption: correctOptionRaw as "A" | "B" | "C" | "D",
+      questionStyle,
+      explanationText,
+      source: "manual"
+    }
+  };
+}
+
+function getQuestionRedirectPath(type: "word" | "text", parentId: number, returnTo: string): string {
+  if (returnTo === "edit") {
+    return type === "word" ? `/admin/words/edit?id=${parentId}` : `/admin/texts/edit?id=${parentId}`;
+  }
+  return type === "word" ? `/admin/words/questions?word_id=${parentId}` : `/admin/texts/questions?text_id=${parentId}`;
+}
+
 function getCookie(request: Request, name: string): string | null {
   const cookie = request.headers.get("Cookie");
   if (!cookie) return null;
@@ -211,10 +262,60 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   }
 
   // === اصلاح شده: حذف امن سوال و وابستگی‌هایش ===
+  if (request.method === "POST" && url.pathname === "/admin/words/questions/create") {
+    const form = await parseForm(request);
+    const wordId = Number(form.get("word_id"));
+    const returnTo = (form.get("return_to") || "").toString().trim();
+    if (!wordId) return htmlResponse("شناسه واژه نامعتبر است.", 400);
+
+    const word = await queryOne<{ id: number }>(env, "SELECT id FROM words WHERE id = ?", [wordId]);
+    if (!word) return htmlResponse("واژه پیدا نشد.", 404);
+
+    const validation = parseAndValidateQuestionForm(form);
+    if (validation.error || !validation.data) {
+      return htmlResponse(renderAdminLayout("خطا", `<div class=\"error\">${escapeHtml(validation.error || "داده نامعتبر است")}</div>`, "words"), 400);
+    }
+
+    const q = validation.data;
+    await execute(
+      env,
+      `INSERT INTO word_questions (word_id, question_text, option_a, option_b, option_c, option_d, correct_option, question_style, explanation_text, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+      [wordId, q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.questionStyle, q.explanationText, q.source]
+    );
+
+    return redirect(getQuestionRedirectPath("word", wordId, returnTo));
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/words/questions/update") {
+    const form = await parseForm(request);
+    const id = Number(form.get("id"));
+    const wordId = Number(form.get("word_id"));
+    const returnTo = (form.get("return_to") || "").toString().trim();
+    if (!id || !wordId) return htmlResponse("شناسه سوال/واژه نامعتبر است.", 400);
+
+    const question = await queryOne<{ id: number }>(env, "SELECT id FROM word_questions WHERE id = ? AND word_id = ?", [id, wordId]);
+    if (!question) return htmlResponse("سوال پیدا نشد.", 404);
+
+    const validation = parseAndValidateQuestionForm(form);
+    if (validation.error || !validation.data) {
+      return htmlResponse(renderAdminLayout("خطا", `<div class=\"error\">${escapeHtml(validation.error || "داده نامعتبر است")}</div>`, "words"), 400);
+    }
+
+    const q = validation.data;
+    await execute(
+      env,
+      `UPDATE word_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, correct_option=?, question_style=?, explanation_text=?, source=? WHERE id=? AND word_id=?`,
+      [q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.questionStyle, q.explanationText, q.source, id, wordId]
+    );
+
+    return redirect(getQuestionRedirectPath("word", wordId, returnTo));
+  }
+
   if (request.method === "POST" && url.pathname === "/admin/words/questions/delete") {
     const form = await parseForm(request);
     const id = Number(form.get("id"));
     const wordId = Number(form.get("word_id"));
+    const returnTo = (form.get("return_to") || "").toString().trim();
     
     if (id) {
       // 1. حذف تاریخچه پاسخ‌های کاربران به این سوال (وابستگی اول)
@@ -239,7 +340,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       await execute(env, "DELETE FROM word_questions WHERE id = ?", [id]);
     }
     
-    return redirect(`/admin/words/questions?word_id=${wordId}`);
+    return redirect(getQuestionRedirectPath("word", wordId, returnTo));
   }
 
   if (url.pathname === "/admin/words/new") {
@@ -260,7 +361,8 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         ${nextWord ? `<a href="/admin/words/edit?id=${nextWord.id}"><button type="button" class="secondary">واژه بعدی</button></a>` : ""}
       </div>
     `;
-    return htmlResponse(renderAdminLayout("ویرایش واژه", `${navigation}${renderWordForm(word, "ویرایش واژه")}`, "words"));
+    const questions = await queryAll<any>(env, "SELECT * FROM word_questions WHERE word_id = ? ORDER BY id DESC", [id]);
+    return htmlResponse(renderAdminLayout("ویرایش واژه", `${navigation}${renderWordForm(word, "ویرایش واژه", questions)}`, "words"));
   }
 
   if (request.method === "POST" && url.pathname === "/admin/words/save") {
@@ -359,7 +461,108 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         ${nextText ? `<a href="/admin/texts/edit?id=${nextText.id}"><button type="button" class="secondary">متن بعدی</button></a>` : ""}
       </div>
     `;
-    return htmlResponse(renderAdminLayout("ویرایش متن", `${navigation}${renderTextForm(textRow, "ویرایش متن")}`, "texts"));
+    const questions = await queryAll<any>(env, "SELECT id, text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source, 'reading' AS question_type FROM text_questions WHERE text_id = ? ORDER BY id DESC", [id]);
+    return htmlResponse(renderAdminLayout("ویرایش متن", `${navigation}${renderTextForm(textRow, "ویرایش متن", questions)}`, "texts"));
+  }
+
+
+  if (url.pathname === "/admin/texts/questions") {
+    const textId = Number(url.searchParams.get("text_id"));
+    if (!textId) return htmlResponse("شناسه متن نامعتبر است.", 400);
+    const text = await queryOne<any>(env, "SELECT * FROM reading_texts WHERE id = ?", [textId]);
+    if (!text) return htmlResponse("متن پیدا نشد.", 404);
+    const questions = await queryAll<any>(env, "SELECT * FROM text_questions WHERE text_id = ? ORDER BY id DESC", [textId]);
+
+    const questionsHtml = questions.length === 0 ? "<p>هنوز سوالی برای این متن ثبت نشده است.</p>" : questions.map((q: any) => `
+      <div class="q-box">
+        <div class="q-meta">ID: ${q.id} | Source: ${q.source}</div>
+        <div class="q-text">${escapeHtml(q.question_text)}</div>
+        <div>
+          <span class="q-opt ${q.correct_option === 'A' ? 'q-correct' : ''}">A) ${escapeHtml(q.option_a)}</span>
+          <span class="q-opt ${q.correct_option === 'B' ? 'q-correct' : ''}">B) ${escapeHtml(q.option_b)}</span>
+          <span class="q-opt ${q.correct_option === 'C' ? 'q-correct' : ''}">C) ${escapeHtml(q.option_c)}</span>
+          <span class="q-opt ${q.correct_option === 'D' ? 'q-correct' : ''}">D) ${escapeHtml(q.option_d)}</span>
+        </div>
+        <div style="margin-top:8px; border-top:1px dashed #ddd; padding-top:6px; display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:11px; color:#555;">توضیح: ${escapeHtml(q.explanation_text || "-")}</span>
+          <form method="post" action="/admin/texts/questions/delete" onsubmit="return confirm('آیا مطمئنی؟');" style="margin:0;">
+            <input type="hidden" name="id" value="${q.id}" />
+            <input type="hidden" name="text_id" value="${textId}" />
+            <button type="submit" class="danger" style="padding:2px 8px; font-size:11px;">حذف</button>
+          </form>
+        </div>
+      </div>
+    `).join("");
+
+    const content = `
+      <div style="margin-bottom:12px;"><a href="/admin/texts">← بازگشت به لیست متن‌ها</a></div>
+      <h2>سوالات متن: <span style="color:#2563eb;">${escapeHtml(text.title)}</span></h2>
+      ${questionsHtml}
+    `;
+    return htmlResponse(renderAdminLayout(`سوالات متن: ${text.title}`, content, "texts"));
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/texts/questions/create") {
+    const form = await parseForm(request);
+    const textId = Number(form.get("text_id"));
+    const returnTo = (form.get("return_to") || "").toString().trim();
+    if (!textId) return htmlResponse("شناسه متن نامعتبر است.", 400);
+
+    const text = await queryOne<{ id: number }>(env, "SELECT id FROM reading_texts WHERE id = ?", [textId]);
+    if (!text) return htmlResponse("متن پیدا نشد.", 404);
+
+    const validation = parseAndValidateQuestionForm(form);
+    if (validation.error || !validation.data) {
+      return htmlResponse(renderAdminLayout("خطا", `<div class=\"error\">${escapeHtml(validation.error || "داده نامعتبر است")}</div>`, "texts"), 400);
+    }
+
+    const q = validation.data;
+    await execute(
+      env,
+      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [textId, q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.explanationText, q.source]
+    );
+
+    return redirect(getQuestionRedirectPath("text", textId, returnTo));
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/texts/questions/update") {
+    const form = await parseForm(request);
+    const id = Number(form.get("id"));
+    const textId = Number(form.get("text_id"));
+    const returnTo = (form.get("return_to") || "").toString().trim();
+    if (!id || !textId) return htmlResponse("شناسه سوال/متن نامعتبر است.", 400);
+
+    const question = await queryOne<{ id: number }>(env, "SELECT id FROM text_questions WHERE id = ? AND text_id = ?", [id, textId]);
+    if (!question) return htmlResponse("سوال پیدا نشد.", 404);
+
+    const validation = parseAndValidateQuestionForm(form);
+    if (validation.error || !validation.data) {
+      return htmlResponse(renderAdminLayout("خطا", `<div class=\"error\">${escapeHtml(validation.error || "داده نامعتبر است")}</div>`, "texts"), 400);
+    }
+
+    const q = validation.data;
+    await execute(
+      env,
+      `UPDATE text_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, correct_option=?, explanation_text=?, source=? WHERE id=? AND text_id=?`,
+      [q.questionText, q.optionA, q.optionB, q.optionC, q.optionD, q.correctOption, q.explanationText, q.source, id, textId]
+    );
+
+    return redirect(getQuestionRedirectPath("text", textId, returnTo));
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/texts/questions/delete") {
+    const form = await parseForm(request);
+    const id = Number(form.get("id"));
+    const textId = Number(form.get("text_id"));
+    const returnTo = (form.get("return_to") || "").toString().trim();
+
+    if (id) {
+      await execute(env, "DELETE FROM user_text_question_history WHERE question_id = ?", [id]);
+      await execute(env, "DELETE FROM text_questions WHERE id = ? AND text_id = ?", [id, textId]);
+    }
+
+    return redirect(getQuestionRedirectPath("text", textId, returnTo));
   }
 
   if (request.method === "POST" && url.pathname === "/admin/texts/save") {
