@@ -99,7 +99,13 @@ function renderQuestionManager(
               ${["A", "B", "C", "D"].map((opt) => `<option value="${opt}" ${q.correct_option === opt ? "selected" : ""}>${opt}</option>`).join("")}
             </select>
             <label>${escapeHtml(styleLabel)}:</label>
-            <input type="text" name="question_style" value="${escapeHtml(styleValue)}" placeholder="مثلاً multiple_choice" />
+            <select name="question_style">
+              <option value="en_to_fa" ${styleValue === 'en_to_fa' ? 'selected' : ''}>نوع ۱: انگلیسی به فارسی</option>
+              <option value="fa_to_en" ${styleValue === 'fa_to_en' ? 'selected' : ''}>نوع ۲: فارسی به انگلیسی</option>
+              <option value="definition_to_word" ${styleValue === 'definition_to_word' ? 'selected' : ''}>نوع ۳: تعریف به واژه</option>
+              <option value="word_to_definition" ${styleValue === 'word_to_definition' ? 'selected' : ''}>نوع ۴: واژه به تعریف</option>
+              <option value="cloze" ${styleValue === 'cloze' ? 'selected' : ''}>نوع ۵: کلوز تست (جای خالی)</option>
+            </select>
             <label>توضیح پاسخ (اختیاری):</label>
             <textarea name="explanation_text" rows="2">${escapeHtml(q.explanation_text || "")}</textarea>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -145,7 +151,13 @@ function renderQuestionManager(
           <option value="D">D</option>
         </select>
         <label>${escapeHtml(styleLabel)}:</label>
-        <input type="text" name="question_style" placeholder="مثلاً multiple_choice" />
+        <select name="question_style">
+          <option value="en_to_fa">نوع ۱: انگلیسی به فارسی</option>
+          <option value="fa_to_en">نوع ۲: فارسی به انگلیسی</option>
+          <option value="definition_to_word">نوع ۳: تعریف به واژه</option>
+          <option value="word_to_definition">نوع ۴: واژه به تعریف</option>
+          <option value="cloze">نوع ۵: کلوز تست (جای خالی)</option>
+        </select>
         <label>توضیح پاسخ (اختیاری):</label>
         <textarea name="explanation_text" rows="2"></textarea>
         <button type="submit">افزودن سوال</button>
