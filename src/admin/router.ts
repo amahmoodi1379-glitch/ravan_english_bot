@@ -221,14 +221,26 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     `).join("");
 
     const paginationHtml = `
-      <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
+      <div style="margin-top: 16px; display: flex; gap: 6px; align-items: center; justify-content: center; direction: ltr; flex-wrap: wrap;">
+        
+        ${page > 2 ? `<a href="/admin/words?q=${escapeHtml(search)}&page=1"><button class="secondary" title="First Page">⏮ 1</button></a>` : ""}
+
         ${page > 1 ? `<a href="/admin/words?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
-        <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
+        
+        <form method="get" action="/admin/words" style="display:flex; align-items:center; gap:5px; margin:0;">
+            <input type="hidden" name="q" value="${escapeHtml(search)}" />
+            <span style="font-size: 13px;">Page</span>
+            <input type="number" name="page" value="${page}" min="1" max="${totalPages}" style="width: 60px; text-align: center; padding: 4px; margin: 0; border: 1px solid #ccc; border-radius: 4px;" />
+            <span style="font-size: 13px;">of ${totalPages}</span>
+            <button type="submit" class="secondary" style="padding: 4px 8px; font-size: 12px; background: #2563eb; color: white; border: none;">Go</button>
+        </form>
+
         ${page < totalPages ? `<a href="/admin/words?q=${escapeHtml(search)}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
+        
+        ${page < totalPages - 1 ? `<a href="/admin/words?q=${escapeHtml(search)}&page=${totalPages}"><button class="secondary" title="Last Page">${totalPages} ⏭</button></a>` : ""}
       </div>
       <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} words</div>
     `;
-
     const content = `
       <div class="top-row">
         <form method="get" action="/admin/words" style="flex:1; display:flex; gap:8px;">
