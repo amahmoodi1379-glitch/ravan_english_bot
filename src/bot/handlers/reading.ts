@@ -307,36 +307,8 @@ async function sendNextReadingQuestion(
   chatId: number
 ): Promise<boolean> {
   const manualQuestionMode = isManualQuestionMode(env);
-  const allowedSources: Array<"manual" | "ai" | "seed"> | undefined = manualQuestionMode ? ["manual"] : undefined;
+  const allowedSources = undefined;
 
-  // 1. منطق هوشمند تولید سوال
-  const currentQCount = await getQuestionsCountForText(env, session.text_id, allowedSources);
-  const userSeenCount = await getDistinctSeenCount(env, user.id, session.text_id);
-
-  if (!manualQuestionMode && currentQCount < 18 && userSeenCount >= currentQCount) {
-    const textRow = await getReadingTextById(env, session.text_id);
-    if (textRow && textRow.body_en) {
-      await sendMessage(env, chatId, "⏳ همه سوالات قبلی رو دیدی! در حال طراحی سوالات جدید...");
-      try {
-        const aiQuestions = await generateReadingQuestionsWithGemini(env, textRow.body_en, GAME_CONFIG.READING_QUESTION_COUNT);
-        if (aiQuestions.length > 0) {
-          await insertTextQuestions(
-            env,
-            session.text_id,
-            aiQuestions.map(q => ({
-              questionText: q.question,
-              options: q.options,
-              correctIndex: q.correctIndex,
-              explanation: q.explanation,
-              source: "ai"
-            }))
-          );
-        }
-      } catch (e) {
-        console.error("Error generating questions:", e);
-      }
-    }
-  }
 
   // 2. انتخاب سوال
   let question = await getNextQuestionForSession(env, session, user.id, allowedSources);
