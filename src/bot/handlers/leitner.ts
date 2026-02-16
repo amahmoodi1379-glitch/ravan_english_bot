@@ -2,18 +2,15 @@ import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
-import { queryOne, execute, prepare, queryAll } from "../../db/client";
+import { queryOne, execute, prepare } from "../../db/client";
 import {
   pickNextWordForUser,
   getOrCreateUserWordState,
-  updateSm2AndStageAfterAnswer,
   prepareUpdateSm2,
   markWordAsIgnored,
   DbWord
 } from "../../db/leitner";
-import { addXpForLeitnerQuestion, prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
-import { generateWordQuestionsWithGemini } from "../../ai/gemini";
-import { insertWordQuestions } from "../../db/word_questions";
+import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
 import {
   CB_PREFIX,
   LEITNER_TEST_TYPE_ORDER,
@@ -59,17 +56,10 @@ function getQuestionStyleForStage(stage: number): LeitnerTestType[] {
   return LEITNER_TEST_TYPE_ORDER.filter((testType) => TEST_TYPE_STAGE[testType] <= normalizedStage);
 }
 
-function getStyleCountByType(counts: Record<string, number>, testType: LeitnerTestType): number {
-  return TEST_TYPE_STYLE_ALIASES[testType].reduce((sum, style) => sum + (counts[style] || 0), 0);
-}
-
 function getStylesForType(testType: LeitnerTestType): string[] {
   return TEST_TYPE_STYLE_ALIASES[testType] || [];
 }
 
-function isManualQuestionMode(env: Env): boolean {
-  return env.MANUAL_QUESTION_MODE === "1";
-}
 
 export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
@@ -83,7 +73,6 @@ export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Pro
 async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Promise<void> {
   // ۱. انتخاب واژه
   const word = await pickNextWordForUser(env, user.id);
-  const manualQuestionMode = isManualQuestionMode(env);
 
   if (!word) {
     await sendMessage(env, chatId, "فعلاً هیچ واژه‌ای برای تمرین در سیستم ثبت نشده (یا همه رو بلدی!) 👏");
