@@ -2,6 +2,7 @@ import { Env } from "../types";
 import { queryAll, queryOne, execute } from "../db/client";
 import { htmlResponse, redirect, parseForm, escapeHtml } from "../utils/response";
 import { renderAdminLayout, renderWordForm, renderTextForm, renderUserForm } from "./views";
+import { insertWordQuestions } from "../db/word_questions";
 
 type QuestionFormPayload = {
   questionText: string;
@@ -303,6 +304,8 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     return redirect(getQuestionRedirectPath("word", wordId, returnTo));
   }
 
+  
+
   if (request.method === "POST" && url.pathname === "/admin/words/questions/update") {
     const form = await parseForm(request);
     const id = Number(form.get("id"));
@@ -357,6 +360,48 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       await execute(env, "DELETE FROM word_questions WHERE id = ?", [id]);
     }
     
+    return redirect(getQuestionRedirectPath("word", wordId, returnTo));
+  }
+
+  // === هندلر جدید: ایمپورت JSON برای واژه‌ها ===
+  if (request.method === "POST" && url.pathname === "/admin/words/questions/import_json") {
+    const form = await parseForm(request);
+    const wordId = Number(form.get("word_id"));
+    const jsonData = (form.get("json_data") || "").toString().trim();
+    const returnTo = (form.get("return_to") || "").toString().trim();
+
+    if (!wordId) return htmlResponse("شناسه واژه نامعتبر است.", 400);
+
+    let questionsArray: any[] = [];
+    try {
+      questionsArray = JSON.parse(jsonData);
+    } catch (e) {
+      return htmlResponse(renderAdminLayout("خطا", '<div class="error" style="color:red; padding:20px;">فرمت JSON اشتباه است. لطفا چک کنید ویرگول یا پرانتز کم و زیاد نباشد.</div>', "words"), 400);
+    }
+
+    if (!Array.isArray(questionsArray)) {
+      return htmlResponse(renderAdminLayout("خطا", '<div class="error">ورودی باید یک لیست [] باشد.</div>', "words"), 400);
+    }
+
+    const validQuestions = [];
+    for (const item of questionsArray) {
+      if (item.questionText && Array.isArray(item.options) && item.options.length === 4 && typeof item.correctIndex === 'number') {
+        validQuestions.push({
+          wordId: wordId,
+          questionText: item.questionText,
+          options: item.options,
+          correctIndex: item.correctIndex,
+          explanation: item.explanation || "",
+          questionStyle: item.questionStyle || "en_to_fa",
+          source: "manual" as const
+        });
+      }
+    }
+
+    if (validQuestions.length > 0) {
+      await insertWordQuestions(env, wordId, validQuestions);
+    }
+
     return redirect(getQuestionRedirectPath("word", wordId, returnTo));
   }
 
