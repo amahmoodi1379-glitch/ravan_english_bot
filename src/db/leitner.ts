@@ -151,6 +151,12 @@ function addDaysToIso(iso: string, days: number): string {
   return d.toISOString();
 }
 
+function normalizeQuestionStage(stage: number | null | undefined): number {
+  if (!stage || stage < 1) return 1;
+  if (stage > 5) return 5;
+  return stage;
+}
+
 // تابع اصلی که تغییر کرده است
 export async function prepareUpdateSm2(
   env: Env,
@@ -205,7 +211,7 @@ export async function prepareUpdateSm2(
 
   const nextReviewIso = addDaysToIso(nowIso, sm2Result.interval);
 
-  let newStage = state.question_stage || 1;
+  let newStage = normalizeQuestionStage(state.question_stage);
   let newCorrectStreak = state.correct_streak || 0;
 
   if (!isCorrect) {
@@ -213,7 +219,7 @@ export async function prepareUpdateSm2(
     newCorrectStreak = 0;
   } else {
     newCorrectStreak += 1;
-    if (newStage < 4) newStage++;
+    if (newStage < 5) newStage++;
   }
 
   const stmt = prepare(

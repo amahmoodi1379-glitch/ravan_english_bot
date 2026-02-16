@@ -35,3 +35,21 @@ export const CB_PREFIX = {
 // تنظیم اختلاف ساعت ایران (یا هر منطقه زمانی دلخواه)
 // چون ایران ساعت تابستانی ندارد، همیشه +3.5 است.
 export const TIME_ZONE_OFFSET = '+3.5 hours';
+
+export const LEITNER_TEST_TYPES = {
+  EN_TO_FA: "en_to_fa",
+  FA_TO_EN: "fa_to_en",
+  DEFINITION_TO_WORD: "definition_to_word",
+  WORD_TO_DEFINITION: "word_to_definition",
+  CLOZE: "cloze",
+} as const;
+
+export type LeitnerTestType = typeof LEITNER_TEST_TYPES[keyof typeof LEITNER_TEST_TYPES];
+
+export const LEITNER_TEST_TYPE_ORDER: LeitnerTestType[] = [
+  LEITNER_TEST_TYPES.EN_TO_FA,
+  LEITNER_TEST_TYPES.FA_TO_EN,
+  LEITNER_TEST_TYPES.DEFINITION_TO_WORD,
+  LEITNER_TEST_TYPES.WORD_TO_DEFINITION,
+  LEITNER_TEST_TYPES.CLOZE,
+];
