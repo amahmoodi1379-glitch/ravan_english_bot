@@ -31,6 +31,7 @@ export interface NewTextQuestionRow {
   options: string[];
   correctIndex: number;
   explanation: string;
+  source?: "manual" | "ai" | "seed";
 }
 
 export async function createReadingSession(env: Env, userId: number, textId: number, numQuestions: number = 3): Promise<ReadingSession> {
@@ -45,18 +46,36 @@ export async function getReadingSessionById(env: Env, id: number): Promise<Readi
   return await queryOne<ReadingSession>(env, `SELECT * FROM reading_sessions WHERE id = ?`, [id]);
 }
 
-export async function getNextQuestionForSession(env: Env, session: ReadingSession, userId: number): Promise<DbTextQuestion | null> {
+export async function getNextQuestionForSession(
+  env: Env,
+  session: ReadingSession,
+  userId: number,
+  allowedSources?: Array<"manual" | "ai" | "seed">
+): Promise<DbTextQuestion | null> {
   const countRow = await queryOne<{ cnt: number }>(env, `SELECT COUNT(*) AS cnt FROM user_text_question_history WHERE reading_session_id = ?`, [session.id]);
   const shownCount = countRow?.cnt ?? 0;
   const maxQuestions = session.num_questions || 3;
   if (shownCount >= maxQuestions) return null;
 
+  const sourceFilter = allowedSources && allowedSources.length > 0
+    ? ` AND q.source IN (${allowedSources.map(() => "?").join(", ")})`
+    : "";
+  const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+
   // تغییر مهم: ORDER BY RANDOM()
-  let q = await queryOne<DbTextQuestion>(env, `SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text FROM text_questions q WHERE q.text_id = ? AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h WHERE h.user_id = ? AND h.text_id = ? AND h.question_id = q.id ) AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h2 WHERE h2.reading_session_id = ? AND h2.question_id = q.id ) ORDER BY RANDOM() LIMIT 1`, [session.text_id, userId, session.text_id, session.id]);
+  let q = await queryOne<DbTextQuestion>(
+    env,
+    `SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text FROM text_questions q WHERE q.text_id = ?${sourceFilter} AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h WHERE h.user_id = ? AND h.text_id = ? AND h.question_id = q.id ) AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h2 WHERE h2.reading_session_id = ? AND h2.question_id = q.id ) ORDER BY RANDOM() LIMIT 1`,
+    [session.text_id, ...sourceParams, userId, session.text_id, session.id]
+  );
   if (q) return q;
 
   // اگر سوال جدید نبود، از تکراری‌ها بده (تغییر مهم: ORDER BY RANDOM)
-  q = await queryOne<DbTextQuestion>(env, `SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text FROM text_questions q WHERE q.text_id = ? AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h WHERE h.reading_session_id = ? AND h.question_id = q.id ) ORDER BY RANDOM() LIMIT 1`, [session.text_id, session.id]);
+  q = await queryOne<DbTextQuestion>(
+    env,
+    `SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text FROM text_questions q WHERE q.text_id = ?${sourceFilter} AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h WHERE h.reading_session_id = ? AND h.question_id = q.id ) ORDER BY RANDOM() LIMIT 1`,
+    [session.text_id, ...sourceParams, session.id]
+  );
   return q ?? null;
 }
 
@@ -150,19 +169,28 @@ export async function insertTextQuestions(env: Env, textId: number, questions: N
 
     stmts.push(prepare(
       env,
-      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ai')`,
-      [textId, q.questionText, a, b, c, d, correctLetter, q.explanation || null]
+      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [textId, q.questionText, a, b, c, d, correctLetter, q.explanation || null, q.source || "ai"]
     ));
   }
   if (stmts.length > 0) await env.DB.batch(stmts);
 }
 
 // دریافت تعداد کل سوالات موجود برای یک متن (برای محدودیت ۱۸ تایی)
-export async function getQuestionsCountForText(env: Env, textId: number): Promise<number> {
+export async function getQuestionsCountForText(
+  env: Env,
+  textId: number,
+  allowedSources?: Array<"manual" | "ai" | "seed">
+): Promise<number> {
+  const sourceFilter = allowedSources && allowedSources.length > 0
+    ? ` AND source IN (${allowedSources.map(() => "?").join(", ")})`
+    : "";
+  const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+
   const row = await queryOne<{ cnt: number }>(
     env,
-    `SELECT COUNT(*) as cnt FROM text_questions WHERE text_id = ?`,
-    [textId]
+    `SELECT COUNT(*) as cnt FROM text_questions WHERE text_id = ?${sourceFilter}`,
+    [textId, ...sourceParams]
   );
   return row?.cnt ?? 0;
 }
