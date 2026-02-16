@@ -85,8 +85,7 @@ export default {
       // سشن‌های رفلکشن نیمه‌کاره
       await execute(env, `DELETE FROM reflection_sessions WHERE ai_score IS NULL AND created_at < datetime('now', '-1 day')`);
 
-      // حذف تاریخچه پاسخ به سوالات لایتنر قدیمی
-      await execute(env, `DELETE FROM user_word_question_history WHERE shown_at < datetime('now', '-180 days')`);
+  
 
       console.log("✅ Done.");
     })());
