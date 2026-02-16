@@ -2,6 +2,7 @@ import { Env } from "../../types";
 import { pickNextWordForUser, prepareUpdateSm2 } from "../../db/leitner";
 import { queryOne, prepare } from "../../db/client";
 import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
+import { getWordStylePrioritySql } from "../../db/question_priority";
 
 // تابع ۱: دریافت سوال بعدی (برای نمایش در مینی‌اپ)
 export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promise<Response> {
@@ -13,6 +14,7 @@ export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promi
     });
   }
 
+  const priorityOrderSql = getWordStylePrioritySql("q.question_style");
   const question = await queryOne<{
     id: number; 
     question_text: string; 
@@ -20,9 +22,26 @@ export async function getNextLeitnerQuestionAPI(env: Env, userId: number): Promi
     option_b: string; 
     option_c: string; 
     option_d: string;
-  }>(env, 
-    `SELECT * FROM word_questions WHERE word_id = ? ORDER BY RANDOM() LIMIT 1`, 
-    [word.id]
+  }>(env,
+    `
+      SELECT q.*
+      FROM word_questions q
+      WHERE q.word_id = ?
+      ORDER BY
+        ${priorityOrderSql},
+        CASE
+          WHEN NOT EXISTS (
+            SELECT 1 FROM user_word_question_history h
+            WHERE h.user_id = ?
+              AND h.question_id = q.id
+              AND h.context IN ('leitner', 'leitner_miniapp')
+          ) THEN 0
+          ELSE 1
+        END,
+        RANDOM()
+      LIMIT 1
+    `,
+    [word.id, userId]
   );
 
   if (!question) {

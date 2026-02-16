@@ -1,6 +1,7 @@
 import { Env } from "../types";
 import { queryOne, execute, queryAll, prepare } from "./client";
 import { XP_VALUES } from "../config/constants";
+import { getTextQuestionTypePrioritySql } from "./question_priority";
 
 export interface DbTextQuestion {
   id: number;
@@ -12,6 +13,7 @@ export interface DbTextQuestion {
   option_d: string;
   correct_option: string;
   explanation_text: string | null;
+  question_type: string | null;
 }
 
 export interface ReadingSession {
@@ -62,19 +64,31 @@ export async function getNextQuestionForSession(
     : "";
   const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
 
-  // تغییر مهم: ORDER BY RANDOM()
-  let q = await queryOne<DbTextQuestion>(
-    env,
-    `SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text FROM text_questions q WHERE q.text_id = ?${sourceFilter} AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h WHERE h.user_id = ? AND h.text_id = ? AND h.question_id = q.id ) AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h2 WHERE h2.reading_session_id = ? AND h2.question_id = q.id ) ORDER BY RANDOM() LIMIT 1`,
-    [session.text_id, ...sourceParams, userId, session.text_id, session.id]
-  );
-  if (q) return q;
+  const typePrioritySql = getTextQuestionTypePrioritySql("COALESCE(q.question_type, 'reading')");
 
-  // اگر سوال جدید نبود، از تکراری‌ها بده (تغییر مهم: ORDER BY RANDOM)
-  q = await queryOne<DbTextQuestion>(
+  const q = await queryOne<DbTextQuestion>(
     env,
-    `SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text FROM text_questions q WHERE q.text_id = ?${sourceFilter} AND NOT EXISTS ( SELECT 1 FROM user_text_question_history h WHERE h.reading_session_id = ? AND h.question_id = q.id ) ORDER BY RANDOM() LIMIT 1`,
-    [session.text_id, ...sourceParams, session.id]
+    `
+    SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text, q.question_type
+    FROM text_questions q
+    WHERE q.text_id = ?${sourceFilter}
+      AND NOT EXISTS (
+        SELECT 1 FROM user_text_question_history h
+        WHERE h.reading_session_id = ? AND h.question_id = q.id
+      )
+    ORDER BY
+      ${typePrioritySql},
+      CASE
+        WHEN NOT EXISTS (
+          SELECT 1 FROM user_text_question_history h
+          WHERE h.user_id = ? AND h.text_id = ? AND h.question_id = q.id
+        ) THEN 0
+        ELSE 1
+      END,
+      RANDOM()
+    LIMIT 1
+    `,
+    [session.text_id, ...sourceParams, session.id, userId, session.text_id]
   );
   return q ?? null;
 }
@@ -169,8 +183,8 @@ export async function insertTextQuestions(env: Env, textId: number, questions: N
 
     stmts.push(prepare(
       env,
-      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [textId, q.questionText, a, b, c, d, correctLetter, q.explanation || null, q.source || "ai"]
+      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_type, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [textId, q.questionText, a, b, c, d, correctLetter, q.explanation || null, "reading", q.source || "ai"]
     ));
   }
   if (stmts.length > 0) await env.DB.batch(stmts);

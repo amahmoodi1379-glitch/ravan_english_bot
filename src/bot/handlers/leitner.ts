@@ -20,6 +20,7 @@ import {
   LEITNER_TEST_TYPES,
   LeitnerTestType
 } from "../../config/constants";
+import { getWordStylePrioritySql } from "../../db/question_priority";
 
 interface LeitnerQuestionRow {
   id: number;
@@ -206,7 +207,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
 
   // اگر باز هم پیدا نشد (یعنی همه سوالات موجود رو دیده)، یک سوال تصادفی از کل سوالات انتخاب کن (تکراری)
   if (!question) {
-    question = await pickRandomQuestionAny(env, word, allowedSources);
+    question = await pickRandomQuestionAny(env, user, word, allowedSources);
   }
 
   if (!question) {
@@ -269,6 +270,7 @@ async function pickQuestionForUserWord(
     ? ` AND q.source IN (${allowedSources.map(() => "?").join(", ")})`
     : "";
   const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+  const priorityOrderSql = getWordStylePrioritySql("q.question_style");
 
   return await queryOne<LeitnerQuestionRow>(
     env,
@@ -283,7 +285,7 @@ async function pickQuestionForUserWord(
         SELECT 1 FROM user_word_question_history h
         WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
       )
-    ORDER BY RANDOM()
+    ORDER BY ${priorityOrderSql}, RANDOM()
     LIMIT 1
     `,
     [word.id, ...styles, ...sourceParams, user.id]
@@ -301,6 +303,7 @@ async function pickRandomUnseenQuestion(
     ? ` AND q.source IN (${allowedSources.map(() => "?").join(", ")})`
     : "";
   const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+  const priorityOrderSql = getWordStylePrioritySql("q.question_style");
 
   return await queryOne<LeitnerQuestionRow>(
     env,
@@ -314,7 +317,7 @@ async function pickRandomUnseenQuestion(
         SELECT 1 FROM user_word_question_history h
         WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
       )
-    ORDER BY RANDOM()
+    ORDER BY ${priorityOrderSql}, RANDOM()
     LIMIT 1
     `,
     [word.id, ...sourceParams, user.id]
@@ -324,6 +327,7 @@ async function pickRandomUnseenQuestion(
 // انتخاب هر سوالی (تکراری هم باشد اشکال ندارد - فال‌بک نهایی)
 async function pickRandomQuestionAny(
   env: Env,
+  user: DbUser,
   word: DbWord,
   allowedSources?: Array<"manual" | "ai" | "seed">
 ): Promise<LeitnerQuestionRow | null> {
@@ -331,6 +335,7 @@ async function pickRandomQuestionAny(
     ? ` AND q.source IN (${allowedSources.map(() => "?").join(", ")})`
     : "";
   const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
+  const priorityOrderSql = getWordStylePrioritySql("q.question_style");
 
   return await queryOne<LeitnerQuestionRow>(
     env,
@@ -340,10 +345,19 @@ async function pickRandomQuestionAny(
     JOIN words w ON q.word_id = w.id
     WHERE q.word_id = ?
       ${sourceFilter}
-    ORDER BY RANDOM()
+    ORDER BY
+      ${priorityOrderSql},
+      CASE
+        WHEN NOT EXISTS (
+          SELECT 1 FROM user_word_question_history h
+          WHERE h.user_id = ? AND h.question_id = q.id AND h.context = 'leitner'
+        ) THEN 0
+        ELSE 1
+      END,
+      RANDOM()
     LIMIT 1
     `,
-    [word.id, ...sourceParams]
+    [word.id, ...sourceParams, user.id]
   );
 }
 
