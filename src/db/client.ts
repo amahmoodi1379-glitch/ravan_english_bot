@@ -1,9 +1,5 @@
 import { Env } from "../types";
 
-// روشن کردن بررسی ارتباط جداول برای هر درخواست
-async function enableForeignKeys(env: Env) {
-  await env.DB.prepare("PRAGMA foreign_keys = ON;").run();
-}
 
 export async function queryOne<T>(
   env: Env,
@@ -33,10 +29,15 @@ export async function execute(
   sql: string,
   params: any[] = []
 ): Promise<any> {
-  // برای دستورات حذف و آپدیت حتما باید فعال باشد
-  await enableForeignKeys(env);
-  const stmt = env.DB.prepare(sql);
-  return await stmt.bind(...params).run();
+  // اصلاح باگ: استفاده از batch برای اینکه مطمئن شویم Foreign Key ها حتماً اعمال می‌شوند
+  // ما دستور فعال‌سازی و دستور اصلی را در یک "بسته" می‌فرستیم
+  const batchResult = await env.DB.batch([
+    env.DB.prepare("PRAGMA foreign_keys = ON;"),
+    env.DB.prepare(sql).bind(...params)
+  ]);
+  
+  // خروجی اول مربوط به تنظیمات است، خروجی دوم (ایندکس 1) نتیجه دستور اصلی ماست
+  return batchResult[1];
 }
 
 export function prepare(
