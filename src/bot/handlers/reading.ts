@@ -114,7 +114,7 @@ export async function handleReadingTitleSelection(env: Env, update: TelegramUpda
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   
   if (!sent && !isManualQuestionMode(env)) {
-    await sendMessage(env, chatId, "مشکلی در دریافت سوال پیش آمد ❗️");
+    await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
   }
   return true;
 }
@@ -152,7 +152,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   if (!sent && !isManualQuestionMode(env)) {
-    await sendMessage(env, chatId, "مشکلی در دریافت سوال پیش آمد ❗️");
+    await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
   }
 }
 
