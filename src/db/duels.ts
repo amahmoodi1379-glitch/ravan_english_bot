@@ -1,9 +1,7 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare } from "./client";
 import { addXpForDuelMatch, checkAndUpdateStreak } from "./xp";
-import { generateWordQuestionsWithGemini } from "../ai/gemini";
-import { insertWordQuestions } from "./word_questions";
-// اضافه شدن ایمپورت‌های جدید برای ارسال پیام
+// خط مربوط به gemini حذف شد
 import { getUserById } from "./users"; 
 import { sendMessage } from "../bot/telegram-api";
 
@@ -99,122 +97,55 @@ export async function joinDuelMatch(env: Env, matchId: number, userId: number): 
   return m;
 }
 
+// === نسخه جدید و بدون هوش مصنوعی ===
 export async function ensureDuelQuestions(env: Env, matchId: number, difficulty: DuelDifficulty): Promise<void> {
   // تعداد سوالات فعلی را چک می‌کنیم
   const totalQ = await getTotalQuestionsInMatch(env, matchId);
-  // اگر قبلاً ۵ تا سوال ساخته شده، نیازی به کار اضافه نیست
   if (totalQ >= QUESTION_COUNT) return;
 
-  const levelCond = difficulty === "easy" ? "AND level IN (1, 2)" : "AND level BETWEEN 1 AND 4";
+  // شرط سطح دشواری
+  const levelCond = difficulty === "easy" ? "level IN (1, 2)" : "level BETWEEN 1 AND 4";
 
-  // حلقه برای ساخت سوالات از شماره ۱ تا ۵
-  for (let idx = 1; idx <= QUESTION_COUNT; idx++) {
-    
-    // ۱. چک می‌کنیم آیا سوال شماره idx (مثلاً ۳) الان وجود دارد؟
+  // تعداد سوالاتی که باید اضافه کنیم
+  const needed = QUESTION_COUNT - totalQ;
+
+  // ۱. انتخاب ۵ سوال تصادفی از کل سوالات موجود در دیتابیس
+  // نکته: ما از سوالات آماده (word_questions) استفاده می‌کنیم که قبلاً دستی وارد شده‌اند.
+  const randomQuestions = await queryAll<{ id: number; word_id: number }>(
+    env,
+    `SELECT wq.id, wq.word_id 
+     FROM word_questions wq
+     JOIN words w ON wq.word_id = w.id
+     WHERE w.is_active = 1 AND w.${levelCond}
+     ORDER BY RANDOM() 
+     LIMIT ?`,
+    [needed]
+  );
+
+  if (randomQuestions.length === 0) {
+    console.error("No questions found in DB for duel!");
+    return;
+  }
+
+  // ۲. ثبت سوالات در جدول دوئل
+  let currentIndex = totalQ + 1;
+  for (const q of randomQuestions) {
+    if (currentIndex > QUESTION_COUNT) break;
+
+    // چک تکراری نبودن (احتیاطی)
     const existing = await queryOne<{ id: number }>(
       env,
       `SELECT id FROM duel_questions WHERE duel_id = ? AND question_index = ?`,
-      [matchId, idx]
+      [matchId, currentIndex]
     );
 
-    // اگر وجود داشت، می‌رویم سراغ شماره بعدی
-    if (existing) continue;
-
-    // ۲. تلاش برای ساخت سوال (با مکانیزم تلاش مجدد)
-    // اینجا تغییر اصلی است: تا ۳ بار تلاش می‌کنیم این جایگاه خالی را پر کنیم
-    let added = false;
-    for (let attempt = 0; attempt < 3; attempt++) {
-        
-        // الف) انتخاب یک کلمه تصادفی (روش بهینه شده: LIMIT OFFSET)
-        // 1. اول تعداد کل کلمات واجد شرایط را می‌گیریم
-        const countRow = await queryOne<{ cnt: number }>(
-            env,
-            `SELECT COUNT(*) as cnt FROM words WHERE is_active = 1 ${levelCond}`
-        );
-        const totalWords = countRow?.cnt || 0;
-
-        let wordRow = null;
-        if (totalWords > 0) {
-            // 2. یک آفست تصادفی تولید می‌کنیم
-            const randomOffset = Math.floor(Math.random() * totalWords);
-            
-            // 3. فقط همان یک کلمه را می‌گیریم (بدون سورت سنگین)
-            wordRow = await queryOne<{ id: number; english: string; persian: string; level: number }>(
-                env,
-                `SELECT id, english, persian, level FROM words WHERE is_active = 1 ${levelCond} LIMIT 1 OFFSET ?`,
-                [randomOffset]
-            );
-        }
-
-        if (!wordRow) break; // اگر دیتابیس کلمات خالی باشد، کاری نمی‌شود کرد
-
-        // ب) انتخاب یک سوال آماده برای آن کلمه
-        let qRow = await queryOne<{ id: number }>(
-            env,
-            `SELECT id FROM word_questions WHERE word_id = ? ORDER BY RANDOM() LIMIT 1`,
-            [wordRow.id]
-        );
-
-        // پ) اگر سوال آماده نداشتیم، با هوش مصنوعی می‌سازیم
-        if (!qRow) {
-            try {
-                const styles = ["fa_meaning", "en_definition", "synonym", "antonym"];
-                const randomStyle = styles[Math.floor(Math.random() * styles.length)];
-
-                const aiQuestions = await generateWordQuestionsWithGemini({
-                    env,
-                    english: wordRow.english,
-                    persian: wordRow.persian,
-                    level: wordRow.level,
-                    questionStyle: randomStyle,
-                    count: 1
-                });
-
-                if (aiQuestions.length > 0) {
-                    // === کد جدید: جایگزینی معنی فارسی دقیق در دوئل ===
-                    const finalDuelQuestions = aiQuestions.map((q) => {
-                        if (randomStyle === "fa_meaning") {
-                            q.options[q.correctIndex] = wordRow.persian;
-                        }
-                        return {
-                            wordId: wordRow.id,
-                            questionText: q.question,
-                            options: q.options,
-                            correctIndex: q.correctIndex,
-                            explanation: q.explanation,
-                            questionStyle: randomStyle
-                        };
-                    });
-
-                    await insertWordQuestions(
-                        env,
-                        wordRow.id,
-                        finalDuelQuestions
-                    );
-
-                    // دوباره سوال ساخته شده را از دیتابیس می‌گیریم
-                    qRow = await queryOne<{ id: number }>(
-                        env,
-                        `SELECT id FROM word_questions WHERE word_id = ? ORDER BY id DESC LIMIT 1`,
-                        [wordRow.id]
-                    );
-                }
-            } catch (err) {
-                console.error("Failed to auto-generate duel question:", err);
-            }
-        }
-
-        // ت) اگر سوال پیدا یا ساخته شد، آن را ثبت می‌کنیم
-        if (qRow) {
-            await execute(
-                env,
-                `INSERT OR IGNORE INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
-                [matchId, idx, wordRow.id, qRow.id]
-            );
-            added = true;
-            break; // موفقیت! از حلقه تلاش خارج می‌شویم و می‌رویم سراغ سوال بعدی (idx بعدی)
-        }
-        // اگر نرسیدیم اینجا، یعنی تلاش ناموفق بود. حلقه attempt دوباره اجرا می‌شود.
+    if (!existing) {
+      await execute(
+        env,
+        `INSERT INTO duel_questions (duel_id, question_index, word_id, word_question_id) VALUES (?, ?, ?, ?)`,
+        [matchId, currentIndex, q.word_id, q.id]
+      );
+      currentIndex++;
     }
   }
 }
@@ -319,7 +250,6 @@ export async function maybeFinalizeMatch(env: Env, duelId: number): Promise<Duel
   };
 }
 
-// === این بخش کاملاً تغییر کرده است ===
 export async function cleanupOldMatches(env: Env): Promise<void> {
   // 1. پیدا کردن بازی‌هایی که بیش از ۱ ساعت در وضعیت in_progress مانده‌اند
   const stuckMatches = await queryAll<DuelMatch>(
@@ -327,7 +257,7 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
   `SELECT * FROM duel_matches 
    WHERE status = 'in_progress' 
    AND started_at < datetime('now', '-1 hour')
-   LIMIT 50` // <--- این خط اضافه شد
+   LIMIT 50` 
 );
 
   for (const match of stuckMatches) {
@@ -461,17 +391,13 @@ export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
   // حالت الف: بازی در وضعیت انتظار است (هنوز حریف پیدا نشده)
   // راه حل: حذف کامل رکوردها برای جلوگیری از ایجاد بازی‌های روح (Ghost Matches)
   if (match.status === 'waiting') {
-      // اول حذف جواب‌های احتمالی (اگر کاربر حین انتظار جواب داده باشد)
       await execute(env, `DELETE FROM duel_answers WHERE duel_id = ?`, [match.id]);
-      // دوم حذف سوالات ساخته شده برای این بازی
       await execute(env, `DELETE FROM duel_questions WHERE duel_id = ?`, [match.id]);
-      // سوم حذف خودِ بازی
       await execute(env, `DELETE FROM duel_matches WHERE id = ?`, [match.id]);
       return;
   }
 
   // حالت ب: بازی در جریان است (حریف دارد)
-  // راه حل: کاربر انصراف داده، پس بازی تمام می‌شود و حریف برنده اعلام می‌شود.
   const now = new Date().toISOString();
   
   let winnerId: number | null = null;
@@ -487,4 +413,19 @@ export async function quitActiveMatch(env: Env, userId: number): Promise<void> {
      WHERE id = ?`,
     [winnerId, now, match.id]
   );
+
+  // اطلاع‌رسانی به بازیکنی که برنده شده (چون حریفش انصراف داده)
+  if (winnerId) {
+      const winner = await getUserById(env, winnerId);
+      if (winner) {
+          const streakMsg = await checkAndUpdateStreak(env, winnerId);
+          // 50 امتیاز جایزه برای برد حریف انصرافی (قابل تغییر)
+          const xp = await addXpForDuelMatch(env, winnerId, match.id, 5, 5, "win");
+          
+          let msg = `🏃‍♂️ حریف شما از بازی انصراف داد.\n🏆 شما برنده شدید!\n\n⭐️ امتیاز: ${xp}`;
+          if (streakMsg) msg += `\n\n${streakMsg}`;
+          
+          await sendMessage(env, winner.telegram_id, msg);
+      }
+  }
 }
