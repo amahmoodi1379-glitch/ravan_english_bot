@@ -162,23 +162,39 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const limit = 50;
     const offset = (page - 1) * limit;
 
-    let whereSql = "FROM words WHERE 1 = 1";
+    const fromSql = "FROM words w";
+    let whereSql = "WHERE 1 = 1";
     const baseParams: any[] = [];
     
     if (search) {
-      whereSql += " AND (english LIKE ? OR persian LIKE ? OR lesson_name LIKE ?)";
+      whereSql += " AND (w.english LIKE ? OR w.persian LIKE ? OR w.lesson_name LIKE ?)";
       baseParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     const countRow = await queryOne<{ total: number }>(
       env, 
-      `SELECT COUNT(*) as total ${whereSql}`, 
+      `SELECT COUNT(*) as total ${fromSql} ${whereSql}`,
       baseParams
     );
     const totalCount = countRow?.total || 0;
     const totalPages = Math.ceil(totalCount / limit) || 1;
 
-    const dataSql = `SELECT id, english, persian, level, lesson_name, is_active ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`;
+    const dataSql = `
+      SELECT
+        w.id,
+        w.english,
+        w.persian,
+        w.level,
+        w.lesson_name,
+        w.is_active,
+        CASE WHEN COUNT(wq.id) > 0 THEN 1 ELSE 0 END AS has_test
+      ${fromSql}
+      LEFT JOIN word_questions wq ON wq.word_id = w.id
+      ${whereSql}
+      GROUP BY w.id, w.english, w.persian, w.level, w.lesson_name, w.is_active
+      ORDER BY w.id DESC
+      LIMIT ? OFFSET ?
+    `;
     const dataParams = [...baseParams, limit, offset];
     
     const words = await queryAll<any>(env, dataSql, dataParams);
@@ -190,6 +206,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         <td>${escapeHtml(w.persian)}</td>
         <td>${w.level}</td>
         <td>${w.lesson_name ? escapeHtml(w.lesson_name) : "-"}</td>
+        <td style="text-align:center; font-size:15px;">${w.has_test ? "✅" : "⚪"}</td>
         <td><span class="${w.is_active ? "badge active" : "badge inactive"}">${w.is_active ? "فعال" : "غیرفعال"}</span></td>
         <td class="actions" style="display:flex; align-items:center; gap:5px;">
           <a href="/admin/words/edit?id=${w.id}">ویرایش</a>
@@ -219,7 +236,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         </form>
         <div><a href="/admin/words/new"><button type="button">+ واژه‌ی جدید</button></a></div>
       </div>
-      <table><thead><tr><th>ID</th><th>English</th><th>معنی فارسی</th><th>Level</th><th>درس</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='7'>هیچ واژه‌ای پیدا نشد.</td></tr>"}</tbody></table>
+      <table><thead><tr><th>ID</th><th>English</th><th>معنی فارسی</th><th>Level</th><th>درس</th><th>تست</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='8'>هیچ واژه‌ای پیدا نشد.</td></tr>"}</tbody></table>
       ${paginationHtml}
     `;
     return htmlResponse(renderAdminLayout("مدیریت واژه‌ها", content, "words"));
@@ -398,20 +415,35 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const limit = 50;
     const offset = (page - 1) * limit;
 
-    let whereSql = "FROM reading_texts WHERE 1 = 1";
+    const fromSql = "FROM reading_texts t";
+    let whereSql = "WHERE 1 = 1";
     const baseParams: any[] = [];
     if (search) {
-      whereSql += " AND (title LIKE ? OR body_en LIKE ?)";
+      whereSql += " AND (t.title LIKE ? OR t.body_en LIKE ?)";
       baseParams.push(`%${search}%`, `%${search}%`);
     }
 
-    const countRow = await queryOne<{ total: number }>(env, `SELECT COUNT(*) as total ${whereSql}`, baseParams);
+    const countRow = await queryOne<{ total: number }>(env, `SELECT COUNT(*) as total ${fromSql} ${whereSql}`, baseParams);
     const totalCount = countRow?.total || 0;
     const totalPages = Math.ceil(totalCount / limit) || 1;
 
     const texts = await queryAll<any>(
       env,
-      `SELECT id, title, substr(body_en, 1, 120) AS snippet, level, is_active ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      `
+        SELECT
+          t.id,
+          t.title,
+          substr(t.body_en, 1, 120) AS snippet,
+          t.level,
+          t.is_active,
+          CASE WHEN COUNT(tq.id) > 0 THEN 1 ELSE 0 END AS has_test
+        ${fromSql}
+        LEFT JOIN text_questions tq ON tq.text_id = t.id
+        ${whereSql}
+        GROUP BY t.id, t.title, t.body_en, t.level, t.is_active
+        ORDER BY t.id DESC
+        LIMIT ? OFFSET ?
+      `,
       [...baseParams, limit, offset]
     );
     const rowsHtml = texts.map((t: any) => `
@@ -420,6 +452,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         <td>${escapeHtml(t.title)}</td>
         <td>${escapeHtml(t.snippet || "")}</td>
         <td>${t.level ?? "-"}</td>
+        <td style="text-align:center; font-size:15px;">${t.has_test ? "✅" : "⚪"}</td>
         <td><span class="${t.is_active ? "badge active" : "badge inactive"}">${t.is_active ? "فعال" : "غیرفعال"}</span></td>
         <td class="actions"><a href="/admin/texts/edit?id=${t.id}">ویرایش</a></td>
       </tr>
@@ -433,7 +466,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
           ${search ? `<a href="/admin/texts"><button type="button" class="secondary">پاک کردن</button></a>` : ""}
         </div>
       </form>
-      <table><thead><tr><th>ID</th><th>عنوان</th><th>پیش‌نمایش متن</th><th>Level</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='6'>هیچ متنی ثبت نشده.</td></tr>"}</tbody></table>
+      <table><thead><tr><th>ID</th><th>عنوان</th><th>پیش‌نمایش متن</th><th>Level</th><th>تست</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='7'>هیچ متنی ثبت نشده.</td></tr>"}</tbody></table>
       <div style="margin-top:12px; display:flex; justify-content:center; gap:12px; align-items:center;">
         ${page > 1 ? `<a href="/admin/texts?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
         <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
