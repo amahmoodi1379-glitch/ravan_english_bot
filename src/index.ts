@@ -63,7 +63,7 @@ export default {
 
     } catch (err: any) {
       console.error("Global Error:", err);
-      return new Response("Internal Server Error", { status: 500 });
+      return new Response("Internal Server Error (Logged)", { status: 200 });
     }
   },
   
