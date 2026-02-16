@@ -2,31 +2,24 @@ import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
-import { 
-  getReadingTextsCount, 
-  getPaginatedReadingTexts, 
-  getReadingTextByTitle,
-  getReadingTextById 
+import {
+  getReadingTextsCount,
+  getPaginatedReadingTexts,
+  getReadingTextByTitle
 } from "../../db/texts";
 import {
   createReadingSession,
   getReadingSessionById,
   getNextQuestionForSession,
   recordQuestionShown,
-  prepareRecordAnswer,
   getSessionStats,
-  markSessionCompleted,
-  insertTextQuestions,
   prepareUpdateSessionXp,
-  getQuestionsCountForText,  
   getNewCorrectCount,
-  getDistinctSeenCount,
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
 import { queryAll, queryOne } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
-import { generateReadingQuestionsWithGemini } from "../../ai/gemini";
 import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
 import { getPaginatedReadingKeyboard } from "../keyboards";
 
