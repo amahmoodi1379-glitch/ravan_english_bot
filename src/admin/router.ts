@@ -252,7 +252,15 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     if (!id) return htmlResponse("شناسه واژه نامعتبر است.", 400);
     const word = await queryOne<any>(env, `SELECT * FROM words WHERE id = ?`, [id]);
     if (!word) return htmlResponse("واژه پیدا نشد.", 404);
-    return htmlResponse(renderAdminLayout("ویرایش واژه", renderWordForm(word, "ویرایش واژه"), "words"));
+    const prevWord = await queryOne<{ id: number }>(env, `SELECT id FROM words WHERE id > ? ORDER BY id ASC LIMIT 1`, [id]);
+    const nextWord = await queryOne<{ id: number }>(env, `SELECT id FROM words WHERE id < ? ORDER BY id DESC LIMIT 1`, [id]);
+    const navigation = `
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        ${prevWord ? `<a href="/admin/words/edit?id=${prevWord.id}"><button type="button" class="secondary">واژه قبلی</button></a>` : ""}
+        ${nextWord ? `<a href="/admin/words/edit?id=${nextWord.id}"><button type="button" class="secondary">واژه بعدی</button></a>` : ""}
+      </div>
+    `;
+    return htmlResponse(renderAdminLayout("ویرایش واژه", `${navigation}${renderWordForm(word, "ویرایش واژه")}`, "words"));
   }
 
   if (request.method === "POST" && url.pathname === "/admin/words/save") {
@@ -280,7 +288,30 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
 
   // --- مدیریت متن‌ها ---
   if (url.pathname === "/admin/texts") {
-    const texts = await queryAll<any>(env, `SELECT id, title, substr(body_en, 1, 120) AS snippet, level, is_active FROM reading_texts ORDER BY id DESC LIMIT 50`);
+    const search = (url.searchParams.get("q") || "").trim();
+    let rawPage = parseInt(url.searchParams.get("page") || "1");
+    if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
+
+    const page = Math.min(rawPage, 1000000);
+    const limit = 50;
+    const offset = (page - 1) * limit;
+
+    let whereSql = "FROM reading_texts WHERE 1 = 1";
+    const baseParams: any[] = [];
+    if (search) {
+      whereSql += " AND (title LIKE ? OR body_en LIKE ?)";
+      baseParams.push(`%${search}%`, `%${search}%`);
+    }
+
+    const countRow = await queryOne<{ total: number }>(env, `SELECT COUNT(*) as total ${whereSql}`, baseParams);
+    const totalCount = countRow?.total || 0;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+
+    const texts = await queryAll<any>(
+      env,
+      `SELECT id, title, substr(body_en, 1, 120) AS snippet, level, is_active ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      [...baseParams, limit, offset]
+    );
     const rowsHtml = texts.map((t: any) => `
       <tr>
         <td>${t.id}</td>
@@ -293,7 +324,19 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     `).join("");
     const content = `
       <div class="top-row"><div></div><div><a href="/admin/texts/new"><button type="button">+ متن جدید</button></a></div></div>
+      <form method="get" action="/admin/texts" class="top-row">
+        <input type="text" name="q" value="${escapeHtml(search)}" placeholder="جستجو در عنوان/متن..." />
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button type="submit">جستجو</button>
+          ${search ? `<a href="/admin/texts"><button type="button" class="secondary">پاک کردن</button></a>` : ""}
+        </div>
+      </form>
       <table><thead><tr><th>ID</th><th>عنوان</th><th>پیش‌نمایش متن</th><th>Level</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='6'>هیچ متنی ثبت نشده.</td></tr>"}</tbody></table>
+      <div style="margin-top:12px; display:flex; justify-content:center; gap:12px; align-items:center;">
+        ${page > 1 ? `<a href="/admin/texts?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
+        <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
+        ${page < totalPages ? `<a href="/admin/texts?q=${escapeHtml(search)}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
+      </div>
     `;
     return htmlResponse(renderAdminLayout("مدیریت متن‌ها", content, "texts"));
   }
@@ -308,7 +351,15 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     if (!id) return htmlResponse("شناسه متن نامعتبر است.", 400);
     const textRow = await queryOne<any>(env, `SELECT * FROM reading_texts WHERE id = ?`, [id]);
     if (!textRow) return htmlResponse("متن پیدا نشد.", 404);
-    return htmlResponse(renderAdminLayout("ویرایش متن", renderTextForm(textRow, "ویرایش متن"), "texts"));
+    const prevText = await queryOne<{ id: number }>(env, `SELECT id FROM reading_texts WHERE id > ? ORDER BY id ASC LIMIT 1`, [id]);
+    const nextText = await queryOne<{ id: number }>(env, `SELECT id FROM reading_texts WHERE id < ? ORDER BY id DESC LIMIT 1`, [id]);
+    const navigation = `
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        ${prevText ? `<a href="/admin/texts/edit?id=${prevText.id}"><button type="button" class="secondary">متن قبلی</button></a>` : ""}
+        ${nextText ? `<a href="/admin/texts/edit?id=${nextText.id}"><button type="button" class="secondary">متن بعدی</button></a>` : ""}
+      </div>
+    `;
+    return htmlResponse(renderAdminLayout("ویرایش متن", `${navigation}${renderTextForm(textRow, "ویرایش متن")}`, "texts"));
   }
 
   if (request.method === "POST" && url.pathname === "/admin/texts/save") {
