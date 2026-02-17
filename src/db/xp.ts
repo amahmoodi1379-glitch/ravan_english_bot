@@ -9,7 +9,7 @@ export type ActivityType =
   | "duel_match";
 
 // بازگرداندن آرایه‌ای از دستورات (بدون اجرا)
-export function prepareAddXp(
+function prepareAddXp(
   env: Env,
   userId: number,
   xpDelta: number,
@@ -41,12 +41,6 @@ export function prepareAddXp(
   );
 
   return [stmt1, stmt2];
-}
-
-// توابع قدیمی برای backward compatibility (اگر جایی هنوز استفاده می‌شود)
-export async function addXp(env: Env, userId: number, xpDelta: number, activityType: ActivityType, refId?: number, meta?: any): Promise<void> {
-  const stmts = prepareAddXp(env, userId, xpDelta, activityType, refId, meta);
-  if (stmts.length > 0) await env.DB.batch(stmts);
 }
 
 // --- توابع آماده‌ساز اختصاصی ---
@@ -100,13 +94,6 @@ export function calculateAndPrepareXpForReading(
   });
 
   return { totalXp, stmts };
-}
-
-// برای Backward Compatibility نگه‌ش می‌داریم ولی در کد جدید استفاده نمی‌کنیم
-export async function addXpForReadingSession(env: Env, userId: number, sessionId: number, correct: number, total: number): Promise<number> {
-  const { totalXp, stmts } = calculateAndPrepareXpForReading(env, userId, sessionId, correct, total);
-  if (stmts.length > 0) await env.DB.batch(stmts);
-  return totalXp;
 }
 
 export async function addXpForDuelMatch(
