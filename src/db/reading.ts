@@ -1,6 +1,5 @@
 import { Env } from "../types";
-import { queryOne, execute, queryAll, prepare } from "./client";
-import { XP_VALUES } from "../config/constants";
+import { queryOne, execute, prepare } from "./client";
 import { getTextQuestionTypePrioritySql } from "./question_priority";
 
 export interface DbTextQuestion {
@@ -28,13 +27,6 @@ export interface ReadingSession {
   completed_at: string | null;
 }
 
-export interface NewTextQuestionRow {
-  questionText: string;
-  options: string[];
-  correctIndex: number;
-  explanation: string;
-  source?: "manual" | "ai" | "seed";
-}
 
 export async function createReadingSession(env: Env, userId: number, textId: number, numQuestions: number = 3): Promise<ReadingSession> {
   const now = new Date().toISOString();
@@ -112,7 +104,7 @@ export async function recordQuestionShown(env: Env, session: ReadingSession, use
   return result.meta.changes > 0;
 }
 
-export function prepareRecordAnswer(
+function prepareRecordAnswer(
   env: Env,
   session: ReadingSession,
   userId: number,
@@ -149,19 +141,9 @@ export function prepareRecordAnswer(
   return stmts;
 }
 
-export async function recordAnswerAndUpdateSession(env: Env, session: ReadingSession, userId: number, questionId: number, isCorrect: boolean): Promise<void> {
-  const stmts = prepareRecordAnswer(env, session, userId, questionId, isCorrect);
-  await env.DB.batch(stmts);
-}
-
 export async function getSessionStats(env: Env, sessionId: number): Promise<{ total: number; correct: number }> {
   const row = await queryOne<{ total: number; correct: number | null }>(env, `SELECT COUNT(*) AS total, SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct FROM user_text_question_history WHERE reading_session_id = ?`, [sessionId]);
   return { total: row?.total ?? 0, correct: row?.correct ?? 0 };
-}
-
-export async function markSessionCompleted(env: Env, sessionId: number): Promise<void> {
-  const now = new Date().toISOString();
-  await execute(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, sessionId]);
 }
 
 export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number): any {
@@ -170,43 +152,6 @@ export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number):
     `UPDATE reading_sessions SET xp_gained = ? WHERE id = ?`,
     [xp, sessionId]
   );
-}
-
-export async function insertTextQuestions(env: Env, textId: number, questions: NewTextQuestionRow[]): Promise<void> {
-  const stmts: any[] = [];
-  for (const q of questions) {
-    const opts = q.options.slice(0, 4);
-    while (opts.length < 4) opts.push("");
-    const [a, b, c, d] = opts;
-    const correctIndex = (q.correctIndex >= 0 && q.correctIndex <= 3) ? q.correctIndex : 0;
-    const correctLetter = ["A", "B", "C", "D"][correctIndex];
-
-    stmts.push(prepare(
-      env,
-      `INSERT INTO text_questions (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_type, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [textId, q.questionText, a, b, c, d, correctLetter, q.explanation || null, "reading", q.source || "ai"]
-    ));
-  }
-  if (stmts.length > 0) await env.DB.batch(stmts);
-}
-
-// دریافت تعداد کل سوالات موجود برای یک متن (برای محدودیت ۱۸ تایی)
-export async function getQuestionsCountForText(
-  env: Env,
-  textId: number,
-  allowedSources?: Array<"manual" | "ai" | "seed">
-): Promise<number> {
-  const sourceFilter = allowedSources && allowedSources.length > 0
-    ? ` AND source IN (${allowedSources.map(() => "?").join(", ")})`
-    : "";
-  const sourceParams = allowedSources && allowedSources.length > 0 ? [...allowedSources] : [];
-
-  const row = await queryOne<{ cnt: number }>(
-    env,
-    `SELECT COUNT(*) as cnt FROM text_questions WHERE text_id = ?${sourceFilter}`,
-    [textId, ...sourceParams]
-  );
-  return row?.cnt ?? 0;
 }
 
 // محاسبه تعداد پاسخ‌های درستی که "برای اولین بار" داده شده‌اند (جلوگیری از XP تکراری)
@@ -227,15 +172,6 @@ export async function getNewCorrectCount(env: Env, sessionId: number, userId: nu
       )
     `,
     [sessionId, userId, sessionId]
-  );
-  return row?.cnt ?? 0;
-}
-
-export async function getDistinctSeenCount(env: Env, userId: number, textId: number): Promise<number> {
-  const row = await queryOne<{ cnt: number }>(
-    env,
-    `SELECT COUNT(DISTINCT question_id) as cnt FROM user_text_question_history WHERE user_id = ? AND text_id = ?`,
-    [userId, textId]
   );
   return row?.cnt ?? 0;
 }

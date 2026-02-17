@@ -43,22 +43,3 @@ export async function getReadingTextByTitle(env: Env, title: string): Promise<Db
   );
   return row ?? null;
 }
-
-// ۴. گرفتن یک متن بر اساس آیدی (از قبل بود، نگهش می‌داریم)
-export async function getReadingTextById(env: Env, id: number): Promise<DbReadingText | null> {
-  return await queryOne<DbReadingText>(env, `SELECT * FROM reading_texts WHERE id = ?`, [id]);
-}
-
-// ۵. گرفتن همه متن‌ها (این را هم محض اطمینان نگه می‌داریم)
-export async function getAllActiveReadingTexts(env: Env): Promise<DbReadingText[]> {
-  const rows = await queryAll<DbReadingText>(
-    env,
-    `
-    SELECT id, title, body_en, level, is_active
-    FROM reading_texts
-    WHERE is_active = 1
-    ORDER BY id ASC
-    `
-  );
-  return rows;
-}

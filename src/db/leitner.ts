@@ -252,10 +252,6 @@ export async function prepareUpdateSm2(
   return [stmt];
 }
 
-export async function updateSm2AndStageAfterAnswer(env: Env, userId: number, wordId: number, isCorrect: boolean): Promise<void> {
-  const stmts = await prepareUpdateSm2(env, userId, wordId, isCorrect);
-  if (stmts.length > 0) await env.DB.batch(stmts);
-}
 
 export async function markWordAsIgnored(env: Env, userId: number, wordId: number): Promise<void> {
   const now = new Date().toISOString();

@@ -176,7 +176,7 @@ export async function getDuelQuestionById(env: Env, duelQuestionId: number): Pro
   );
 }
 
-export function prepareRecordDuelAnswer(
+function prepareRecordDuelAnswer(
   env: Env,
   duelId: number,
   duelQuestionId: number,
