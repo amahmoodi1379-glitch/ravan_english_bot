@@ -57,9 +57,9 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
 
     const displayName =
       user.display_name ||
-      tg.first_name ||
+      [tg.first_name, tg.last_name].filter(Boolean).join(" ") ||
       tg.username ||
-      (tg.last_name ? `${tg.first_name ?? ""} ${tg.last_name}`.trim() : null);
+      null;
 
     await execute(
       env,
@@ -82,9 +82,8 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
 
   // 2) اگر نبود، کاربر جدید بسازیم
   const displayName =
-    tg.first_name ||
+    [tg.first_name, tg.last_name].filter(Boolean).join(" ") ||
     tg.username ||
-    (tg.last_name ? `${tg.first_name ?? ""} ${tg.last_name}`.trim() : null) ||
     `user_${tg.id}`;
 
   // === تغییر مهم اینجاست: استفاده از try-catch ===
