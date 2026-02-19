@@ -185,6 +185,90 @@ function renderQuestionManager(
   `;
 }
 
+function renderCopyPromptBox(english: string, persian: string): string {
+  const promptTemplate = `Role: You are an expert ESL exam creator specializing in A2 (Elementary) level content.
+
+Input Data:
+- Target Word: "{WORD}"
+- Persian Meaning: "{MEANING}"
+
+Task: Generate exactly 8 multiple-choice questions based on the Input Data. The difficulty level must be strictly A2.
+
+Question Distribution & Style Mapping:
+1. Style "en_to_fa": 1 Question (English word given, find Persian meaning).
+2. Style "fa_to_en": 1 Question (Persian meaning given, find English word).
+3. Style "definition_to_word": 2 Questions (Definition given, find the word).
+4. Style "word_to_definition": 2 Questions (Word given, find the definition).
+5. Style "cloze": 2 Questions (Fill in the blank sentence).
+
+Strict Guidelines:
+- Level A2: Keep definitions and sentences simple.
+- Variety: Ensure the definitions and sentences in styles 3, 4, and 5 are unique and different from each other.
+- Distractors: Must be incorrect but plausible (same part of speech).
+- Correct Index: You must calculate the index (0, 1, 2, or 3) of the correct answer within the options array.
+
+Output Format:
+Provide the result in a valid JSON array where each object contains strictly these keys:
+- "questionText" (string): The question stem.
+- "options" (array of 4 strings): The choices.
+- "correctIndex" (integer): 0 for the first option, 1 for the second, etc.
+- "questionStyle" (string): Must be exactly one of: "en_to_fa", "fa_to_en", "definition_to_word", "word_to_definition", "cloze".
+- "explanation" (string): A very short explanation (e.g., "Seed implies a small object...").
+
+Example JSON Structure:
+[
+  {
+    "questionText": "What is the meaning of '{WORD}'?",
+    "options": ["Persian A", "Persian B", "Persian C", "Persian D"],
+    "correctIndex": 2,
+    "questionStyle": "en_to_fa",
+    "explanation": "'{WORD}' translates to Persian C."
+  }
+]`;
+
+  const fullPrompt = promptTemplate.replace(/\{WORD\}/g, english).replace(/\{MEANING\}/g, persian);
+  const wordMeaning = english + "\n" + persian;
+
+  const encodedPrompt = escapeHtml(fullPrompt);
+  const encodedWordMeaning = escapeHtml(wordMeaning);
+
+  return `
+    <div class="q-box" style="border: 2px solid #059669; background:#f0fdf4; margin-top: 16px;">
+      <div style="font-weight:bold; color:#059669; margin-bottom:10px;">📋 کپی پرامپت AI</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" id="btn-copy-wm" style="background:#059669; color:white;">کپی واژه و معنی</button>
+        <button type="button" id="btn-copy-prompt" style="background:#0d9488; color:white;">کپی کل پرامپت</button>
+      </div>
+    </div>
+    <script type="text/template" id="tpl-word-meaning">${encodedWordMeaning}</script>
+    <script type="text/template" id="tpl-full-prompt">${encodedPrompt}</script>
+    <script>
+    (function(){
+      function decode(id){
+        var el=document.getElementById(id);
+        if(!el)return '';
+        var d=document.createElement('textarea');
+        d.innerHTML=el.innerHTML;
+        return d.value;
+      }
+      function flash(btn){
+        var o=btn.textContent;
+        btn.textContent=decodeURIComponent('%E2%9C%85%20%DA%A9%D9%BE%DB%8C%20%D8%B4%D8%AF!');
+        setTimeout(function(){btn.textContent=o;},2000);
+      }
+      document.getElementById('btn-copy-wm').addEventListener('click',function(){
+        var self=this;
+        navigator.clipboard.writeText(decode('tpl-word-meaning')).then(function(){flash(self);});
+      });
+      document.getElementById('btn-copy-prompt').addEventListener('click',function(){
+        var self=this;
+        navigator.clipboard.writeText(decode('tpl-full-prompt')).then(function(){flash(self);});
+      });
+    })();
+    </script>
+  `;
+}
+
 export function renderWordForm(word: any, heading: string, questions: any[] = []): string {
   const hasId = Number(word.id) > 0;
   return `
@@ -214,83 +298,7 @@ export function renderWordForm(word: any, heading: string, questions: any[] = []
         <a href="/admin/words"><button type="button" class="secondary">انصراف</button></a>
       </div>
     </form>
-    ${hasId ? `
-    <div class="q-box" style="border: 2px solid #059669; background:#f0fdf4; margin-top: 16px;"
-         id="prompt-copy-box"
-         data-english="${escapeHtml(word.english || "")}"
-         data-persian="${escapeHtml(word.persian || "")}">
-      <div style="font-weight:bold; color:#059669; margin-bottom:10px;">📋 کپی پرامپت AI</div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" onclick="copyWordMeaning(this)" style="background:#059669; color:white;">کپی واژه و معنی</button>
-        <button type="button" onclick="copyFullPrompt(this)" style="background:#0d9488; color:white;">کپی کل پرامپت</button>
-      </div>
-    </div>
-    <script>
-    (function() {
-      var box = document.getElementById('prompt-copy-box');
-      var wordVal = box.getAttribute('data-english');
-      var meaningVal = box.getAttribute('data-persian');
-
-      window.copyWordMeaning = function(btn) {
-        var text = wordVal + '\n' + meaningVal;
-        navigator.clipboard.writeText(text).then(function() {
-          var orig = btn.textContent;
-          btn.textContent = '\u2705 \u06a9\u067e\u06cc \u0634\u062f!';
-          setTimeout(function() { btn.textContent = orig; }, 2000);
-        });
-      };
-
-      window.copyFullPrompt = function(btn) {
-        var prompt = [
-          'Role: You are an expert ESL exam creator specializing in A2 (Elementary) level content.',
-          '',
-          'Input Data:',
-          '- Target Word: "' + wordVal + '"',
-          '- Persian Meaning: "' + meaningVal + '"',
-          '',
-          'Task: Generate exactly 8 multiple-choice questions based on the Input Data. The difficulty level must be strictly A2.',
-          '',
-          'Question Distribution & Style Mapping:',
-          '1. Style "en_to_fa": 1 Question (English word given, find Persian meaning).',
-          '2. Style "fa_to_en": 1 Question (Persian meaning given, find English word).',
-          '3. Style "definition_to_word": 2 Questions (Definition given, find the word).',
-          '4. Style "word_to_definition": 2 Questions (Word given, find the definition).',
-          '5. Style "cloze": 2 Questions (Fill in the blank sentence).',
-          '',
-          'Strict Guidelines:',
-          '- Level A2: Keep definitions and sentences simple.',
-          '- Variety: Ensure the definitions and sentences in styles 3, 4, and 5 are unique and different from each other.',
-          '- Distractors: Must be incorrect but plausible (same part of speech).',
-          '- Correct Index: You must calculate the index (0, 1, 2, or 3) of the correct answer within the options array.',
-          '',
-          'Output Format:',
-          'Provide the result in a valid JSON array where each object contains strictly these keys:',
-          '- "questionText" (string): The question stem.',
-          '- "options" (array of 4 strings): The choices.',
-          '- "correctIndex" (integer): 0 for the first option, 1 for the second, etc.',
-          '- "questionStyle" (string): Must be exactly one of: "en_to_fa", "fa_to_en", "definition_to_word", "word_to_definition", "cloze".',
-          '- "explanation" (string): A very short explanation (e.g., "Seed implies a small object...").',
-          '',
-          'Example JSON Structure:',
-          '[',
-          '  {',
-          '    "questionText": "What is the meaning of \'' + wordVal + '\'?",',
-          '    "options": ["Persian A", "Persian B", "Persian C", "Persian D"],',
-          '    "correctIndex": 2,',
-          '    "questionStyle": "en_to_fa",',
-          '    "explanation": "\'' + wordVal + '\' translates to Persian C."',
-          '  }',
-          ']'
-        ].join('\n');
-        navigator.clipboard.writeText(prompt).then(function() {
-          var orig = btn.textContent;
-          btn.textContent = '\u2705 \u06a9\u067e\u06cc \u0634\u062f!';
-          setTimeout(function() { btn.textContent = orig; }, 2000);
-        });
-      };
-    })();
-    </script>
-    ` : ""}
+    ${hasId ? renderCopyPromptBox(word.english || "", word.persian || "") : ""}
     ${hasId ? renderQuestionManager("word", Number(word.id), questions, "question_style") : ""}
   `;
 }
