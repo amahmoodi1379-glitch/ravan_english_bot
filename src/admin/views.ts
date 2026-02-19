@@ -215,30 +215,80 @@ export function renderWordForm(word: any, heading: string, questions: any[] = []
       </div>
     </form>
     ${hasId ? `
-    <div class="q-box" style="border: 2px solid #059669; background:#f0fdf4; margin-top: 16px;">
+    <div class="q-box" style="border: 2px solid #059669; background:#f0fdf4; margin-top: 16px;"
+         id="prompt-copy-box"
+         data-english="${escapeHtml(word.english || "")}"
+         data-persian="${escapeHtml(word.persian || "")}">
       <div style="font-weight:bold; color:#059669; margin-bottom:10px;">📋 کپی پرامپت AI</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" onclick="copyWordMeaning(this, ${JSON.stringify(word.english || "")}, ${JSON.stringify(word.persian || "")})" style="background:#059669; color:white;">کپی واژه و معنی</button>
-        <button type="button" onclick="copyFullPrompt(this, ${JSON.stringify(word.english || "")}, ${JSON.stringify(word.persian || "")})" style="background:#0d9488; color:white;">کپی کل پرامپت</button>
+        <button type="button" onclick="copyWordMeaning(this)" style="background:#059669; color:white;">کپی واژه و معنی</button>
+        <button type="button" onclick="copyFullPrompt(this)" style="background:#0d9488; color:white;">کپی کل پرامپت</button>
       </div>
     </div>
     <script>
-    function copyWordMeaning(btn, word, meaning) {
-      var text = word + "\\n" + meaning;
-      navigator.clipboard.writeText(text).then(function() {
-        var orig = btn.textContent;
-        btn.textContent = "✅ کپی شد!";
-        setTimeout(function() { btn.textContent = orig; }, 2000);
-      });
-    }
-    function copyFullPrompt(btn, word, meaning) {
-      var prompt = 'Role: You are an expert ESL exam creator specializing in A2 (Elementary) level content.\\n\\nInput Data:\\n- Target Word: "' + word + '"\\n- Persian Meaning: "' + meaning + '"\\n\\nTask: Generate exactly 8 multiple-choice questions based on the Input Data. The difficulty level must be strictly A2.\\n\\nQuestion Distribution & Style Mapping:\\n1. Style "en_to_fa": 1 Question (English word given, find Persian meaning).\\n2. Style "fa_to_en": 1 Question (Persian meaning given, find English word).\\n3. Style "definition_to_word": 2 Questions (Definition given, find the word).\\n4. Style "word_to_definition": 2 Questions (Word given, find the definition).\\n5. Style "cloze": 2 Questions (Fill in the blank sentence).\\n\\nStrict Guidelines:\\n- Level A2: Keep definitions and sentences simple.\\n- Variety: Ensure the definitions and sentences in styles 3, 4, and 5 are unique and different from each other.\\n- Distractors: Must be incorrect but plausible (same part of speech).\\n- Correct Index: You must calculate the index (0, 1, 2, or 3) of the correct answer within the options array.\\n\\nOutput Format:\\nProvide the result in a valid JSON array where each object contains strictly these keys:\\n- "questionText" (string): The question stem.\\n- "options" (array of 4 strings): The choices.\\n- "correctIndex" (integer): 0 for the first option, 1 for the second, etc.\\n- "questionStyle" (string): Must be exactly one of: "en_to_fa", "fa_to_en", "definition_to_word", "word_to_definition", "cloze".\\n- "explanation" (string): A very short explanation (e.g., "Seed implies a small object...").\\n\\nExample JSON Structure:\\n[\\n  {\\n    "questionText": "What is the meaning of \\'' + word + '\\'?",\\n    "options": ["Persian A", "Persian B", "Persian C", "Persian D"],\\n    "correctIndex": 2,\\n    "questionStyle": "en_to_fa",\\n    "explanation": "\\'' + word + '\\' translates to Persian C."\\n  }\\n]';
-      navigator.clipboard.writeText(prompt).then(function() {
-        var orig = btn.textContent;
-        btn.textContent = "✅ کپی شد!";
-        setTimeout(function() { btn.textContent = orig; }, 2000);
-      });
-    }
+    (function() {
+      var box = document.getElementById('prompt-copy-box');
+      var wordVal = box.getAttribute('data-english');
+      var meaningVal = box.getAttribute('data-persian');
+
+      window.copyWordMeaning = function(btn) {
+        var text = wordVal + '\n' + meaningVal;
+        navigator.clipboard.writeText(text).then(function() {
+          var orig = btn.textContent;
+          btn.textContent = '\u2705 \u06a9\u067e\u06cc \u0634\u062f!';
+          setTimeout(function() { btn.textContent = orig; }, 2000);
+        });
+      };
+
+      window.copyFullPrompt = function(btn) {
+        var prompt = [
+          'Role: You are an expert ESL exam creator specializing in A2 (Elementary) level content.',
+          '',
+          'Input Data:',
+          '- Target Word: "' + wordVal + '"',
+          '- Persian Meaning: "' + meaningVal + '"',
+          '',
+          'Task: Generate exactly 8 multiple-choice questions based on the Input Data. The difficulty level must be strictly A2.',
+          '',
+          'Question Distribution & Style Mapping:',
+          '1. Style "en_to_fa": 1 Question (English word given, find Persian meaning).',
+          '2. Style "fa_to_en": 1 Question (Persian meaning given, find English word).',
+          '3. Style "definition_to_word": 2 Questions (Definition given, find the word).',
+          '4. Style "word_to_definition": 2 Questions (Word given, find the definition).',
+          '5. Style "cloze": 2 Questions (Fill in the blank sentence).',
+          '',
+          'Strict Guidelines:',
+          '- Level A2: Keep definitions and sentences simple.',
+          '- Variety: Ensure the definitions and sentences in styles 3, 4, and 5 are unique and different from each other.',
+          '- Distractors: Must be incorrect but plausible (same part of speech).',
+          '- Correct Index: You must calculate the index (0, 1, 2, or 3) of the correct answer within the options array.',
+          '',
+          'Output Format:',
+          'Provide the result in a valid JSON array where each object contains strictly these keys:',
+          '- "questionText" (string): The question stem.',
+          '- "options" (array of 4 strings): The choices.',
+          '- "correctIndex" (integer): 0 for the first option, 1 for the second, etc.',
+          '- "questionStyle" (string): Must be exactly one of: "en_to_fa", "fa_to_en", "definition_to_word", "word_to_definition", "cloze".',
+          '- "explanation" (string): A very short explanation (e.g., "Seed implies a small object...").',
+          '',
+          'Example JSON Structure:',
+          '[',
+          '  {',
+          '    "questionText": "What is the meaning of \'' + wordVal + '\'?",',
+          '    "options": ["Persian A", "Persian B", "Persian C", "Persian D"],',
+          '    "correctIndex": 2,',
+          '    "questionStyle": "en_to_fa",',
+          '    "explanation": "\'' + wordVal + '\' translates to Persian C."',
+          '  }',
+          ']'
+        ].join('\n');
+        navigator.clipboard.writeText(prompt).then(function() {
+          var orig = btn.textContent;
+          btn.textContent = '\u2705 \u06a9\u067e\u06cc \u0634\u062f!';
+          setTimeout(function() { btn.textContent = orig; }, 2000);
+        });
+      };
+    })();
     </script>
     ` : ""}
     ${hasId ? renderQuestionManager("word", Number(word.id), questions, "question_style") : ""}
