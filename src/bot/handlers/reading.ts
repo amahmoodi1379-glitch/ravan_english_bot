@@ -18,10 +18,10 @@ import {
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
-import { queryAll, queryOne } from "../../db/client";
+import { queryAll, queryOne, prepare } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
-import { getPaginatedReadingKeyboard } from "../keyboards";
+import { getPaginatedReadingKeyboard, getMainMenuKeyboard } from "../keyboards";
 
 interface SummaryQuestionRow {
   question_text: string;
@@ -34,10 +34,6 @@ interface SummaryQuestionRow {
 }
 
 const ITEMS_PER_PAGE = 6; // تعداد متن‌ها در هر صفحه
-
-function isManualQuestionMode(env: Env): boolean {
-  return env.MANUAL_QUESTION_MODE === "1";
-}
 
 // نمایش منوی انتخاب متن (با قابلیت صفحه‌بندی)
 export async function startReadingMenuForUser(env: Env, update: TelegramUpdate, page: number = 1): Promise<void> {
@@ -106,7 +102,7 @@ export async function handleReadingTitleSelection(env: Env, update: TelegramUpda
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   
-  if (!sent && !isManualQuestionMode(env)) {
+  if (!sent) {
     await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
   }
   return true;
@@ -144,7 +140,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   await sendMessage(env, chatId, "تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
-  if (!sent && !isManualQuestionMode(env)) {
+  if (!sent) {
     await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
   }
 }
@@ -183,7 +179,6 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     await env.DB.prepare("UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?").bind(sessionId).run();
 
     // بازگشت به منوی اصلی
-    const { getMainMenuKeyboard } = require("../keyboards");
     await sendMessage(env, chatId, "تست متوقف شد. به منوی اصلی برگشتی 👇", {
         reply_markup: getMainMenuKeyboard()
     });
@@ -287,7 +282,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
     if (stats.total >= limit) {
       await sendReadingSummary(env, user, freshSession, chatId);
-    } else if (!isManualQuestionMode(env)) {
+    } else {
       await sendMessage(env, chatId, "متاسفانه در تولید سوال بعدی مشکلی پیش آمد. لطفاً کمی بعد تلاش کنید ❗️");
     }
   }
@@ -299,17 +294,10 @@ async function sendNextReadingQuestion(
   session: ReadingSession,
   chatId: number
 ): Promise<boolean> {
-  const manualQuestionMode = isManualQuestionMode(env);
-  const allowedSources = undefined;
-
-
-  // 2. انتخاب سوال
-  let question = await getNextQuestionForSession(env, session, user.id, allowedSources);
+  // انتخاب سوال
+  let question = await getNextQuestionForSession(env, session, user.id);
 
   if (!question) {
-    if (manualQuestionMode) {
-      await sendMessage(env, chatId, "برای این مورد هنوز تست دستی ثبت نشده ❗️");
-    }
     return false;
   }
 
@@ -391,8 +379,6 @@ async function sendReadingSummary(
   }
   
   const now = new Date().toISOString();
-  // ایمپورت داینامیک prepare برای جلوگیری از مشکل circular dependency احتمالی
-  const { prepare } = require("../../db/client"); 
   
   batchStatements.push(prepare(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, session.id]));
 
@@ -425,8 +411,10 @@ async function sendReadingSummary(
     });
   }
 
+  // ارسال خلاصه نتیجه به کاربر
+  await sendMessage(env, chatId, text);
+
   // برگرداندن کیبورد اصلی (Main Menu)
-  const { getMainMenuKeyboard } = require("../keyboards");
   await sendMessage(env, chatId, "خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟", {
       reply_markup: getMainMenuKeyboard()
   });

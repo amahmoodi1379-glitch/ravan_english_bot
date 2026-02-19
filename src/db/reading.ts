@@ -104,43 +104,6 @@ export async function recordQuestionShown(env: Env, session: ReadingSession, use
   return result.meta.changes > 0;
 }
 
-function prepareRecordAnswer(
-  env: Env,
-  session: ReadingSession,
-  userId: number,
-  questionId: number,
-  isCorrect: boolean
-): any[] {
-  const now = new Date().toISOString();
-  const stmts: any[] = [];
-
-  stmts.push(prepare(
-    env,
-    `
-    UPDATE user_text_question_history
-    SET is_correct = ?, answered_at = ?
-    WHERE reading_session_id = ?
-      AND user_id = ?
-      AND question_id = ?
-    `,
-    [isCorrect ? 1 : 0, now, session.id, userId, questionId]
-  ));
-
-  if (isCorrect) {
-    stmts.push(prepare(
-      env,
-      `
-      UPDATE reading_sessions
-      SET num_correct = num_correct + 1
-      WHERE id = ?
-      `,
-      [session.id]
-    ));
-  }
-
-  return stmts;
-}
-
 export async function getSessionStats(env: Env, sessionId: number): Promise<{ total: number; correct: number }> {
   const row = await queryOne<{ total: number; correct: number | null }>(env, `SELECT COUNT(*) AS total, SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct FROM user_text_question_history WHERE reading_session_id = ?`, [sessionId]);
   return { total: row?.total ?? 0, correct: row?.correct ?? 0 };

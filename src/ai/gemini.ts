@@ -1,4 +1,4 @@
-// ⚠️ اسم فایل gemini.ts است اما با OpenAI کار می‌کند (طبق تنظیمات شما)
+// ماژول ارتباط با OpenAI API
 
 import { Env } from "../types";
 
@@ -12,7 +12,7 @@ async function callOpenAI(env: Env, systemPrompt: string, userPrompt: string, js
     throw new Error("کلید هوش مصنوعی تنظیم نشده است.");
   }
 
-  const model = (env as any).OPENAI_MODEL || DEFAULT_MODEL;
+  const model = env.OPENAI_MODEL || DEFAULT_MODEL;
 
   const payload: any = {
     model: model,

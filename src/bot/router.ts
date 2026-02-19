@@ -337,7 +337,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
   if (text === TRAINING_MENU_BUTTON_BACK) {
-    const user = await getOrCreateUser(env, tgUser);
     await quitActiveMatch(env, user.id);
 
     await sendMessage(

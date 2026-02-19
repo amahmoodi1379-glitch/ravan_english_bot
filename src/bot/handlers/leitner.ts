@@ -87,25 +87,24 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   const prioritizedTypes = getQuestionStyleForStage(stage);
 
   let question: LeitnerQuestionRow | null = null;
-  const allowedSources = undefined;
 
   for (const testType of prioritizedTypes) {
     const styles = getStylesForType(testType);
     if (styles.length === 0) continue;
 
-    question = await pickQuestionForUserWord(env, user, word, styles, allowedSources);
+    question = await pickQuestionForUserWord(env, user, word, styles);
     if (question) break;
   }
 
   // اگر هیچ سوالی با اولویت‌های فعلی پیدا نشد، از کل سوالات ندیده انتخاب کن
   // (شامل استایل‌های legacy مثل synonym/antonym)
   if (!question) {
-     question = await pickRandomUnseenQuestion(env, user, word, allowedSources);
+     question = await pickRandomUnseenQuestion(env, user, word);
   }
 
   // اگر باز هم پیدا نشد (یعنی همه سوالات موجود رو دیده)، یک سوال تصادفی از کل سوالات انتخاب کن (تکراری)
   if (!question) {
-    question = await pickRandomQuestionAny(env, user, word, allowedSources);
+    question = await pickRandomQuestionAny(env, user, word);
   }
 
   if (!question) {

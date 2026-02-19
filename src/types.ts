@@ -3,11 +3,9 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
   ADMIN_PASSWORD?: string;
-  MANUAL_QUESTION_MODE?: string;
 
   OPENAI_API_KEY?: string;
-
-  GEMINI_API_KEY?: string;
+  OPENAI_MODEL?: string;
 
   DB: any; // D1 database binding
 }

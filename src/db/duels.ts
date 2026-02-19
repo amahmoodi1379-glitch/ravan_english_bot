@@ -4,6 +4,7 @@ import { addXpForDuelMatch, checkAndUpdateStreak } from "./xp";
 // خط مربوط به gemini حذف شد
 import { getUserById } from "./users"; 
 import { sendMessage } from "../bot/telegram-api";
+import { GAME_CONFIG } from "../config/constants";
 
 export type DuelDifficulty = "easy" | "hard";
 
@@ -49,7 +50,7 @@ export interface DuelFinalizeResult {
   match: DuelMatch;
 }
 
-const QUESTION_COUNT = 5;
+const QUESTION_COUNT = GAME_CONFIG.DUEL_QUESTION_COUNT;
 
 export async function getDuelMatchById(env: Env, id: number): Promise<DuelMatch | null> {
   return await queryOne<DuelMatch>(env, `SELECT * FROM duel_matches WHERE id = ?`, [id]);
