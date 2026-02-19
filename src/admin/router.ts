@@ -4,6 +4,33 @@ import { htmlResponse, redirect, parseForm, escapeHtml } from "../utils/response
 import { renderAdminLayout, renderWordForm, renderTextForm, renderUserForm } from "./views";
 import { insertWordQuestions } from "../db/word_questions";
 
+// === Rate Limiting برای ورود ادمین ===
+const loginAttempts = new Map<string, { count: number; firstAttempt: number }>();
+const RATE_LIMIT_MAX = 5;        // حداکثر تلاش
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // ۱۵ دقیقه
+
+function isLoginRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const record = loginAttempts.get(ip);
+  if (!record) return false;
+  if (now - record.firstAttempt > RATE_LIMIT_WINDOW) {
+    loginAttempts.delete(ip);
+    return false;
+  }
+  return record.count >= RATE_LIMIT_MAX;
+}
+
+function recordLoginAttempt(ip: string): void {
+  const now = Date.now();
+  const record = loginAttempts.get(ip);
+  if (!record || now - record.firstAttempt > RATE_LIMIT_WINDOW) {
+    loginAttempts.set(ip, { count: 1, firstAttempt: now });
+  } else {
+    record.count++;
+  }
+}
+// ==========================================
+
 type QuestionFormPayload = {
   questionText: string;
   optionA: string;
@@ -111,11 +138,19 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   }
 
   if (request.method === "POST" && url.pathname === "/admin/login") {
+    const clientIp = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+    
+    if (isLoginRateLimited(clientIp)) {
+      const content = `<div class="error">تعداد تلاش‌های ورود بیش از حد مجاز است. لطفاً ۱۵ دقیقه دیگر تلاش کنید.</div>`;
+      return htmlResponse(renderAdminLayout("محدودیت ورود", content, "home"), 429);
+    }
+
     const form = await parseForm(request);
     const password = (form.get("password") || "").toString();
     const expected = env.ADMIN_PASSWORD || "";
 
     if (!expected || password !== expected) {
+      recordLoginAttempt(clientIp);
       const content = `
         <div class="error">رمز عبور اشتباه است یا تنظیم نشده.</div>
         <form method="post" action="/admin/login">
@@ -511,7 +546,13 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
         <td>${t.level ?? "-"}</td>
         <td style="text-align:center; font-size:15px;">${t.has_test ? "✅" : "⚪"}</td>
         <td><span class="${t.is_active ? "badge active" : "badge inactive"}">${t.is_active ? "فعال" : "غیرفعال"}</span></td>
-        <td class="actions"><a href="/admin/texts/edit?id=${t.id}">ویرایش</a></td>
+        <td class="actions" style="display:flex; align-items:center; gap:5px;">
+          <a href="/admin/texts/edit?id=${t.id}">ویرایش</a>
+          <form method="post" action="/admin/texts/delete" onsubmit="return confirm('⚠️ اخطار: با حذف این متن، تمام سوالات، سشن‌های مطالعه و سوابق مربوط به آن برای همیشه پاک می‌شود. آیا مطمئن هستید؟');" style="margin:0;">
+            <input type="hidden" name="id" value="${t.id}" />
+            <button type="submit" class="danger" style="padding:2px 6px; font-size:11px;">حذف</button>
+          </form>
+        </td>
       </tr>
     `).join("");
     const content = `
@@ -672,6 +713,28 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     } else {
       await execute(env, `INSERT INTO reading_texts (title, body_en, level, is_active) VALUES (?, ?, ?, ?)`, [title, bodyEn, level, isActive]);
     }
+    return redirect("/admin/texts");
+  }
+
+  // === حذف امن متن و تمام وابستگی‌هایش ===
+  if (request.method === "POST" && url.pathname === "/admin/texts/delete") {
+    const form = await parseForm(request);
+    const id = Number(form.get("id"));
+
+    if (id) {
+      // ۱. حذف تاریخچه پاسخ‌های کاربران به سوالات این متن
+      await execute(env, `DELETE FROM user_text_question_history WHERE question_id IN (SELECT id FROM text_questions WHERE text_id = ?)`, [id]);
+
+      // ۲. حذف سوالات این متن
+      await execute(env, `DELETE FROM text_questions WHERE text_id = ?`, [id]);
+
+      // ۳. حذف سشن‌های مطالعه مرتبط
+      await execute(env, `DELETE FROM reading_sessions WHERE text_id = ?`, [id]);
+
+      // ۴. حذف خود متن
+      await execute(env, `DELETE FROM reading_texts WHERE id = ?`, [id]);
+    }
+
     return redirect("/admin/texts");
   }
 

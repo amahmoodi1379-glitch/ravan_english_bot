@@ -378,6 +378,23 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
+  // === فیکس: اگر کاربر در میانه تست درک مطلب است و کیبورد حذف شده ===
+  const activeReadingSession = await queryOne<{ id: number }>(
+    env,
+    `SELECT id FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
+    [user.id]
+  );
+  if (activeReadingSession) {
+    await sendMessage(
+      env,
+      chatId,
+      "📖 تو الان در حال تست درک مطلب هستی! لطفاً روی دکمه‌های زیر سوالات کلیک کن.\nاگر می‌خوای تست رو رها کنی، دکمه «❌ انصراف و خروج» رو بزن یا از منوی زیر استفاده کن 👇",
+      { reply_markup: getMainMenuKeyboard() }
+    );
+    return;
+  }
+  // ============================================================
+
   await sendMessage(
     env,
     chatId,

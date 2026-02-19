@@ -357,23 +357,22 @@ export async function cleanupOldMatches(env: Env): Promise<void> {
     `DELETE FROM duel_answers 
      WHERE duel_id IN (
        SELECT id FROM duel_matches 
-       WHERE status = 'waiting' AND created_at < datetime('now', '-3 days')
-     )`
-  );
+       WHERE status = 'waiting' AND created_at < datetime('now', '-15 minutes')
+     )`);
 
   await execute(
     env,
     `DELETE FROM duel_questions 
      WHERE duel_id IN (
        SELECT id FROM duel_matches 
-       WHERE status = 'waiting' AND created_at < datetime('now', '-3 days')
+       WHERE status = 'waiting' AND created_at < datetime('now', '-15 minutes')
      )`
   );
 
   await execute(
     env,
     `DELETE FROM duel_matches 
-     WHERE status = 'waiting' AND created_at < datetime('now', '-3 days')`
+     WHERE status = 'waiting' AND created_at < datetime('now', '-15 minutes')`
   );
 }
 

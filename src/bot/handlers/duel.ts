@@ -4,6 +4,7 @@ import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, getUserById, DbUser } from "../../db/users";
 import {
   DuelDifficulty,
+  DuelMatch,
   getDuelMatchById,
   findWaitingMatch,
   createDuelMatch,
@@ -52,35 +53,53 @@ async function startDuelForUser(env: Env, update: TelegramUpdate, difficulty: Du
   // ===========================================
   await sendMessage(env, chatId, "⏳ در حال بررسی و آماده‌سازی دوئل... (ممکن است چند ثانیه طول بکشد)");
 
-  let match = await findWaitingMatch(env, difficulty, user.id);
+  const MAX_JOIN_RETRIES = 3;
+  let match: DuelMatch | null = null;
+  let joined = false;
 
-  if (!match) {
-    match = await createDuelMatch(env, difficulty, user.id);
-    
-    await ensureDuelQuestions(env, match.id, difficulty);
+  for (let attempt = 0; attempt < MAX_JOIN_RETRIES; attempt++) {
+    match = await findWaitingMatch(env, difficulty, user.id);
 
-    const totalQ = await getTotalQuestionsInMatch(env, match.id);
-    
-    if (totalQ === 0) {
-        await env.DB.prepare("DELETE FROM duel_matches WHERE id = ?").bind(match.id).run();
-        await sendMessage(env, chatId, "متاسفانه نتوانستیم سوالات دوئل را آماده کنیم. لطفاً چند لحظه دیگر دوباره تلاش کنید ❗️");
-        return;
+    if (!match) {
+      // هیچ بازی منتظری نیست، یک بازی جدید بساز
+      match = await createDuelMatch(env, difficulty, user.id);
+      
+      await ensureDuelQuestions(env, match.id, difficulty);
+
+      const totalQ = await getTotalQuestionsInMatch(env, match.id);
+      
+      if (totalQ === 0) {
+          await env.DB.prepare("DELETE FROM duel_matches WHERE id = ?").bind(match.id).run();
+          await sendMessage(env, chatId, "متاسفانه نتوانستیم سوالات دوئل را آماده کنیم. لطفاً چند لحظه دیگر دوباره تلاش کنید ❗️");
+          return;
+      }
+      
+      const introText = difficulty === "easy" ? "یک دوئل آسان ساخته شد. منتظر حریف..." : "یک دوئل سخت ساخته شد. منتظر حریف...";
+      await sendMessage(env, chatId, introText);
+      await sendNextDuelQuestion(env, match.id, user, chatId);
+      return;
     }
-    
-    const introText = difficulty === "easy" ? "یک دوئل آسان ساخته شد. منتظر حریف..." : "یک دوئل سخت ساخته شد. منتظر حریف...";
-    await sendMessage(env, chatId, introText);
-    await sendNextDuelQuestion(env, match.id, user, chatId);
-    return;
+
+    if (!match.player2_id) {
+      const joinedMatch = await joinDuelMatch(env, match.id, user.id);
+      
+      if (!joinedMatch) {
+        // کسی زودتر جوین شده، دوباره تلاش کن
+        continue;
+      }
+      
+      match = joinedMatch;
+      joined = true;
+      break;
+    }
+
+    joined = true;
+    break;
   }
 
-  if (!match.player2_id) {
-    const joinedMatch = await joinDuelMatch(env, match.id, user.id);
-    
-    if (!joinedMatch) {
-      return startDuelForUser(env, update, difficulty);
-    }
-    
-    match = joinedMatch;
+  if (!joined || !match) {
+    await sendMessage(env, chatId, "⚠️ ترافیک بالاست، لطفاً چند لحظه دیگر مجدداً تلاش کنید.");
+    return;
   }
 
   await ensureDuelQuestions(env, match.id, difficulty);
