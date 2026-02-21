@@ -42,6 +42,10 @@ export function sm2(prev: Sm2State, quality: number): Sm2Result {
   if (ef < 1.3) {
     ef = 1.3;
   }
+  const MAX_INTERVAL = 180; // حداکثر فاصله ۶ ماه (یا 365)
+  if (interval > MAX_INTERVAL) {
+    interval = MAX_INTERVAL;
+  }
 
   return { interval, repetition, ef };
 }
