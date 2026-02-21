@@ -177,7 +177,7 @@ export async function prepareUpdateSm2(
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const quality = isCorrect ? 5 : 2;
+  const quality = isCorrect ? 4 : 2;
 
   // === اصلاح شده: محاسبه هوشمند فاصله مرور (Fix Bug) ===
   let usedInterval = state.interval_days || 1;
