@@ -203,6 +203,7 @@ Question Distribution & Style Mapping:
 
 Strict Guidelines:
 - Level A2: Keep definitions and sentences simple.
+- NO GRAMMAR: Strictly avoid testing grammar rules. Do not create questions where the distractors are just different verb tenses or grammatical forms. The focus must be 100% on vocabulary and the meaning of the target word.
 - Variety: Ensure the definitions and sentences in styles 3, 4, and 5 are unique and different from each other.
 - Distractors: Must be incorrect but plausible (same part of speech).
 - Correct Index: You must calculate the index (0, 1, 2, or 3) of the correct answer within the options array.
