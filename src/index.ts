@@ -69,13 +69,19 @@ export default {
       }
 
       // ۲. سشن‌های ادمین منقضی شده
-      await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
+      try {
+        await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
+      } catch (err) { console.error("Cleanup admin_sessions error:", err); }
 
       // ۳. لاگ فعالیت
-      await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");
+      try {
+        await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");
+      } catch (err) { console.error("Cleanup activity_log error:", err); }
 
       // ۴. پاکسازی سشن‌های ریدینگ (هم نیمه‌کاره و هم کنسل‌شده) که قدیمی شده‌اند
-      await execute(env, `DELETE FROM reading_sessions WHERE (status = 'in_progress' OR status = 'cancelled') AND started_at < datetime('now', '-1 day')`);
+      try {
+        await execute(env, `DELETE FROM reading_sessions WHERE (status = 'in_progress' OR status = 'cancelled') AND started_at < datetime('now', '-1 day')`);
+      } catch (err) { console.error("Cleanup reading_sessions error:", err); }
 
       console.log("✅ Cron job complete.");
     })());

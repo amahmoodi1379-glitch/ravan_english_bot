@@ -181,7 +181,7 @@ async function processWord(
   }
 }
 
-// چک کردن circuit breaker (اگر ۵ خطای پشت سر هم در ۱۰ دقیقه اخیر)
+// چک کردن circuit breaker (اگر ۵ خطا در ۳۰ دقیقه اخیر)
 async function shouldPause(env: Env): Promise<boolean> {
   const recentErrors = await queryOne<{ count: number }>(
     env,
@@ -189,12 +189,12 @@ async function shouldPause(env: Env): Promise<boolean> {
     SELECT COUNT(*) as count
     FROM ai_generation_log
     WHERE status = 'error'
-      AND created_at > datetime('now', '-10 minutes')
+      AND updated_at > datetime('now', '-30 minutes')
     `
   );
   
   if (recentErrors && recentErrors.count >= 5) {
-    console.warn(`Circuit breaker triggered: ${recentErrors.count} recent errors. Pausing...`);
+    console.warn(`Circuit breaker triggered: ${recentErrors.count} recent errors. Pausing for 30 minutes...`);
     return true;
   }
   return false;
