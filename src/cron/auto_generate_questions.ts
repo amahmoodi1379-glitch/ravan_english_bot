@@ -200,11 +200,29 @@ async function shouldPause(env: Env): Promise<boolean> {
   return false;
 }
 
+// چک کردن وضعیت فعال/غیرفعال از دیتابیس
+async function isAiGenerationEnabled(env: Env): Promise<boolean> {
+  try {
+    const row = await queryOne<{ value: string }>(
+      env,
+      "SELECT value FROM system_settings WHERE key = 'ai_generation_enabled'"
+    );
+    return row?.value === "1";
+  } catch {
+    return true; // در صورت خطا، پیش‌فرض فعال
+  }
+}
+
 // تابع اصلی cron job
 export async function runAutoQuestionGeneration(env: Env): Promise<{ processed: number; success: number; errors: number }> {
   const apiKey = env.OPENAI_API_KEY;
   if (!apiKey) {
     console.error("OPENAI_API_KEY not configured");
+    return { processed: 0, success: 0, errors: 0 };
+  }
+
+  // چک کردن وضعیت فعال/غیرفعال
+  if (!(await isAiGenerationEnabled(env))) {
     return { processed: 0, success: 0, errors: 0 };
   }
 

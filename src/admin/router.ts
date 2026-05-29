@@ -888,6 +888,21 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   }
   // === پایان کد جدید ===
 
+  // --- تغییر وضعیت AI (start/stop) ---
+  if (request.method === "POST" && url.pathname === "/admin/ai-logs/toggle") {
+    const currentRow = await queryOne<{ value: string }>(env, "SELECT value FROM system_settings WHERE key = 'ai_generation_enabled'");
+    const current = currentRow?.value === "1";
+    const newValue = current ? "0" : "1";
+    await execute(env, `INSERT INTO system_settings (key, value, updated_at) VALUES ('ai_generation_enabled', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')`, [newValue, newValue]);
+    return redirect("/admin/ai-logs");
+  }
+
+  // --- ریست کردن خطاها (حذف رکوردهای error برای retry) ---
+  if (request.method === "POST" && url.pathname === "/admin/ai-logs/reset-errors") {
+    await execute(env, "DELETE FROM ai_generation_log WHERE status = 'error'");
+    return redirect("/admin/ai-logs");
+  }
+
   // --- لاگ تولید سوالات با AI ---
   if (url.pathname === "/admin/ai-logs") {
     const statusFilter = (url.searchParams.get("status") || "").trim();
@@ -897,17 +912,25 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const limit = 50;
     const offset = (page - 1) * limit;
 
-    // آماری
+    // وضعیت فعال/غیرفعال
+    const settingRow = await queryOne<{ value: string }>(env, "SELECT value FROM system_settings WHERE key = 'ai_generation_enabled'");
+    const isEnabled = settingRow?.value !== "0";
+
+    // آمار کلی
     const stats = await queryOne<{ total: number; success: number; error: number; pending: number }>(
       env,
-      `
-      SELECT 
+      `SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success,
         SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
-      FROM ai_generation_log
-      `
+      FROM ai_generation_log`
+    );
+
+    // تعداد واژگان باقی‌مانده
+    const remaining = await queryOne<{ count: number }>(
+      env,
+      `SELECT COUNT(*) as count FROM words w LEFT JOIN word_questions wq ON wq.word_id = w.id WHERE w.is_active = 1 AND wq.id IS NULL`
     );
 
     let whereSql = "WHERE 1 = 1";
@@ -917,134 +940,141 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       params.push(statusFilter);
     }
 
-    const countRow = await queryOne<{ total: number }>(
-      env,
-      `SELECT COUNT(*) as total FROM ai_generation_log ${whereSql}`,
-      params
-    );
+    const countRow = await queryOne<{ total: number }>(env, `SELECT COUNT(*) as total FROM ai_generation_log ${whereSql}`, params);
     const totalCount = countRow?.total || 0;
     const totalPages = Math.ceil(totalCount / limit) || 1;
 
     const logs = await queryAll<any>(
       env,
-      `
-      SELECT 
-        agl.id,
-        agl.word_id,
-        agl.word_english,
-        agl.status,
-        agl.generated_count,
-        agl.error_message,
-        agl.input_tokens,
-        agl.output_tokens,
-        agl.created_at,
-        agl.updated_at,
-        CASE WHEN wq.id IS NOT NULL THEN 1 ELSE 0 END as has_questions
+      `SELECT 
+        agl.id, agl.word_id, agl.word_english, agl.status,
+        agl.generated_count, agl.error_message,
+        agl.input_tokens, agl.output_tokens,
+        agl.created_at, agl.updated_at
       FROM ai_generation_log agl
-      LEFT JOIN word_questions wq ON wq.word_id = agl.word_id
       ${whereSql}
-      ORDER BY agl.created_at DESC
-      LIMIT ? OFFSET ?
-      `,
+      ORDER BY agl.id DESC
+      LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
 
     const statusBadge = (status: string) => {
-      if (status === "success") return `<span class="badge active">موفق</span>`;
-      if (status === "error") return `<span class="badge inactive">خطا</span>`;
-      return `<span class="badge" style="background:#fef3c7;color:#92400e">در حال پردازش</span>`;
+      if (status === "success") return `<span class="badge active">✅ موفق</span>`;
+      if (status === "error") return `<span class="badge inactive">❌ خطا</span>`;
+      return `<span class="badge" style="background:#fef3c7;color:#92400e">⏳ در صف</span>`;
     };
 
-    const rowsHtml = logs.map((log) => `
+    const rowsHtml = logs.map((log: any) => {
+      const errFull = log.error_message ? escapeHtml(log.error_message) : "";
+      const errShort = log.error_message ? escapeHtml(log.error_message.substring(0, 80)) : "-";
+      const hasExpand = log.error_message && log.error_message.length > 80;
+      return `
       <tr>
-        <td>${log.id}</td>
-        <td><a href="/admin/words/edit?id=${log.word_id}">${escapeHtml(log.word_english)}</a></td>
+        <td style="font-size:11px;color:#999;">${log.id}</td>
+        <td><a href="/admin/words/edit?id=${log.word_id}" style="font-weight:600;">${escapeHtml(log.word_english)}</a></td>
         <td>${statusBadge(log.status)}</td>
-        <td>${log.generated_count}</td>
-        <td style="font-size:11px;">${log.input_tokens ?? "-"} / ${log.output_tokens ?? "-"}</td>
-        <td style="font-size:11px; color:${log.status === "error" ? "#dc2626" : "#666"};">
-          ${log.error_message ? escapeHtml(log.error_message.substring(0, 50)) : "-"}
+        <td style="text-align:center;">${log.generated_count || 0}</td>
+        <td style="font-size:11px;color:#666;">${log.input_tokens ?? "-"} / ${log.output_tokens ?? "-"}</td>
+        <td style="font-size:11px; max-width:300px;">
+          ${log.status === "error" ? `
+            <span style="color:#dc2626;">${errShort}</span>
+            ${hasExpand ? `<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:10px;color:#999;">نمایش کامل</summary><pre style="font-size:10px;white-space:pre-wrap;color:#dc2626;background:#fff5f5;padding:6px;border-radius:4px;margin-top:4px;">${errFull}</pre></details>` : ""}
+          ` : "-"}
         </td>
-        <td>${log.created_at.substring(0, 16).replace("T", " ")}</td>
-        <td>${log.has_questions ? "✅" : "⚪"}</td>
-      </tr>
-    `).join("");
-
-    const filterHtml = `
-      <form method="get" action="/admin/ai-logs" style="display:flex; gap:8px; margin-bottom:12px;">
-        <select name="status" style="margin:0; width:auto;">
-          <option value="">همه وضعیت‌ها</option>
-          <option value="success" ${statusFilter === "success" ? "selected" : ""}>موفق</option>
-          <option value="error" ${statusFilter === "error" ? "selected" : ""}>خطا</option>
-          <option value="pending" ${statusFilter === "pending" ? "selected" : ""}>در حال پردازش</option>
-        </select>
-        <button type="submit" class="secondary">فیلتر</button>
-        ${statusFilter ? `<a href="/admin/ai-logs"><button type="button" class="secondary">پاک کردن</button></a>` : ""}
-      </form>
-    `;
-
-    const paginationHtml = `
-      <div style="margin-top: 16px; display: flex; gap: 6px; align-items: center; justify-content: center; direction: ltr; flex-wrap: wrap;">
-        ${page > 1 ? `<a href="/admin/ai-logs?status=${statusFilter}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
-        <form method="get" action="/admin/ai-logs" style="display:flex; align-items:center; gap:5px; margin:0;">
-          <input type="hidden" name="status" value="${statusFilter}" />
-          <span style="font-size: 13px;">Page</span>
-          <input type="number" name="page" value="${page}" min="1" max="${totalPages}" style="width: 60px; text-align: center; padding: 4px; margin: 0; border: 1px solid #ccc; border-radius: 4px;" />
-          <span style="font-size: 13px;">of ${totalPages}</span>
-          <button type="submit" class="secondary" style="padding: 4px 8px; font-size: 12px; background: #2563eb; color: white; border: none;">Go</button>
-        </form>
-        ${page < totalPages ? `<a href="/admin/ai-logs?status=${statusFilter}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
-      </div>
-    `;
+        <td style="font-size:11px;color:#666;">${(log.updated_at || log.created_at).substring(0, 16).replace("T", " ")}</td>
+      </tr>`;
+    }).join("");
 
     const statsHtml = `
-      <div style="display:flex; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
-        <div style="background:#f3f4f6; padding:12px 16px; border-radius:8px; min-width:120px;">
-          <div style="font-size:11px; color:#666;">کل درخواست‌ها</div>
-          <div style="font-size:20px; font-weight:bold;">${stats?.total || 0}</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin-bottom:20px;">
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:14px; border-radius:10px; text-align:center;">
+          <div style="font-size:11px; color:#64748b; margin-bottom:4px;">واژه باقی‌مانده</div>
+          <div style="font-size:26px; font-weight:700; color:#0f172a;">${remaining?.count ?? "?"}</div>
         </div>
-        <div style="background:#dcfce7; padding:12px 16px; border-radius:8px; min-width:120px;">
-          <div style="font-size:11px; color:#166534;">موفق</div>
-          <div style="font-size:20px; font-weight:bold; color:#166534;">${stats?.success || 0}</div>
+        <div style="background:#f0fdf4; border:1px solid #bbf7d0; padding:14px; border-radius:10px; text-align:center;">
+          <div style="font-size:11px; color:#166534; margin-bottom:4px;">موفق</div>
+          <div style="font-size:26px; font-weight:700; color:#166534;">${stats?.success || 0}</div>
         </div>
-        <div style="background:#fee2e2; padding:12px 16px; border-radius:8px; min-width:120px;">
-          <div style="font-size:11px; color:#dc2626;">خطا</div>
-          <div style="font-size:20px; font-weight:bold; color:#dc2626;">${stats?.error || 0}</div>
+        <div style="background:#fff7ed; border:1px solid #fed7aa; padding:14px; border-radius:10px; text-align:center;">
+          <div style="font-size:11px; color:#9a3412; margin-bottom:4px;">کل پردازش‌شده</div>
+          <div style="font-size:26px; font-weight:700; color:#9a3412;">${stats?.total || 0}</div>
         </div>
-        <div style="background:#fef3c7; padding:12px 16px; border-radius:8px; min-width:120px;">
-          <div style="font-size:11px; color:#92400e;">در حال پردازش</div>
-          <div style="font-size:20px; font-weight:bold; color:#92400e;">${stats?.pending || 0}</div>
+        <div style="background:#fef2f2; border:1px solid #fecaca; padding:14px; border-radius:10px; text-align:center;">
+          <div style="font-size:11px; color:#dc2626; margin-bottom:4px;">خطا</div>
+          <div style="font-size:26px; font-weight:700; color:#dc2626;">${stats?.error || 0}</div>
         </div>
-      </div>
-    `;
+      </div>`;
+
+    const controlHtml = `
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:16px; background:${isEnabled ? "#f0fdf4" : "#fef2f2"}; border:1px solid ${isEnabled ? "#bbf7d0" : "#fecaca"}; border-radius:10px; margin-bottom:20px;">
+        <div style="flex:1; min-width:200px;">
+          <div style="font-weight:700; font-size:14px; color:${isEnabled ? "#166534" : "#dc2626"};">
+            ${isEnabled ? "🟢 تولید خودکار فعال است" : "🔴 تولید خودکار متوقف شده"}
+          </div>
+          <div style="font-size:12px; color:#666; margin-top:3px;">
+            ${isEnabled ? "هر دقیقه تا ۱۰ واژه پردازش می‌شود" : "Cron اجرا می‌شود ولی هیچ واژه‌ای پردازش نمی‌شود"}
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <form method="post" action="/admin/ai-logs/toggle" style="margin:0;">
+            <button type="submit" style="background:${isEnabled ? "#dc2626" : "#059669"}; color:white; padding:8px 16px; border-radius:6px; border:none; cursor:pointer; font-size:13px; font-weight:600;">
+              ${isEnabled ? "⏹ متوقف کردن" : "▶️ شروع مجدد"}
+            </button>
+          </form>
+          ${(stats?.error || 0) > 0 ? `
+          <form method="post" action="/admin/ai-logs/reset-errors" onsubmit="return confirm('خطاها حذف می‌شوند و دوباره امتحان می‌شوند. مطمئنی؟');" style="margin:0;">
+            <button type="submit" style="background:#f59e0b; color:white; padding:8px 16px; border-radius:6px; border:none; cursor:pointer; font-size:13px;">
+              🔄 تلاش مجدد برای خطاها (${stats?.error || 0})
+            </button>
+          </form>` : ""}
+        </div>
+      </div>`;
+
+    const filterHtml = `
+      <form method="get" action="/admin/ai-logs" style="display:flex; gap:8px; margin-bottom:12px; align-items:center;">
+        <select name="status" style="margin:0; width:auto; padding:5px 8px;">
+          <option value="">همه وضعیت‌ها</option>
+          <option value="success" ${statusFilter === "success" ? "selected" : ""}>✅ موفق</option>
+          <option value="error" ${statusFilter === "error" ? "selected" : ""}>❌ خطا</option>
+          <option value="pending" ${statusFilter === "pending" ? "selected" : ""}>⏳ در صف</option>
+        </select>
+        <button type="submit" class="secondary">فیلتر</button>
+        ${statusFilter ? `<a href="/admin/ai-logs"><button type="button" class="secondary">همه</button></a>` : ""}
+        <span style="font-size:12px; color:#666; margin-right:auto;">نمایش ${totalCount} رکورد</span>
+      </form>`;
+
+    const paginationHtml = totalPages <= 1 ? "" : `
+      <div style="margin-top:16px; display:flex; gap:6px; align-items:center; justify-content:center; direction:ltr; flex-wrap:wrap;">
+        ${page > 1 ? `<a href="/admin/ai-logs?status=${statusFilter}&page=${page-1}"><button class="secondary">‹ قبلی</button></a>` : ""}
+        <span style="font-size:13px; padding:6px 12px;">صفحه ${page} از ${totalPages}</span>
+        ${page < totalPages ? `<a href="/admin/ai-logs?status=${statusFilter}&page=${page+1}"><button class="secondary">بعدی ›</button></a>` : ""}
+      </div>`;
 
     const content = `
-      <h3>📊 آمار تولید سوالات با AI</h3>
+      ${controlHtml}
       ${statsHtml}
-      <h3>📋 لاگ‌های اخیر</h3>
+      <h3 style="margin-bottom:10px;">📋 لاگ‌های تولید</h3>
       ${filterHtml}
-      <table>
+      <div style="overflow-x:auto;">
+      <table style="table-layout:auto;">
         <thead>
           <tr>
-            <th>ID</th>
+            <th style="width:40px;">#</th>
             <th>واژه</th>
-            <th>وضعیت</th>
-            <th>تعداد سوالات</th>
-            <th>توکن‌ها (in/out)</th>
+            <th style="width:90px;">وضعیت</th>
+            <th style="width:60px;">سوالات</th>
+            <th style="width:90px;">توکن‌ها</th>
             <th>پیام خطا</th>
-            <th>زمان</th>
-            <th>تست؟</th>
+            <th style="width:120px;">زمان</th>
           </tr>
         </thead>
-        <tbody>
-          ${rowsHtml || "<tr><td colspan='8'>هیچ لاگی یافت نشد.</td></tr>"}
-        </tbody>
+        <tbody>${rowsHtml || "<tr><td colspan='7' style='text-align:center; padding:20px; color:#999;'>هیچ لاگی یافت نشد.</td></tr>"}</tbody>
       </table>
+      </div>
       ${paginationHtml}
-      <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} logs</div>
     `;
-    return htmlResponse(renderAdminLayout("لاگ تولید AI", content, "ai-logs"));
+    return htmlResponse(renderAdminLayout("🤖 مدیریت تولید AI", content, "ai-logs"));
   }
-  
+
   return htmlResponse("Not Found", 404);
 }
