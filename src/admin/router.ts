@@ -894,6 +894,10 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const current = currentRow?.value === "1";
     const newValue = current ? "0" : "1";
     await execute(env, `INSERT INTO system_settings (key, value, updated_at) VALUES ('ai_generation_enabled', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')`, [newValue, newValue]);
+    // اگر ادمین شروع مجدد زد، circuit breaker را ریست کن
+    if (!current) {
+      await execute(env, `UPDATE ai_generation_log SET updated_at = datetime('now', '-31 minutes') WHERE status = 'error'`);
+    }
     return redirect("/admin/ai-logs");
   }
 
