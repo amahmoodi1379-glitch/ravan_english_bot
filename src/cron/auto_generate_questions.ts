@@ -19,9 +19,9 @@ interface GenerationLog {
   error_message?: string;
 }
 
-const BATCH_SIZE = 10; // تعداد واژه در هر اجرا
-const DELAY_BETWEEN_REQUESTS_MS = 3000; // ۳ ثانیه فاصله بین درخواست‌ها
-const MAX_RETRIES = 3;
+const BATCH_SIZE = 30; // تعداد واژه در هر اجرا
+const PARALLEL_SIZE = 5; // تعداد واژه‌های موازی در هر گروه
+const MAX_RETRIES = 2;
 
 // پیدا کردن واژگان فعال بدون سوال
 async function findWordsWithoutQuestions(env: Env): Promise<WordWithoutQuestions[]> {
@@ -128,9 +128,8 @@ async function generateWithRetry(
         await logError(env, word.id, `Failed after ${MAX_RETRIES} attempts: ${errorMsg}`);
         return null;
       }
-      
-      // Exponential backoff: 2s, 4s, 8s
-      await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+      // کمی صبر بین retry
+      await new Promise(r => setTimeout(r, 500));
     }
   }
   return null;
@@ -243,18 +242,12 @@ export async function runAutoQuestionGeneration(env: Env): Promise<{ processed: 
   let success = 0;
   let errors = 0;
 
-  // پردازش sequential با delay
-  for (const word of words) {
-    const result = await processWord(env, apiKey, word);
-    if (result) {
-      success++;
-    } else {
-      errors++;
-    }
-
-    // فاصله بین درخواست‌ها (به جز آخرین مورد)
-    if (word !== words[words.length - 1]) {
-      await new Promise(r => setTimeout(r, DELAY_BETWEEN_REQUESTS_MS));
+  // پردازش موازی گروه‌های PARALLEL_SIZE تایی
+  for (let i = 0; i < words.length; i += PARALLEL_SIZE) {
+    const group = words.slice(i, i + PARALLEL_SIZE);
+    const results = await Promise.all(group.map(word => processWord(env, apiKey, word)));
+    for (const r of results) {
+      if (r) success++; else errors++;
     }
   }
 
