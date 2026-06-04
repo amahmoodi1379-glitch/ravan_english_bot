@@ -26,6 +26,7 @@ import {
   isAdmin,
   getAdminByTelegramId,
   addAdmin,
+  removeAdmin,
   getAllAdmins,
   insertLicense,
   findUserWithLicense,
@@ -33,7 +34,6 @@ import {
   unbanUser,
   getApprovedUsers
 } from "../../db/admin";
-import { execute } from "../../db/client";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -170,19 +170,47 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
       }
 
       if (ann) {
+        // Detect content type and caption for explicit confirmation message
+        let contentType = "متن";
+        let caption = "";
+        if (msg.photo && msg.photo.length > 0) {
+          contentType = "🖼️ عکس";
+          caption = msg.caption || "";
+        } else if (msg.video) {
+          contentType = "🎥 ویدیو";
+          caption = msg.caption || "";
+        } else if (msg.audio) {
+          contentType = "🎵 موسیقی";
+          caption = msg.caption || "";
+        } else if (msg.document) {
+          contentType = "📄 سند/فایل";
+          caption = msg.caption || "";
+        } else if (msg.voice) {
+          contentType = "🎙️ پیام صوتی";
+          caption = msg.caption || "";
+        } else if (msg.text) {
+          contentType = "📝 متن";
+          caption = msg.text;
+        }
+
         adminStates.set(telegramId, {
           action: 'await_announcement_confirm',
           announcement: ann
         });
-        await sendMessage(env, chatId,
-          `📢 محتوای اطلاعیه دریافت شد.\n\nPreview بالا 👆\n\nآیا برای ارسال به همه کاربران تایید می‌کنید؟`,
-          {
-            reply_markup: getAdminSubMenuKeyboard([
-              [ADMIN_SUBMENU_BUTTON_CONFIRM],
-              [ADMIN_SUBMENU_BUTTON_CANCEL]
-            ])
-          }
-        );
+
+        let confirmMsg = `📢 <b>محتوای اطلاعیه دریافت شد</b>\n\n📌 نوع: ${contentType}`;
+        if (caption) {
+          confirmMsg += `\n✏️ متن: ${caption.substring(0, 200)}${caption.length > 200 ? '...' : ''}`;
+        }
+        confirmMsg += `\n\nآیا برای ارسال به همه کاربران تایید می‌کنید؟`;
+
+        await sendMessage(env, chatId, confirmMsg, {
+          parse_mode: "HTML",
+          reply_markup: getAdminSubMenuKeyboard([
+            [ADMIN_SUBMENU_BUTTON_CONFIRM],
+            [ADMIN_SUBMENU_BUTTON_CANCEL]
+          ])
+        });
         return true;
       }
 
@@ -308,7 +336,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
       const targetId = parseInt(text);
 
       if (state.adminAction === 'add') {
-        const ok = await addAdmin(env, targetId, undefined, undefined, admin.id);
+        const ok = await addAdmin(env, targetId, admin.id);
         await sendMessage(env, chatId,
           ok
             ? `✅ ادمین با آیدی <code>${targetId}</code> اضافه شد.`
@@ -438,15 +466,6 @@ async function showAdminMgmtMenu(env: Env, chatId: number): Promise<void> {
       [ADMIN_SUBMENU_BUTTON_BACK]
     ])
   });
-}
-
-async function removeAdmin(env: Env, telegramId: number): Promise<boolean> {
-  const result = await execute(
-    env,
-    "DELETE FROM admins WHERE telegram_id = ? AND is_super_admin = 0",
-    [telegramId]
-  );
-  return result.meta.changes > 0;
 }
 
 async function sendAnnouncement(

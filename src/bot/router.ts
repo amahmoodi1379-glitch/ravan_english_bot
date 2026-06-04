@@ -135,7 +135,18 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   const chatId = message.chat.id;
   const tgUser = message.from;
 
-  if (!text || !tgUser) {
+  // Must have a user to proceed
+  if (!tgUser) {
+    return;
+  }
+
+  // Check admin commands FIRST — this handles text AND media (photos/videos/etc.)
+  // because the admin might be in 'await_announcement_content' state
+  const adminHandled = await handleAdminCommand(env, update);
+  if (adminHandled) return;
+
+  // From here on, text is required for normal user flows
+  if (!text) {
     return;
   }
 
@@ -270,10 +281,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     await sendMessage(env, chatId, banMessage);
     return;
   }
-
-  // Check for admin commands first (before user authentication)
-  const adminHandled = await handleAdminCommand(env, update);
-  if (adminHandled) return;
 
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);
