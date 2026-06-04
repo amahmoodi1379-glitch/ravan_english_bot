@@ -275,10 +275,8 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   }
 
   // Check for admin commands first (before user authentication)
-  if (text === "/admin") {
-    await handleAdminCommand(env, update);
-    return;
-  }
+  const adminHandled = await handleAdminCommand(env, update);
+  if (adminHandled) return;
 
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);

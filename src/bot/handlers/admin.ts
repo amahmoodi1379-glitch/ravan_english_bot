@@ -1,6 +1,7 @@
 import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
+import { getMainMenuKeyboard } from "../keyboards";
 import { 
   isAdmin, 
   getAdminByTelegramId, 
@@ -39,15 +40,16 @@ const ADMIN_CB = {
   ANNOUNCE_CONFIRM: "admin_announce_confirm",
   ANNOUNCE_SEND: "admin_announce_send",
   ANNOUNCE_REPORT: "admin_announce_report",
-  BACK: "admin_back"
+  BACK: "admin_back",
+  EXIT: "admin_exit"
 };
 
 // Admin state management (in production, use proper state management)
 const adminStates = new Map<number, any>();
 
-export async function handleAdminCommand(env: Env, update: TelegramUpdate): Promise<void> {
+export async function handleAdminCommand(env: Env, update: TelegramUpdate): Promise<boolean> {
   const message = update.message;
-  if (!message || !message.from) return;
+  if (!message || !message.from) return false;
 
   const chatId = message.chat.id;
   const telegramId = message.from.id;
@@ -55,37 +57,44 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 
   // Check if user is admin
   if (!await isAdmin(env, telegramId)) {
-    return; // No response for non-admins
+    return false;
   }
 
   const admin = await getAdminByTelegramId(env, telegramId);
-  if (!admin) return;
+  if (!admin) return false;
 
   // Handle /admin command
   if (text === "/admin") {
     await showAdminMainMenu(env, chatId, admin);
-    return;
+    return true;
   }
 
   // If no text, return
   if (!text) {
-    return;
+    return false;
   }
 
   // Handle number input for license generation
   if (/^\d+$/.test(text)) {
     await handleLicenseGeneration(env, chatId, admin, parseInt(text));
-    return;
+    return true;
   }
 
   // Handle user/license identifier for user management
   if (text.length > 0 && !text.startsWith("/")) {
     await handleUserIdentifier(env, chatId, admin, text.trim());
-    return;
+    return true;
   }
+
+  return false;
 }
 
 async function showAdminMainMenu(env: Env, chatId: number, admin: any): Promise<void> {
+  // Remove reply keyboard first
+  await sendMessage(env, chatId, "🛠️ در حال ورود به پنل مدیریت...", {
+    reply_markup: { remove_keyboard: true }
+  });
+
   const keyboard = {
     inline_keyboard: [
       [
@@ -99,6 +108,9 @@ async function showAdminMainMenu(env: Env, chatId: number, admin: any): Promise<
       ],
       [
         { text: "👥 مدیریت ادمین‌ها", callback_data: `${ADMIN_CB.ADD_ADMIN}:0` }
+      ],
+      [
+        { text: "🔙 بازگشت به منوی کاربر", callback_data: `${ADMIN_CB.EXIT}:0` }
       ]
     ]
   };
@@ -110,9 +122,9 @@ async function showAdminMainMenu(env: Env, chatId: number, admin: any): Promise<
 
 لطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
 
-  await sendMessage(env, chatId, message, { 
+  await sendMessage(env, chatId, message, {
     reply_markup: keyboard,
-    parse_mode: "Markdown" 
+    parse_mode: "Markdown"
   });
 }
 
@@ -280,7 +292,14 @@ export async function handleAdminCallback(env: Env, callbackQuery: TelegramCallb
     case ADMIN_CB.BACK:
       await showAdminMainMenu(env, chatId, admin);
       break;
-      
+
+    case ADMIN_CB.EXIT:
+      await sendMessage(env, chatId, "✅ از پنل ادمین خارج شدی. به منوی اصلی برگشتی 👇", {
+        reply_markup: getMainMenuKeyboard()
+      });
+      adminStates.delete(telegramId);
+      break;
+
     default:
       await answerCallbackQuery(env, callbackQuery.id);
       return;
@@ -291,14 +310,14 @@ export async function handleAdminCallback(env: Env, callbackQuery: TelegramCallb
 }
 
 async function handleLicenseCallback(env: Env, chatId: number, admin: any): Promise<void> {
-  await sendMessage(env, chatId, 
+  await sendMessage(env, chatId,
     `🎫 **تولید لایسنس جدید**
 
 لطفاً تعداد روز اعتبار لایسنس را به صورت عدد وارد کنید:
 مثال: \`30\` برای لایسنس ۳۰ روزه
 مثال: \`365\` برای لایسنس یک ساله
 
-حداکثر: ۳۶۵۰ روز (۱۰ سال)`, 
+حداکثر: ۳۶۵۰ روز (۱۰ سال)`,
     { parse_mode: "Markdown" }
   );
 }
