@@ -4,6 +4,7 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET: string;
   ADMIN_PASSWORD?: string;
   OPENAI_API_KEY?: string;
+  BOT_USERNAME?: string;
 
   DB: any; // D1 database binding
 }

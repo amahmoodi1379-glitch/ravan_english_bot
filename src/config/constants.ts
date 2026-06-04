@@ -24,6 +24,7 @@ export const CB_PREFIX = {
   AVATAR: "av",         // قبلاً: avatar
   STATS: "st",          // قبلاً: stats
   LEADERBOARD: "lb",    // leaderboard
+  QUIZ: "qz",           // custom quiz
 };
 
 // تنظیم اختلاف ساعت ایران (یا هر منطقه زمانی دلخواه)

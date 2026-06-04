@@ -59,6 +59,7 @@ export const ADMIN_MENU_BUTTON_LICENSE = "🎫 ایجاد لایسنس";
 export const ADMIN_MENU_BUTTON_ANNOUNCE = "📢 اطلاع‌رسانی";
 export const ADMIN_MENU_BUTTON_USER_MGMT = "👥 مدیریت کاربران";
 export const ADMIN_MENU_BUTTON_ADMIN_MGMT = "👤 مدیریت ادمین‌ها";
+export const ADMIN_MENU_BUTTON_QUIZ = "📝 آزمون‌ها";
 export const ADMIN_MENU_BUTTON_EXIT = "🔙 خروج از پنل ادمین";
 
 export const ADMIN_SUBMENU_BUTTON_BACK = "⬅️ بازگشت";
@@ -75,6 +76,7 @@ export function getAdminMenuKeyboard() {
     keyboard: [
       [ADMIN_MENU_BUTTON_LICENSE],
       [ADMIN_MENU_BUTTON_ANNOUNCE],
+      [ADMIN_MENU_BUTTON_QUIZ],
       [ADMIN_MENU_BUTTON_USER_MGMT],
       [ADMIN_MENU_BUTTON_ADMIN_MGMT],
       [ADMIN_MENU_BUTTON_EXIT]

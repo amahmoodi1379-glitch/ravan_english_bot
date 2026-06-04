@@ -9,7 +9,7 @@ export async function sendMessage(
   chatId: number,
   text: string,
   extra?: Record<string, unknown>
-): Promise<void> {
+): Promise<any> {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
   const body: Record<string, unknown> = {
@@ -19,7 +19,7 @@ export async function sendMessage(
     ...extra
   };
 
-  await fetchWithRetry(url, body);
+  return fetchWithRetry(url, body);
 }
 
 // ارسال عکس
@@ -157,8 +157,27 @@ export async function answerCallbackQuery(
   await fetchWithRetry(url, body);
 }
 
+// ویرایش پیام
+export async function editMessageText(
+  env: Env,
+  chatId: number,
+  messageId: number,
+  text: string,
+  extra?: Record<string, unknown>
+): Promise<void> {
+  const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/editMessageText`;
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    parse_mode: "HTML",
+    ...extra
+  };
+  await fetchWithRetry(url, body);
+}
+
 // تابع کمکی برای هندل کردن محدودیت‌های تلگرام (429 Too Many Requests)
-async function fetchWithRetry(url: string, body: any, retries = 3): Promise<void> {
+async function fetchWithRetry(url: string, body: any, retries = 3): Promise<any> {
   for (let i = 0; i < retries; i++) {
     try {
       const resp = await fetch(url, {
@@ -167,11 +186,11 @@ async function fetchWithRetry(url: string, body: any, retries = 3): Promise<void
         body: JSON.stringify(body)
       });
 
-      if (resp.ok) {
-        return; // موفقیت‌آمیز بود، خارج شو
-      }
+      const data: any = await resp.json().catch(() => ({}));
 
-      const data: any = await resp.json();
+      if (resp.ok) {
+        return data;
+      }
 
       // خطای محدودیت سرعت (Flood Wait)
       if (resp.status === 429) {
@@ -182,7 +201,7 @@ async function fetchWithRetry(url: string, body: any, retries = 3): Promise<void
       }
 
       console.error("Telegram API Error:", JSON.stringify(data));
-      return; // ارورهای دیگه (مثل 400 یا 403) رو بیخیال شو (شاید کاربر بلاک کرده باشه)
+      return data; // ارورهای دیگه (مثل 400 یا 403) رو بیخیال شو (شاید کاربر بلاک کرده باشه)
 
     } catch (err) {
       console.error("Network Error sending to Telegram:", err);
@@ -190,4 +209,5 @@ async function fetchWithRetry(url: string, body: any, retries = 3): Promise<void
       await sleep(1000);
     }
   }
+  return null;
 }

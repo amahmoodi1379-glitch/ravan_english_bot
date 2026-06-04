@@ -30,6 +30,13 @@ import {
   handleLeaderboardCallback
 } from "./handlers/leaderboard";
 import {
+  handleQuizStart,
+  handleQuizUserCallback
+} from "./handlers/custom_quiz_user";
+import {
+  handleQuizAdminCallback
+} from "./handlers/custom_quiz_admin";
+import {
   showProfileHome,
   showProfileSettings,
   startProfileStats,
@@ -131,6 +138,19 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   // Leaderboard (lb:...)
   if (data.startsWith(`${CB_PREFIX.LEADERBOARD}:`)) {
     await handleLeaderboardCallback(env, callbackQuery);
+    return;
+  }
+
+  // Quiz (qz:...)
+  if (data.startsWith(`${CB_PREFIX.QUIZ}:`)) {
+    // Admin quiz callbacks (admin_view, admin_detail_back, etc.)
+    const parts = data.split(":");
+    const subAction = parts[1] || "";
+    if (subAction.startsWith("admin")) {
+      await handleQuizAdminCallback(env, callbackQuery);
+      return;
+    }
+    await handleQuizUserCallback(env, callbackQuery);
     return;
   }
 
@@ -296,6 +316,15 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);
     return;
+  }
+
+  // Handle quiz deep link: /start quiz_<token>
+  if (text.startsWith("/start quiz_")) {
+    const token = text.replace("/start quiz_", "").trim();
+    if (token && user) {
+      await handleQuizStart(env, user, chatId, token);
+      return;
+    }
   }
 
   if (text === "/start") {

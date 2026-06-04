@@ -10,6 +10,7 @@ import {
   getAdminSubMenuKeyboard,
   ADMIN_MENU_BUTTON_LICENSE,
   ADMIN_MENU_BUTTON_ANNOUNCE,
+  ADMIN_MENU_BUTTON_QUIZ,
   ADMIN_MENU_BUTTON_USER_MGMT,
   ADMIN_MENU_BUTTON_ADMIN_MGMT,
   ADMIN_MENU_BUTTON_EXIT,
@@ -22,6 +23,10 @@ import {
   ADMIN_SUBMENU_BUTTON_ADD_ADMIN,
   ADMIN_SUBMENU_BUTTON_REMOVE_ADMIN
 } from "../keyboards";
+import {
+  enterQuizAdminMenu,
+  handleQuizAdminMessage
+} from "./custom_quiz_admin";
 import {
   isAdmin,
   getAdminByTelegramId,
@@ -78,6 +83,10 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
     await enterAdminPanel(env, chatId, admin);
     return true;
   }
+
+  // Delegate to quiz admin handler if in quiz state
+  const quizHandled = await handleQuizAdminMessage(env, update);
+  if (quizHandled) return true;
 
   const state = adminStates.get(telegramId);
 
@@ -412,6 +421,10 @@ async function handleMenuSelection(
 
     case ADMIN_MENU_BUTTON_ADMIN_MGMT:
       await showAdminMgmtMenu(env, chatId);
+      return true;
+
+    case ADMIN_MENU_BUTTON_QUIZ:
+      await enterQuizAdminMenu(env, chatId, telegramId);
       return true;
 
     case ADMIN_SUBMENU_BUTTON_NEXT_LICENSE:
