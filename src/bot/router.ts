@@ -40,6 +40,7 @@ import {
 } from "./handlers/admin";
 import { CB_PREFIX } from "../config/constants";
 import { getOrCreateUser, getUserByTelegramId } from "../db/users";
+import { isAdmin } from "../db/admin";
 import { queryOne, execute } from "../db/client";
 
 export interface TelegramUser {
@@ -324,11 +325,18 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
      }
   }
 
+  // Check admin text messages before other user flows
+  const isAdminUser = await isAdmin(env, tgUser.id);
+  if (isAdminUser) {
+    const handled = await handleAdminTextMessage(env, update);
+    if (handled) return;
+  }
+
   const isReadingTitle = await handleReadingTitleSelection(env, update, text);
   if (isReadingTitle) {
     return;
   }
-  
+
   if (text === TRAINING_MENU_BUTTON_BACK) {
     await sendMessage(
       env,
@@ -368,9 +376,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
   // ============================================================
-
-  // Check for admin text messages (before showing default message)
-  await handleAdminTextMessage(env, update);
 
   await sendMessage(
     env,

@@ -514,21 +514,21 @@ async function handleAnnounceReportCallback(env: Env, chatId: number, admin: any
 }
 
 // Handle admin text messages (for announcements, adding admins, etc.)
-export async function handleAdminTextMessage(env: Env, update: TelegramUpdate): Promise<void> {
+export async function handleAdminTextMessage(env: Env, update: TelegramUpdate): Promise<boolean> {
   const message = update.message;
-  if (!message || !message.from) return;
+  if (!message || !message.from) return false;
 
   const chatId = message.chat.id;
   const telegramId = message.from.id;
   const text = message.text?.trim();
 
-  if (!text) return;
+  if (!text) return false;
 
   const admin = await getAdminByTelegramId(env, telegramId);
-  if (!admin) return;
+  if (!admin) return false;
 
   const state = adminStates.get(telegramId);
-  if (!state) return;
+  if (!state) return false;
 
   switch (state.action) {
     case 'new_announcement':
@@ -543,6 +543,8 @@ export async function handleAdminTextMessage(env: Env, update: TelegramUpdate): 
       await handleChangeExpire(env, chatId, admin, text, state.licenseCode);
       break;
   }
+
+  return true;
 }
 
 async function handleNewAnnouncement(env: Env, chatId: number, admin: any, text: string): Promise<void> {
