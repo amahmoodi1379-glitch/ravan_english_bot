@@ -65,7 +65,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 
   // Handle /admin command
   if (text === "/admin") {
-    await showAdminMainMenu(env, chatId, admin);
+    await enterAdminPanel(env, chatId, admin);
     return true;
   }
 
@@ -74,27 +74,38 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
     return false;
   }
 
-  // Handle number input for license generation
-  if (/^\d+$/.test(text)) {
-    await handleLicenseGeneration(env, chatId, admin, parseInt(text));
-    return true;
-  }
+  const state = adminStates.get(telegramId);
+  if (!state) return false;
 
-  // Handle user/license identifier for user management
-  if (text.length > 0 && !text.startsWith("/")) {
-    await handleUserIdentifier(env, chatId, admin, text.trim());
-    return true;
+  switch (state.action) {
+    case 'await_license_days':
+      if (/^\d+$/.test(text)) {
+        await handleLicenseGeneration(env, chatId, admin, parseInt(text));
+        adminStates.delete(telegramId);
+        return true;
+      }
+      break;
+    case 'await_user_identifier':
+      if (text.length > 0 && !text.startsWith("/")) {
+        await handleUserIdentifier(env, chatId, admin, text.trim());
+        adminStates.delete(telegramId);
+        return true;
+      }
+      break;
   }
 
   return false;
 }
 
-async function showAdminMainMenu(env: Env, chatId: number, admin: any): Promise<void> {
+async function enterAdminPanel(env: Env, chatId: number, admin: any): Promise<void> {
   // Remove reply keyboard first
   await sendMessage(env, chatId, "🛠️ در حال ورود به پنل مدیریت...", {
     reply_markup: { remove_keyboard: true }
   });
+  await showAdminMainMenu(env, chatId, admin);
+}
 
+async function showAdminMainMenu(env: Env, chatId: number, admin: any): Promise<void> {
   const keyboard = {
     inline_keyboard: [
       [
@@ -167,7 +178,7 @@ async function handleUserIdentifier(env: Env, chatId: number, admin: any, identi
   const license = await getLicenseByCode(env, identifier);
   
   if (!user && !license) {
-    await sendMessage(env, chatId, "❌ کاربر یا لایسنس مورد نظر یافت نشد.");
+    await sendMessage(env, chatId, "❌ کاربر یا لایسنس مورد نظر یافت نشد.\n\nبرای جستجوی دوباره، آیدی عددی، یوزرنیم یا کد لایسنس را ارسال کنید.");
     return;
   }
 
@@ -238,22 +249,25 @@ export async function handleAdminCallback(env: Env, callbackQuery: TelegramCallb
   if (!admin) return;
 
   const [action, param] = data.split(":");
-  adminStates.set(telegramId, { action, param });
 
   switch (action) {
     case ADMIN_CB.LICENSE:
+      adminStates.set(telegramId, { action: 'await_license_days' });
       await handleLicenseCallback(env, chatId, admin);
       break;
       
     case ADMIN_CB.USER_MGMT:
+      adminStates.set(telegramId, { action: 'await_user_identifier' });
       await handleUserMgmtCallback(env, chatId, admin);
       break;
       
     case ADMIN_CB.ANNOUNCEMENT:
+      adminStates.set(admin.telegram_id, { action: 'new_announcement' });
       await handleAnnouncementCallback(env, chatId, admin);
       break;
       
     case ADMIN_CB.ADD_ADMIN:
+      adminStates.set(admin.telegram_id, { action: 'add_admin' });
       await handleAddAdminCallback(env, chatId, admin);
       break;
       
@@ -274,6 +288,7 @@ export async function handleAdminCallback(env: Env, callbackQuery: TelegramCallb
       break;
       
     case ADMIN_CB.CHANGE_EXPIRE:
+      adminStates.set(admin.telegram_id, { action: 'change_expire', licenseCode: param });
       await handleChangeExpireCallback(env, chatId, admin, param);
       break;
       
@@ -290,14 +305,15 @@ export async function handleAdminCallback(env: Env, callbackQuery: TelegramCallb
       break;
       
     case ADMIN_CB.BACK:
+      adminStates.delete(telegramId);
       await showAdminMainMenu(env, chatId, admin);
       break;
 
     case ADMIN_CB.EXIT:
+      adminStates.delete(telegramId);
       await sendMessage(env, chatId, "✅ از پنل ادمین خارج شدی. به منوی اصلی برگشتی 👇", {
         reply_markup: getMainMenuKeyboard()
       });
-      adminStates.delete(telegramId);
       break;
 
     default:
@@ -355,10 +371,7 @@ async function handleAnnouncementCallback(env: Env, chatId: number, admin: any):
   }
   
   message += `\nبرای ایجاد اطلاعیه جدید، متن خود را ارسال کنید.`;
-  
-  // Store state for new announcement
-  adminStates.set(admin.telegram_id, { action: 'new_announcement' });
-  
+
   await sendMessage(env, chatId, message, { parse_mode: "Markdown" });
 }
 
@@ -375,9 +388,7 @@ async function handleAddAdminCallback(env: Env, chatId: number, admin: any): Pro
   });
   
   message += `\nبرای افزودن ادمین جدید، آیدی عددی تلگرام را ارسال کنید:`;
-  
-  adminStates.set(admin.telegram_id, { action: 'add_admin' });
-  
+
   await sendMessage(env, chatId, message, { parse_mode: "Markdown" });
 }
 
@@ -442,8 +453,6 @@ async function handleDeleteUserCallback(env: Env, chatId: number, admin: any, us
 }
 
 async function handleChangeExpireCallback(env: Env, chatId: number, admin: any, licenseCode: string): Promise<void> {
-  adminStates.set(admin.telegram_id, { action: 'change_expire', licenseCode });
-  
   await sendMessage(env, chatId, 
     `📅 **تغییر اعتبار لایسنس**
 
