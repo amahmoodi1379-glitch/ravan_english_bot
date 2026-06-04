@@ -27,6 +27,12 @@ function genToken(): string {
   return r;
 }
 
+function normalizeDigits(text: string): string {
+  return text
+    .replace(/[۰-۹]/g, (w) => String.fromCharCode(w.charCodeAt(0) - 1728))
+    .replace(/[٠-٩]/g, (w) => String.fromCharCode(w.charCodeAt(0) - 1584));
+}
+
 export async function enterQuizAdminMenu(env: Env, chatId: number, tgId: number): Promise<void> {
   qaStates.set(tgId, { action: 'quiz_menu' });
   await sendMessage(env, chatId, `📝 <b>مدیریت آزمون‌ها</b>\n\nیکی از گزینه‌ها رو انتخاب کن:`, {
@@ -88,7 +94,7 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_correct': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_await_options', quizId: s.quizId, questionText: s.questionText }); await sendMessage(env, chatId, "گزینه‌ها:"); return true; }
-      const c = text.trim(); if (!['1','2','3','4'].includes(c)) { await sendMessage(env, chatId, "⚠️ ۱ تا ۴:"); return true; }
+      const c = normalizeDigits(text.trim()); if (!['1','2','3','4'].includes(c)) { await sendMessage(env, chatId, "⚠️ ۱ تا ۴:"); return true; }
       qaStates.set(tgId, { action: 'quiz_await_explanation', quizId: s.quizId, questionText: s.questionText, options: s.options, correctOption: c });
       await sendMessage(env, chatId, `✅ گزینه ${c}.\n📖 پاسخنامه تشریحی (اختیاری):`, { reply_markup: getAdminSubMenuKeyboard([["⏭️ رد شدن"], [ADMIN_SUBMENU_BUTTON_BACK]]) });
       return true;
@@ -122,16 +128,24 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
       await showQuizDetail(env, chatId, quizzes[idx].id); return true;
 
     case 'quiz_view_detail':
-      if (text === "🔗 دریافت لینک") { qaStates.set(tgId, { action: 'quiz_await_link_minutes', quizId: s.quizId }); await sendMessage(env, chatId, "⏳ لینک چند دقیقه معتبر باشه؟"); return true; }
+      if (text === "🔗 دریافت لینک") { qaStates.set(tgId, { action: 'quiz_await_link_confirm', quizId: s.quizId }); await sendMessage(env, chatId, "⚠️ بعد از گرفتن لینک، آزمون از لیست حذف و غیرقابل ویرایش می‌شود. ادامه می‌دهید؟", { reply_markup: getAdminSubMenuKeyboard([["✅ بله، ادامه"], [ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
       if (text === "📋 مشاهده سوالات") { await showQuestionsInline(env, chatId, s.quizId!); return true; }
       if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_list_ready' }); await showReadyQuizzes(env, chatId, tgId); return true; }
       await sendMessage(env, chatId, "⚠️ یکی از دکمه‌ها:"); return true;
+
+    case 'quiz_await_link_confirm': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
+      if (text === "✅ بله، ادامه") { qaStates.set(tgId, { action: 'quiz_await_link_minutes', quizId: s.quizId }); await sendMessage(env, chatId, "⏳ لینک چند دقیقه معتبر باشه؟"); return true; }
+      await sendMessage(env, chatId, "⚠️ یکی از دکمه‌ها:"); return true;
+    }
 
     case 'quiz_await_link_minutes': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
       const lm = parseInt(text); if (isNaN(lm) || lm < 1 || lm > 10080) { await sendMessage(env, chatId, "⚠️ ۱ تا ۱۰۰۸۰:"); return true; }
       const token = genToken(); const expires = new Date(Date.now() + lm * 60 * 1000).toISOString();
-      await createQuizLink(env, s.quizId!, token, expires); qaStates.delete(tgId);
+      await createQuizLink(env, s.quizId!, token, expires);
+      await setQuizStatus(env, s.quizId!, 'published');
+      qaStates.delete(tgId);
       const botUsername = await getBotUsername(env);
       const username = botUsername || 'your_bot';
       await sendMessage(env, chatId, `🔗 لینک:\nt.me/${username}?start=quiz_${token}\n⏳ ${lm} دقیقه`); return true;
@@ -170,7 +184,7 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_edit_correct': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
-      const editCorrect = text.trim(); if (!['1','2','3','4'].includes(editCorrect)) { await sendMessage(env, chatId, "⚠️ ۱ تا ۴:"); return true; }
+      const editCorrect = normalizeDigits(text.trim()); if (!['1','2','3','4'].includes(editCorrect)) { await sendMessage(env, chatId, "⚠️ ۱ تا ۴:"); return true; }
       const qEditCorrect = await getQuizQuestionById(env, s.questionId!); if (!qEditCorrect) return true;
       await updateQuizQuestion(env, s.questionId!, qEditCorrect.question_text, qEditCorrect.option_a, qEditCorrect.option_b, qEditCorrect.option_c, qEditCorrect.option_d, editCorrect, qEditCorrect.explanation || undefined);
       qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });

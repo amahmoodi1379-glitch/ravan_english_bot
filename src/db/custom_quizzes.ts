@@ -113,7 +113,18 @@ export async function getDraftQuizzesByAdmin(
 ): Promise<CustomQuiz[]> {
   return queryAll<CustomQuiz>(
     env,
-    `SELECT * FROM custom_quizzes WHERE admin_id = ? AND status IN ('draft', 'active') ORDER BY created_at DESC`,
+    `SELECT * FROM custom_quizzes WHERE admin_id = ? AND status = 'draft' ORDER BY created_at DESC`,
+    [adminId]
+  );
+}
+
+export async function getActiveQuizzesByAdmin(
+  env: Env,
+  adminId: number
+): Promise<CustomQuiz[]> {
+  return queryAll<CustomQuiz>(
+    env,
+    `SELECT * FROM custom_quizzes WHERE admin_id = ? AND status = 'active' ORDER BY created_at DESC`,
     [adminId]
   );
 }

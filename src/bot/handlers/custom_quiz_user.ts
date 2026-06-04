@@ -18,12 +18,21 @@ interface QuizUserState {
 }
 const quizUserStates = new Map<number, QuizUserState>();
 
+function normalizeDigits(text: string): string {
+  return text
+    .replace(/[۰-۹]/g, (w) => String.fromCharCode(w.charCodeAt(0) - 1728))
+    .replace(/[٠-٩]/g, (w) => String.fromCharCode(w.charCodeAt(0) - 1584));
+}
+
 export async function handleQuizStart(env: Env, user: any, chatId: number, token: string): Promise<void> {
+  // Clear any stale state before starting
+  quizUserStates.delete(user.id);
+
   const link = await getQuizLinkByToken(env, token);
   if (!link) { await sendMessage(env, chatId, "❌ لینک نامعتبر."); return; }
   if (link.expires_at && new Date(link.expires_at) < new Date()) { await sendMessage(env, chatId, "⏳ لینک منقضی شده."); return; }
   const quiz = await getQuizById(env, link.quiz_id); if (!quiz) { await sendMessage(env, chatId, "❌ آزمون یافت نشد."); return; }
-  if (quiz.status !== 'active') { await sendMessage(env, chatId, "⚠️ این آزمون هنوز فعال نشده یا تمام شده."); return; }
+  if (quiz.status !== 'active' && quiz.status !== 'published') { await sendMessage(env, chatId, "⚠️ این آزمون هنوز فعال نشده یا تمام شده."); return; }
   const questions = await getQuizQuestions(env, quiz.id); if (!questions.length) { await sendMessage(env, chatId, "⚠️ آزمون هنوز سوالی ندارد."); return; }
 
   const existing = await getAttemptByQuizAndUser(env, quiz.id, user.id);
@@ -36,7 +45,8 @@ export async function handleQuizStart(env: Env, user: any, chatId: number, token
     return;
   }
   if (existing && existing.status !== 'in_progress') {
-    await sendMessage(env, chatId, "✅ شما قبلاً این آزمون را داده‌اید."); return;
+    const finishedDate = existing.finished_at ? new Date(existing.finished_at).toLocaleDateString('fa-IR') : 'نامشخص';
+    await sendMessage(env, chatId, `✅ شما قبلاً آزمون <b>${quiz.title}</b> را در تاریخ ${finishedDate} داده‌اید.\nبرای شرکت مجدد، لطفاً لینک جدیدی دریافت کنید.`, { parse_mode: "HTML" }); return;
   }
 
   const attemptId = await createAttempt(env, quiz.id, user.id);
@@ -55,7 +65,14 @@ function isQuizExpired(attempt: any, quiz: any): boolean {
 async function sendQuizQuestion(env: Env, chatId: number, userId: number, quizId: number, attemptId: number, questionIndex: number): Promise<void> {
   const attempt = await getAttempt(env, attemptId);
   const quiz = await getQuizById(env, quizId);
-  if (!attempt || !quiz || attempt.status !== 'in_progress') return;
+  if (!attempt || !quiz) {
+    await sendMessage(env, chatId, "⚠️ آزمون یافت نشد.");
+    return;
+  }
+  if (attempt.status !== 'in_progress') {
+    await sendMessage(env, chatId, "⚠️ این آزمون قبلاً تمام شده. برای دیدن نتایج، لینک را دوباره باز کنید.");
+    return;
+  }
 
   if (isQuizExpired(attempt, quiz)) {
     await autoFinish(env, chatId, userId, attemptId);
@@ -96,6 +113,7 @@ async function autoFinish(env: Env, chatId: number, userId: number, attemptId: n
   const attempt = await getAttempt(env, attemptId); if (!attempt) return;
   await finishAttempt(env, attemptId, 'auto_ended');
   quizUserStates.delete(userId);
+  await sendMessage(env, chatId, "⏰ <b>زمان آزمون تمام شد!</b>\nنتایج شما:", { parse_mode: "HTML" });
   await sendResults(env, chatId, userId, attempt.quiz_id, attemptId);
 }
 
@@ -125,7 +143,13 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
 
   if (action === "ans") {
     await saveAnswer(env, attemptId, id, extra);
-    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, state.currentIndex);
+    const questions = await getQuizQuestions(env, state.quizId);
+    const nextIndex = state.currentIndex < questions.length ? state.currentIndex + 1 : state.currentIndex;
+    if (nextIndex !== state.currentIndex) {
+      await updateCurrentQuestionIndex(env, attemptId, nextIndex);
+      quizUserStates.set(user.id, { ...state, currentIndex: nextIndex });
+    }
+    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, nextIndex);
     return;
   }
 
