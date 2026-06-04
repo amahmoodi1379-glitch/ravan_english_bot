@@ -1,6 +1,7 @@
 // دکمه‌های منوی اصلی
 export const MAIN_MENU_BUTTON_TRAINING = "🎯 تمرین‌ها";
 export const MAIN_MENU_BUTTON_PROFILE = "👤 پروفایل و آمار";
+export const MAIN_MENU_BUTTON_LEADERBOARD = "🏆 لیدربورد";
 
 // دکمه‌های منوی تمرین‌ها
 export const TRAINING_MENU_BUTTON_LEITNER = "🧠 لایتنر واژگان";
@@ -17,6 +18,7 @@ export function getMainMenuKeyboard() {
   return {
     keyboard: [
       [{ text: MAIN_MENU_BUTTON_TRAINING }],
+      [{ text: MAIN_MENU_BUTTON_LEADERBOARD }],
       [{ text: MAIN_MENU_BUTTON_PROFILE }]
     ],
     resize_keyboard: true,

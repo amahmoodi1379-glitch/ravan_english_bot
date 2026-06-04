@@ -5,6 +5,7 @@ import {
   getProfileMenuKeyboard,
   MAIN_MENU_BUTTON_TRAINING,
   MAIN_MENU_BUTTON_PROFILE,
+  MAIN_MENU_BUTTON_LEADERBOARD,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
@@ -24,6 +25,10 @@ import {
   handleReadingAnswerCallback,
   handleReadingTitleSelection
 } from "./handlers/reading";
+import {
+  showLeaderboardHome,
+  handleLeaderboardCallback
+} from "./handlers/leaderboard";
 import {
   showProfileHome,
   showProfileSettings,
@@ -120,6 +125,12 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   // Stats (st:...)
   if (data.startsWith(`${CB_PREFIX.STATS}:`)) {
     await handleStatsCallback(env, callbackQuery);
+    return;
+  }
+
+  // Leaderboard (lb:...)
+  if (data.startsWith(`${CB_PREFIX.LEADERBOARD}:`)) {
+    await handleLeaderboardCallback(env, callbackQuery);
     return;
   }
 
@@ -303,6 +314,11 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   }
   if (text === MAIN_MENU_BUTTON_PROFILE) {
     await showProfileHome(env, update);
+    return;
+  }
+
+  if (text === MAIN_MENU_BUTTON_LEADERBOARD) {
+    await showLeaderboardHome(env, update);
     return;
   }
 

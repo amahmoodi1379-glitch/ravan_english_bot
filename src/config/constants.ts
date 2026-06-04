@@ -23,6 +23,7 @@ export const CB_PREFIX = {
   READING_ANSWER: "ra", // قبلاً: reading:ans
   AVATAR: "av",         // قبلاً: avatar
   STATS: "st",          // قبلاً: stats
+  LEADERBOARD: "lb",    // leaderboard
 };
 
 // تنظیم اختلاف ساعت ایران (یا هر منطقه زمانی دلخواه)
