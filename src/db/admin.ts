@@ -117,6 +117,62 @@ export async function getLicenseByCode(env: Env, code: string): Promise<any> {
   );
 }
 
+// Insert license with custom code (admin provides the code)
+export async function insertLicense(env: Env, code: string, expirationDays: number, createdByAdminId: number): Promise<boolean> {
+  try {
+    await execute(
+      env,
+      "INSERT INTO access_codes (code, expiration_days, created_by_admin_id, created_at) VALUES (?, ?, ?, datetime('now'))",
+      [code, expirationDays, createdByAdminId]
+    );
+    return true;
+  } catch (error) {
+    // Likely duplicate code
+    return false;
+  }
+}
+
+// Find user with their active license info and remaining days
+export async function findUserWithLicense(env: Env, identifier: string): Promise<any> {
+  // Try as license code first (user who used this code)
+  let user = await queryOne(
+    env,
+    `SELECT u.*, ac.code, ac.expiration_days, ac.used_at, ac.created_at as license_created_at
+     FROM users u 
+     JOIN access_codes ac ON u.id = ac.used_by_user_id 
+     WHERE ac.code = ?`,
+    [identifier]
+  );
+  
+  if (user) return user;
+  
+  // Try as numeric user ID (telegram_id)
+  if (/^\d+$/.test(identifier)) {
+    user = await queryOne(
+      env,
+      `SELECT u.*, ac.code, ac.expiration_days, ac.used_at, ac.created_at as license_created_at
+       FROM users u 
+       LEFT JOIN access_codes ac ON u.id = ac.used_by_user_id 
+       WHERE u.telegram_id = ?`,
+      [parseInt(identifier)]
+    );
+    if (user) return user;
+  }
+  
+  // Try as username (with or without @)
+  const username = identifier.startsWith('@') ? identifier.substring(1) : identifier;
+  user = await queryOne(
+    env,
+    `SELECT u.*, ac.code, ac.expiration_days, ac.used_at, ac.created_at as license_created_at
+     FROM users u 
+     LEFT JOIN access_codes ac ON u.id = ac.used_by_user_id 
+     WHERE u.username = ?`,
+    [username]
+  );
+  
+  return user;
+}
+
 // Update license expiration
 export async function updateLicenseExpiration(env: Env, code: string, expirationDays: number): Promise<boolean> {
   const result = await execute(

@@ -1,51 +1,64 @@
 import { Env } from "../../types";
-import { TelegramUpdate, TelegramCallbackQuery } from "../router";
-import { sendMessage, answerCallbackQuery } from "../telegram-api";
-import { getMainMenuKeyboard } from "../keyboards";
-import { 
-  isAdmin, 
-  getAdminByTelegramId, 
-  addAdmin, 
+import { TelegramUpdate } from "../router";
+import {
+  sendMessage,
+  copyMessage
+} from "../telegram-api";
+import {
+  getMainMenuKeyboard,
+  getAdminMenuKeyboard,
+  getAdminSubMenuKeyboard,
+  ADMIN_MENU_BUTTON_LICENSE,
+  ADMIN_MENU_BUTTON_ANNOUNCE,
+  ADMIN_MENU_BUTTON_USER_MGMT,
+  ADMIN_MENU_BUTTON_ADMIN_MGMT,
+  ADMIN_MENU_BUTTON_EXIT,
+  ADMIN_SUBMENU_BUTTON_BACK,
+  ADMIN_SUBMENU_BUTTON_NEXT_LICENSE,
+  ADMIN_SUBMENU_BUTTON_CONFIRM,
+  ADMIN_SUBMENU_BUTTON_CANCEL,
+  ADMIN_SUBMENU_BUTTON_BAN,
+  ADMIN_SUBMENU_BUTTON_UNBAN,
+  ADMIN_SUBMENU_BUTTON_ADD_ADMIN,
+  ADMIN_SUBMENU_BUTTON_REMOVE_ADMIN
+} from "../keyboards";
+import {
+  isAdmin,
+  getAdminByTelegramId,
+  addAdmin,
   getAllAdmins,
-  createLicense,
-  getLicenseByCode,
-  updateLicenseExpiration,
-  findUser,
+  insertLicense,
+  findUserWithLicense,
   banUser,
   unbanUser,
-  deleteUser,
-  createAnnouncement,
-  getAnnouncement,
-  getAllAnnouncements,
-  updateAnnouncementStatus,
-  updateAnnouncementCounts,
-  logAnnouncementDelivery,
-  getAnnouncementReport,
   getApprovedUsers
 } from "../../db/admin";
-import { scheduleAnnouncementSend } from "../../utils/batch-sender";
+import { execute } from "../../db/client";
 
-// Admin callback prefixes
-const ADMIN_CB = {
-  MAIN_MENU: "admin_main",
-  LICENSE: "admin_license",
-  USER_MGMT: "admin_user",
-  ANNOUNCEMENT: "admin_announce",
-  ADD_ADMIN: "admin_add_admin",
-  REMOVE_ADMIN: "admin_remove_admin",
-  BAN_USER: "admin_ban_user",
-  UNBAN_USER: "admin_unban_user",
-  DELETE_USER: "admin_delete_user",
-  CHANGE_EXPIRE: "admin_change_expire",
-  ANNOUNCE_CONFIRM: "admin_announce_confirm",
-  ANNOUNCE_SEND: "admin_announce_send",
-  ANNOUNCE_REPORT: "admin_announce_report",
-  BACK: "admin_back",
-  EXIT: "admin_exit"
-};
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Admin state management (in production, use proper state management)
-const adminStates = new Map<number, any>();
+// State machine
+interface AdminState {
+  action:
+    | 'menu'
+    | 'await_license_code'
+    | 'await_license_days'
+    | 'await_announcement_content'
+    | 'await_announcement_confirm'
+    | 'await_user_search'
+    | 'user_actions'
+    | 'await_admin_id';
+  licenseCode?: string;
+  targetUserId?: number;
+  targetUserTelegramId?: number;
+  announcement?: {
+    messageId: number;
+    chatId: number;
+  };
+  adminAction?: 'add' | 'remove';
+}
+
+const adminStates = new Map<number, AdminState>();
 
 export async function handleAdminCommand(env: Env, update: TelegramUpdate): Promise<boolean> {
   const message = update.message;
@@ -55,588 +68,463 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
   const telegramId = message.from.id;
   const text = message.text;
 
-  // Check if user is admin
-  if (!await isAdmin(env, telegramId)) {
-    return false;
-  }
+  if (!await isAdmin(env, telegramId)) return false;
 
   const admin = await getAdminByTelegramId(env, telegramId);
   if (!admin) return false;
 
-  // Handle /admin command
+  // /admin -> enter admin panel
   if (text === "/admin") {
     await enterAdminPanel(env, chatId, admin);
     return true;
   }
 
-  // If no text, return
-  if (!text) {
-    return false;
-  }
-
   const state = adminStates.get(telegramId);
+
+  // If no state, admin is not in the panel (or exited) -> only /admin is handled
   if (!state) return false;
 
   switch (state.action) {
-    case 'await_license_days':
-      if (/^\d+$/.test(text)) {
-        await handleLicenseGeneration(env, chatId, admin, parseInt(text));
-        adminStates.delete(telegramId);
+    case 'menu':
+      return await handleMenuSelection(env, chatId, telegramId, admin, text || "");
+
+    case 'await_license_code':
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) {
+        adminStates.set(telegramId, { action: 'menu' });
+        await showAdminMenu(env, chatId);
+        return true;
+      }
+      if (text && text.trim().length > 0) {
+        adminStates.set(telegramId, {
+          action: 'await_license_days',
+          licenseCode: text.trim()
+        });
+        await sendMessage(env, chatId,
+          `🎫 کد لایسنس: <code>${text.trim()}</code>\n\n⏳ لطفاً تعداد روز اعتبار را وارد کنید:`,
+          { parse_mode: "HTML" }
+        );
         return true;
       }
       break;
-    case 'await_user_identifier':
-      if (text.length > 0 && !text.startsWith("/")) {
-        await handleUserIdentifier(env, chatId, admin, text.trim());
-        adminStates.delete(telegramId);
+
+    case 'await_license_days': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) {
+        adminStates.set(telegramId, { action: 'menu' });
+        await showAdminMenu(env, chatId);
         return true;
       }
-      break;
+      if (!text || !/^\d+$/.test(text)) {
+        await sendMessage(env, chatId, "⚠️ لطفاً یک عدد معتبر وارد کنید (۱ تا ۳۶۵۰).");
+        return true;
+      }
+      const days = parseInt(text);
+      if (days <= 0 || days > 3650) {
+        await sendMessage(env, chatId, "⚠️ تعداد روز باید بین ۱ تا ۳۶۵۰ باشد.");
+        return true;
+      }
+      const code = state.licenseCode || "";
+      const success = await insertLicense(env, code, days, admin.id);
+      if (success) {
+        await sendMessage(env, chatId,
+          `✅ لایسنس <code>${code}</code> با ${days} روز اعتبار ثبت شد.\n\nلایسنس بعدی؟`,
+          {
+            parse_mode: "HTML",
+            reply_markup: getAdminSubMenuKeyboard([
+              [ADMIN_SUBMENU_BUTTON_NEXT_LICENSE],
+              [ADMIN_SUBMENU_BUTTON_BACK]
+            ])
+          }
+        );
+      } else {
+        await sendMessage(env, chatId,
+          `❌ خطا در ثبت لایسنس. احتمالاً کد <code>${code}</code> قبلاً ثبت شده.`,
+          { parse_mode: "HTML" }
+        );
+      }
+      adminStates.set(telegramId, { action: 'menu' });
+      return true;
+    }
+
+    case 'await_announcement_content': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) {
+        adminStates.set(telegramId, { action: 'menu' });
+        await showAdminMenu(env, chatId);
+        return true;
+      }
+      // Accept text, photo, video, audio, document, voice
+      const msg = message;
+      let ann: { messageId: number; chatId: number } | undefined;
+
+      if (msg.text) {
+        ann = { messageId: msg.message_id, chatId };
+      } else if (msg.photo && msg.photo.length > 0) {
+        ann = { messageId: msg.message_id, chatId };
+      } else if (msg.video) {
+        ann = { messageId: msg.message_id, chatId };
+      } else if (msg.audio) {
+        ann = { messageId: msg.message_id, chatId };
+      } else if (msg.document) {
+        ann = { messageId: msg.message_id, chatId };
+      } else if (msg.voice) {
+        ann = { messageId: msg.message_id, chatId };
+      }
+
+      if (ann) {
+        adminStates.set(telegramId, {
+          action: 'await_announcement_confirm',
+          announcement: ann
+        });
+        await sendMessage(env, chatId,
+          `📢 محتوای اطلاعیه دریافت شد.\n\nPreview بالا 👆\n\nآیا برای ارسال به همه کاربران تایید می‌کنید؟`,
+          {
+            reply_markup: getAdminSubMenuKeyboard([
+              [ADMIN_SUBMENU_BUTTON_CONFIRM],
+              [ADMIN_SUBMENU_BUTTON_CANCEL]
+            ])
+          }
+        );
+        return true;
+      }
+
+      await sendMessage(env, chatId, "⚠️ لطفاً متن یا رسانه (عکس/فیلم/صوت/فایل) ارسال کنید.");
+      return true;
+    }
+
+    case 'await_announcement_confirm':
+      if (text === ADMIN_SUBMENU_BUTTON_CONFIRM) {
+        await sendAnnouncement(env, chatId, telegramId, admin, state.announcement);
+        return true;
+      }
+      if (text === ADMIN_SUBMENU_BUTTON_CANCEL) {
+        adminStates.set(telegramId, { action: 'menu' });
+        await showAdminMenu(env, chatId);
+        return true;
+      }
+      await sendMessage(env, chatId, "⚠️ لطفاً یکی از دکمه‌ها را انتخاب کنید.");
+      return true;
+
+    case 'await_user_search': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) {
+        adminStates.set(telegramId, { action: 'menu' });
+        await showAdminMenu(env, chatId);
+        return true;
+      }
+      if (!text || text.trim().length === 0) {
+        await sendMessage(env, chatId, "⚠️ لطفاً کد لایسنس، آیدی عددی یا یوزرنیم را ارسال کنید.");
+        return true;
+      }
+      const identifier = text.trim();
+      const user = await findUserWithLicense(env, identifier);
+
+      if (!user) {
+        await sendMessage(env, chatId,
+          "❌ کاربر یافت نشد.\n\nبرای جستجوی دوباره، آیدی عددی، یوزرنیم یا کد لایسنس را ارسال کنید."
+        );
+        return true;
+      }
+
+      // Calculate remaining days and days since join
+      const now = Date.now();
+      let remainingText = "نامحدود";
+      if (user.used_at && user.expiration_days) {
+        const usedAt = new Date(user.used_at).getTime();
+        const expireAt = usedAt + user.expiration_days * 24 * 60 * 60 * 1000;
+        const remainingDays = Math.ceil((expireAt - now) / (24 * 60 * 60 * 1000));
+        remainingText = remainingDays > 0 ? `${remainingDays} روز` : "منقضی شده";
+      }
+
+      let daysSinceJoin = "نامشخص";
+      if (user.created_at) {
+        const createdAt = new Date(user.created_at).getTime();
+        daysSinceJoin = `${Math.ceil((now - createdAt) / (24 * 60 * 60 * 1000))} روز`;
+      }
+
+      const statusText = user.is_banned ? "🚫 مسدود" : "✅ فعال";
+
+      const profileMsg =
+        `👤 <b>پروفایل کاربر</b>\n\n` +
+        `🆔 <b>آیدی:</b> <code>${user.telegram_id}</code>\n` +
+        `👤 <b>نام:</b> ${user.display_name || user.first_name || 'نامشخص'}\n` +
+        `🔗 <b>یوزرنیم:</b> ${user.username ? '@' + user.username : 'ندارد'}\n` +
+        `🎫 <b>لایسنس:</b> <code>${user.code || 'بدون لایسنس'}</code>\n` +
+        `⏰ <b>اعتبار باقی‌مانده:</b> ${remainingText}\n` +
+        `📅 <b>عضویت:</b> ${daysSinceJoin} پیش\n` +
+        `📈 <b>وضعیت:</b> ${statusText}`;
+
+      const isBanned = !!user.is_banned;
+      adminStates.set(telegramId, {
+        action: 'user_actions',
+        targetUserId: user.id,
+        targetUserTelegramId: user.telegram_id
+      });
+
+      await sendMessage(env, chatId, profileMsg, {
+        parse_mode: "HTML",
+        reply_markup: getAdminSubMenuKeyboard([
+          [isBanned ? ADMIN_SUBMENU_BUTTON_UNBAN : ADMIN_SUBMENU_BUTTON_BAN],
+          [ADMIN_SUBMENU_BUTTON_BACK]
+        ])
+      });
+      return true;
+    }
+
+    case 'user_actions': {
+      if (text === ADMIN_SUBMENU_BUTTON_BAN && state.targetUserId) {
+        const ok = await banUser(env, state.targetUserId, undefined, admin.id, 0);
+        await sendMessage(env, chatId,
+          ok ? "✅ کاربر با موفقیت مسدود شد." : "❌ خطا در مسدود کردن کاربر."
+        );
+      } else if (text === ADMIN_SUBMENU_BUTTON_UNBAN && state.targetUserId) {
+        const ok = await unbanUser(env, state.targetUserId);
+        await sendMessage(env, chatId,
+          ok ? "✅ مسدودیت کاربر رفع شد." : "❌ خطا در رفع مسدودیت."
+        );
+      } else if (text === ADMIN_SUBMENU_BUTTON_BACK) {
+        adminStates.set(telegramId, { action: 'menu' });
+        await showAdminMenu(env, chatId);
+        return true;
+      } else {
+        await sendMessage(env, chatId, "⚠️ لطفاً یکی از دکمه‌ها را انتخاب کنید.");
+        return true;
+      }
+
+      // After ban/unban, go back to user search
+      adminStates.set(telegramId, { action: 'await_user_search' });
+      await sendMessage(env, chatId,
+        `👥 جستجوی کاربر بعدی:\nکد لایسنس، آیدی عددی یا یوزرنیم را ارسال کنید.`
+      );
+      return true;
+    }
+
+    case 'await_admin_id': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) {
+        await showAdminMgmtMenu(env, chatId);
+        return true;
+      }
+      if (!text || !/^\d+$/.test(text)) {
+        await sendMessage(env, chatId, "⚠️ لطفاً آیدی عددی تلگرام را وارد کنید.");
+        return true;
+      }
+      const targetId = parseInt(text);
+
+      if (state.adminAction === 'add') {
+        const ok = await addAdmin(env, targetId, undefined, undefined, admin.id);
+        await sendMessage(env, chatId,
+          ok
+            ? `✅ ادمین با آیدی <code>${targetId}</code> اضافه شد.`
+            : `❌ خطا در افزودن ادمین (احتمالاً قبلاً وجود دارد).`,
+          { parse_mode: "HTML" }
+        );
+      } else if (state.adminAction === 'remove') {
+        const ok = await removeAdmin(env, targetId);
+        await sendMessage(env, chatId,
+          ok
+            ? `✅ ادمین با آیدی <code>${targetId}</code> حذف شد.`
+            : `❌ خطا در حذف ادمین (احتمالاً وجود ندارد یا Super Admin است).`,
+          { parse_mode: "HTML" }
+        );
+      }
+
+      // Return to admin management menu
+      adminStates.set(telegramId, { action: 'menu' });
+      await showAdminMgmtMenu(env, chatId);
+      return true;
+    }
   }
 
   return false;
 }
 
 async function enterAdminPanel(env: Env, chatId: number, admin: any): Promise<void> {
-  // Remove reply keyboard first
+  adminStates.set(admin.telegram_id, { action: 'menu' });
   await sendMessage(env, chatId, "🛠️ در حال ورود به پنل مدیریت...", {
     reply_markup: { remove_keyboard: true }
   });
-  await showAdminMainMenu(env, chatId, admin);
+  await showAdminMenu(env, chatId);
 }
 
-async function showAdminMainMenu(env: Env, chatId: number, admin: any): Promise<void> {
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "🎫 تولید لایسنس", callback_data: `${ADMIN_CB.LICENSE}:0` }
-      ],
-      [
-        { text: "👥 مدیریت کاربران", callback_data: `${ADMIN_CB.USER_MGMT}:0` }
-      ],
-      [
-        { text: "📢 اطلاع‌رسانی", callback_data: `${ADMIN_CB.ANNOUNCEMENT}:0` }
-      ],
-      [
-        { text: "👥 مدیریت ادمین‌ها", callback_data: `${ADMIN_CB.ADD_ADMIN}:0` }
-      ],
-      [
-        { text: "🔙 بازگشت به منوی کاربر", callback_data: `${ADMIN_CB.EXIT}:0` }
-      ]
-    ]
-  };
-
-  const adminName = admin.first_name || 'ادمین عزیز';
-  const message = `🛠️ **پنل مدیریت ادمین**
-
-سلام ${adminName}!
-
-لطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
-
-  await sendMessage(env, chatId, message, {
-    reply_markup: keyboard,
-    parse_mode: "Markdown"
-  });
+async function showAdminMenu(env: Env, chatId: number): Promise<void> {
+  await sendMessage(env, chatId,
+    `🛠️ <b>پنل مدیریت ادمین</b>\n\nلطفاً یکی از گزینه‌ها را انتخاب کنید:`,
+    { parse_mode: "HTML", reply_markup: getAdminMenuKeyboard() }
+  );
 }
 
-async function handleLicenseGeneration(env: Env, chatId: number, admin: any, days: number): Promise<void> {
-  if (days <= 0 || days > 3650) { // Max 10 years
-    await sendMessage(env, chatId, "⚠️ تعداد روز باید بین ۱ تا ۳۶۵۰ باشد.");
-    return;
-  }
+async function handleMenuSelection(
+  env: Env,
+  chatId: number,
+  telegramId: number,
+  admin: any,
+  text: string
+): Promise<boolean> {
+  switch (text) {
+    case ADMIN_MENU_BUTTON_LICENSE:
+      adminStates.set(telegramId, { action: 'await_license_code' });
+      await sendMessage(env, chatId,
+        `🎫 <b>ایجاد لایسنس</b>\n\nکد لایسنس را وارد کنید:`,
+        { parse_mode: "HTML", reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }
+      );
+      return true;
 
-  const license = await createLicense(env, days, admin.id);
-  if (license) {
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: "🔄 تولید لایسنس دیگر", callback_data: `${ADMIN_CB.LICENSE}:0` },
-          { text: "🔙 بازگشت", callback_data: `${ADMIN_CB.BACK}:0` }
-        ]
-      ]
-    };
+    case ADMIN_MENU_BUTTON_ANNOUNCE:
+      adminStates.set(telegramId, { action: 'await_announcement_content' });
+      await sendMessage(env, chatId,
+        `📢 <b>اطلاع‌رسانی</b>\n\nمتن یا رسانه (عکس/فیلم/صوت/فایل) اطلاعیه را ارسال کنید.`,
+        { parse_mode: "HTML", reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }
+      );
+      return true;
 
-    await sendMessage(env, chatId, 
-      `✅ **لایسنس جدید تولید شد**
+    case ADMIN_MENU_BUTTON_USER_MGMT:
+      adminStates.set(telegramId, { action: 'await_user_search' });
+      await sendMessage(env, chatId,
+        `👥 <b>مدیریت کاربران</b>\n\nکد لایسنس، آیدی عددی یا یوزرنیم کاربر را ارسال کنید:`,
+        { parse_mode: "HTML", reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }
+      );
+      return true;
 
-🎫 **کد لایسنس:** \`${license}\`
-⏰ **اعتبار:** ${days} روز
+    case ADMIN_MENU_BUTTON_ADMIN_MGMT:
+      await showAdminMgmtMenu(env, chatId);
+      return true;
 
-این کد را به کاربر مورد نظر خود ارسال کنید.`, 
-      { 
-        reply_markup: keyboard,
-        parse_mode: "Markdown" 
-      }
-    );
-  } else {
-    await sendMessage(env, chatId, "❌ خطا در تولید لایسنس. لطفاً دوباره تلاش کنید.");
-  }
-}
+    case ADMIN_SUBMENU_BUTTON_NEXT_LICENSE:
+      adminStates.set(telegramId, { action: 'await_license_code' });
+      await sendMessage(env, chatId, `🎫 کد لایسنس بعدی را وارد کنید:`);
+      return true;
 
-async function handleUserIdentifier(env: Env, chatId: number, admin: any, identifier: string): Promise<void> {
-  const user = await findUser(env, identifier);
-  const license = await getLicenseByCode(env, identifier);
-  
-  if (!user && !license) {
-    await sendMessage(env, chatId, "❌ کاربر یا لایسنس مورد نظر یافت نشد.\n\nبرای جستجوی دوباره، آیدی عددی، یوزرنیم یا کد لایسنس را ارسال کنید.");
-    return;
-  }
+    case ADMIN_SUBMENU_BUTTON_ADD_ADMIN:
+      adminStates.set(telegramId, { action: 'await_admin_id', adminAction: 'add' });
+      await sendMessage(env, chatId, `➕ آیدی عددی تلگرام ادمین جدید:`, {
+        reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
+      });
+      return true;
 
-  let message = "";
-  let keyboard: any = { inline_keyboard: [] };
+    case ADMIN_SUBMENU_BUTTON_REMOVE_ADMIN:
+      adminStates.set(telegramId, { action: 'await_admin_id', adminAction: 'remove' });
+      await sendMessage(env, chatId, `➖ آیدی عددی ادمین برای حذف:`, {
+        reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
+      });
+      return true;
 
-  if (license) {
-    message = `🎫 **اطلاعات لایسنس**
+    case ADMIN_SUBMENU_BUTTON_BACK:
+      adminStates.set(telegramId, { action: 'menu' });
+      await showAdminMenu(env, chatId);
+      return true;
 
-💳 **کد:** \`${license.code}\`
-⏰ **اعتبار:** ${license.expiration_days || 'نامحدود'} روز
-📅 **ایجاد:** ${new Date(license.created_at).toLocaleDateString('fa-IR')}
-👤 **استفاده شده توسط:** ${license.used_by_name || 'هنوز استفاده نشده'}`;
-
-    if (!license.used_by_user_id) {
-      keyboard.inline_keyboard.push([
-        { text: "📅 تغییر اعتبار", callback_data: `${ADMIN_CB.CHANGE_EXPIRE}:${license.code}` }
-      ]);
-    }
-  }
-
-  if (user) {
-    const status = user.is_banned ? "🚫 مسدود" : "✅ فعال";
-    const banInfo = user.banned_until ? `\n🚫 **مسدود شده تا:** ${new Date(user.banned_until).toLocaleDateString('fa-IR')}` : "";
-    
-    if (message) message += "\n\n";
-    message += `👤 **اطلاعات کاربر**
-
-🆔 **آیدی:** ${user.telegram_id}
-👤 **نام:** ${user.display_name || user.first_name || 'نامشخص'}
-🔗 **یوزرنیم:** ${user.username ? '@' + user.username : 'ندارد'}
-📊 **سطح:** ${user.xp_total || 0} XP
-🔥 **استریک:** ${user.streak_count || 0} روز
-📅 **عضویت:** ${new Date(user.created_at).toLocaleDateString('fa-IR')}
-📈 **وضعیت:** ${status}${banInfo}`;
-
-    keyboard.inline_keyboard.push([
-      { text: "🚫 مسدود کردن", callback_data: `${ADMIN_CB.BAN_USER}:${user.id}` },
-      { text: "✅ رفع مسدودیت", callback_data: `${ADMIN_CB.UNBAN_USER}:${user.id}` }
-    ]);
-    
-    keyboard.inline_keyboard.push([
-      { text: "🗑️ حذف کاربر", callback_data: `${ADMIN_CB.DELETE_USER}:${user.id}` }
-    ]);
-  }
-
-  keyboard.inline_keyboard.push([
-    { text: "🔙 بازگشت", callback_data: `${ADMIN_CB.BACK}:0` }
-  ]);
-
-  await sendMessage(env, chatId, message, { 
-    reply_markup: keyboard,
-    parse_mode: "Markdown" 
-  });
-}
-
-export async function handleAdminCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
-  const data = callbackQuery.data || "";
-  const chatId = callbackQuery.message?.chat.id || 0;
-  const telegramId = callbackQuery.from.id;
-
-  if (!await isAdmin(env, telegramId)) {
-    await answerCallbackQuery(env, callbackQuery.id);
-    return;
-  }
-
-  const admin = await getAdminByTelegramId(env, telegramId);
-  if (!admin) return;
-
-  const [action, param] = data.split(":");
-
-  switch (action) {
-    case ADMIN_CB.LICENSE:
-      adminStates.set(telegramId, { action: 'await_license_days' });
-      await handleLicenseCallback(env, chatId, admin);
-      break;
-      
-    case ADMIN_CB.USER_MGMT:
-      adminStates.set(telegramId, { action: 'await_user_identifier' });
-      await handleUserMgmtCallback(env, chatId, admin);
-      break;
-      
-    case ADMIN_CB.ANNOUNCEMENT:
-      adminStates.set(admin.telegram_id, { action: 'new_announcement' });
-      await handleAnnouncementCallback(env, chatId, admin);
-      break;
-      
-    case ADMIN_CB.ADD_ADMIN:
-      adminStates.set(admin.telegram_id, { action: 'add_admin' });
-      await handleAddAdminCallback(env, chatId, admin);
-      break;
-      
-    case ADMIN_CB.REMOVE_ADMIN:
-      await handleRemoveAdminCallback(env, chatId, admin);
-      break;
-      
-    case ADMIN_CB.BAN_USER:
-      await handleBanUserCallback(env, chatId, admin, parseInt(param));
-      break;
-      
-    case ADMIN_CB.UNBAN_USER:
-      await handleUnbanUserCallback(env, chatId, admin, parseInt(param));
-      break;
-      
-    case ADMIN_CB.DELETE_USER:
-      await handleDeleteUserCallback(env, chatId, admin, parseInt(param));
-      break;
-      
-    case ADMIN_CB.CHANGE_EXPIRE:
-      adminStates.set(admin.telegram_id, { action: 'change_expire', licenseCode: param });
-      await handleChangeExpireCallback(env, chatId, admin, param);
-      break;
-      
-    case ADMIN_CB.ANNOUNCE_CONFIRM:
-      await handleAnnounceConfirmCallback(env, chatId, admin, parseInt(param));
-      break;
-      
-    case ADMIN_CB.ANNOUNCE_SEND:
-      await handleAnnounceSendCallback(env, chatId, admin, parseInt(param));
-      break;
-      
-    case ADMIN_CB.ANNOUNCE_REPORT:
-      await handleAnnounceReportCallback(env, chatId, admin, parseInt(param));
-      break;
-      
-    case ADMIN_CB.BACK:
-      adminStates.delete(telegramId);
-      await showAdminMainMenu(env, chatId, admin);
-      break;
-
-    case ADMIN_CB.EXIT:
+    case ADMIN_MENU_BUTTON_EXIT:
       adminStates.delete(telegramId);
       await sendMessage(env, chatId, "✅ از پنل ادمین خارج شدی. به منوی اصلی برگشتی 👇", {
         reply_markup: getMainMenuKeyboard()
       });
-      break;
+      return true;
 
     default:
-      await answerCallbackQuery(env, callbackQuery.id);
-      return;
+      await sendMessage(env, chatId, "⚠️ لطفاً یکی از گزینه‌های منو را انتخاب کنید.");
+      return true;
   }
-  
-  // Answer the callback query for all handled cases
-  await answerCallbackQuery(env, callbackQuery.id);
 }
 
-async function handleLicenseCallback(env: Env, chatId: number, admin: any): Promise<void> {
-  await sendMessage(env, chatId,
-    `🎫 **تولید لایسنس جدید**
-
-لطفاً تعداد روز اعتبار لایسنس را به صورت عدد وارد کنید:
-مثال: \`30\` برای لایسنس ۳۰ روزه
-مثال: \`365\` برای لایسنس یک ساله
-
-حداکثر: ۳۶۵۰ روز (۱۰ سال)`,
-    { parse_mode: "Markdown" }
-  );
-}
-
-async function handleUserMgmtCallback(env: Env, chatId: number, admin: any): Promise<void> {
-  await sendMessage(env, chatId, 
-    `👥 **مدیریت کاربران**
-
-لطفاً یکی از موارد زیر را ارسال کنید:
-• 🎫 **کد لایسنس** برای مدیریت لایسنس
-• 🆔 **آیدی عددی کاربر** (مثال: 123456789)
-• 🔗 **یوزرنیم کاربر** (مثلاً @username یا username)
-
-پس از ارسال، منوی مدیریت برای شما نمایش داده می‌شود.`, 
-    { parse_mode: "Markdown" }
-  );
-}
-
-async function handleAnnouncementCallback(env: Env, chatId: number, admin: any): Promise<void> {
-  const announcements = await getAllAnnouncements(env);
-  
-  let message = `📢 **سیستم اطلاع‌رسانی**
-
-آخرین اطلاعیه‌ها:\n\n`;
-  
-  if (announcements.length === 0) {
-    message += "هنوز اطلاعیه‌ای ثبت نشده است.";
-  } else {
-    announcements.slice(0, 5).forEach((ann, index) => {
-      const status = ann.status === 'completed' ? '✅' : 
-                    ann.status === 'sending' ? '📤' : 
-                    ann.status === 'confirmed' ? '⏳' : '📝';
-      message += `${index + 1}. ${status} ${ann.title || 'بدون عنوان'} (${ann.sent_count}/${ann.total_users})\n`;
-    });
-  }
-  
-  message += `\nبرای ایجاد اطلاعیه جدید، متن خود را ارسال کنید.`;
-
-  await sendMessage(env, chatId, message, { parse_mode: "Markdown" });
-}
-
-async function handleAddAdminCallback(env: Env, chatId: number, admin: any): Promise<void> {
+async function showAdminMgmtMenu(env: Env, chatId: number): Promise<void> {
   const allAdmins = await getAllAdmins(env);
-  
-  let message = `👥 **مدیریت ادمین‌ها**
-
-ادمین‌های فعلی:\n\n`;
-  
-  allAdmins.forEach((adm, index) => {
-    const superAdmin = adm.is_super_admin ? '👑' : '👤';
-    message += `${index + 1}. ${superAdmin} ${adm.first_name || 'نامشخص'} (${adm.telegram_id})\n`;
+  let msg = `👤 <b>مدیریت ادمین‌ها</b>\n\n`;
+  allAdmins.forEach((a: any, i: number) => {
+    const role = a.is_super_admin ? '👑 Super' : '👤';
+    msg += `${i + 1}. ${role} ${a.first_name || 'نامشخص'} (<code>${a.telegram_id}</code>)\n`;
   });
-  
-  message += `\nبرای افزودن ادمین جدید، آیدی عددی تلگرام را ارسال کنید:`;
 
-  await sendMessage(env, chatId, message, { parse_mode: "Markdown" });
-}
-
-async function handleRemoveAdminCallback(env: Env, chatId: number, admin: any): Promise<void> {
-  // Similar to add admin but for removal
-  await handleAddAdminCallback(env, chatId, admin); // Reuse the same handler
-}
-
-async function handleBanUserCallback(env: Env, chatId: number, admin: any, userId: number): Promise<void> {
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "🚫 ۷ روز", callback_data: `admin_ban_confirm:${userId}:7` },
-        { text: "🚫 ۳۰ روز", callback_data: `admin_ban_confirm:${userId}:30` }
-      ],
-      [
-        { text: "🚫 ۹۰ روز", callback_data: `admin_ban_confirm:${userId}:90` },
-        { text: "🚫 دائمی", callback_data: `admin_ban_confirm:${userId}:0` }
-      ],
-      [
-        { text: "❌ انصراف", callback_data: `${ADMIN_CB.BACK}:0` }
-      ]
-    ]
-  };
-
-  await sendMessage(env, chatId, 
-    `⚠️ **مسدود کردن کاربر**
-
-مدت زمان مسدودیت را انتخاب کنید:`, 
-    { reply_markup: keyboard, parse_mode: "Markdown" }
-  );
-}
-
-async function handleUnbanUserCallback(env: Env, chatId: number, admin: any, userId: number): Promise<void> {
-  const success = await unbanUser(env, userId);
-  
-  if (success) {
-    await sendMessage(env, chatId, "✅ کاربر با موفقیت از مسدودیت خارج شد.");
-  } else {
-    await sendMessage(env, chatId, "❌ خطا در رفع مسدودیت کاربر.");
-  }
-}
-
-async function handleDeleteUserCallback(env: Env, chatId: number, admin: any, userId: number): Promise<void> {
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "⚠️ بله، حذف کن", callback_data: `admin_delete_confirm:${userId}` },
-        { text: "❌ انصراف", callback_data: `${ADMIN_CB.BACK}:0` }
-      ]
-    ]
-  };
-
-  await sendMessage(env, chatId, 
-    `⚠️ **حذف کاربر**
-
-**هشدار:** این عمل غیرقابل بازگشت است و تمام داده‌های کاربر حذف می‌شود.
-
-آیا از حذف این کاربر اطمینان دارید؟`, 
-    { reply_markup: keyboard, parse_mode: "Markdown" }
-  );
-}
-
-async function handleChangeExpireCallback(env: Env, chatId: number, admin: any, licenseCode: string): Promise<void> {
-  await sendMessage(env, chatId, 
-    `📅 **تغییر اعتبار لایسنس**
-
-کد لایسنس: \`${licenseCode}\`
-
-لطفاً تعداد روز اعتبار جدید را وارد کنید:`, 
-    { parse_mode: "Markdown" }
-  );
-}
-
-async function handleAnnounceConfirmCallback(env: Env, chatId: number, admin: any, announcementId: number): Promise<void> {
-  const announcement = await getAnnouncement(env, announcementId);
-  if (!announcement) {
-    await sendMessage(env, chatId, "❌ اطلاعیه یافت نشد.");
-    return;
-  }
-
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "📤 ارسال به همه", callback_data: `${ADMIN_CB.ANNOUNCE_SEND}:${announcementId}` },
-        { text: "📊 گزارش ارسال", callback_data: `${ADMIN_CB.ANNOUNCE_REPORT}:${announcementId}` }
-      ],
-      [
-        { text: "❌ انصراف", callback_data: `${ADMIN_CB.BACK}:0` }
-      ]
-    ]
-  };
-
-  const message = `📢 **پیش‌نمایش اطلاعیه**
-
-عنوان: ${announcement.title || 'بدون عنوان'}
-
-متن:
-${announcement.message}
-
-آیا مایلید این اطلاعیه را ارسال کنید؟`;
-
-  await sendMessage(env, chatId, message, { 
-    reply_markup: keyboard,
-    parse_mode: "Markdown" 
+  await sendMessage(env, chatId, msg, {
+    parse_mode: "HTML",
+    reply_markup: getAdminSubMenuKeyboard([
+      [ADMIN_SUBMENU_BUTTON_ADD_ADMIN, ADMIN_SUBMENU_BUTTON_REMOVE_ADMIN],
+      [ADMIN_SUBMENU_BUTTON_BACK]
+    ])
   });
 }
 
-async function handleAnnounceSendCallback(env: Env, chatId: number, admin: any, announcementId: number): Promise<void> {
-  const announcement = await getAnnouncement(env, announcementId);
+async function removeAdmin(env: Env, telegramId: number): Promise<boolean> {
+  const result = await execute(
+    env,
+    "DELETE FROM admins WHERE telegram_id = ? AND is_super_admin = 0",
+    [telegramId]
+  );
+  return result.meta.changes > 0;
+}
+
+async function sendAnnouncement(
+  env: Env,
+  adminChatId: number,
+  adminTelegramId: number,
+  admin: any,
+  announcement?: { messageId: number; chatId: number }
+): Promise<void> {
   if (!announcement) {
-    await sendMessage(env, chatId, "❌ اطلاعیه یافت نشد.");
+    await sendMessage(env, adminChatId, "❌ خطا در اطلاعیه.");
     return;
   }
 
   const users = await getApprovedUsers(env);
-  await updateAnnouncementCounts(env, announcementId, 0, users.length);
-  
-  await sendMessage(env, chatId, 
-    `📤 **شروع ارسال اطلاعیه**
+  const total = users.length;
 
-تعداد کاربران: ${users.length}
-وضعیت: در حال ارسال به صورت دسته‌ای (۱۰۰ کاربر در هر ثانیه)
-
-این فرآیند ممکن است چند دقیقه طول بکشد. شما می‌توانید از منوی گزارش وضعیت را بررسی کنید.
-
-📊 تخمین زمان: حدود ${Math.ceil(users.length / 100)} ثانیه`);
-  
-  // Start batch sending in background
-  scheduleAnnouncementSend(env, announcementId, announcement.message);
-}
-
-async function handleAnnounceReportCallback(env: Env, chatId: number, admin: any, announcementId: number): Promise<void> {
-  const report = await getAnnouncementReport(env, announcementId);
-  
-  let message = `📊 **گزارش ارسال اطلاعیه**
-
-✅ ارسال شده: ${report.summary.sent}
-❌ ناموفق: ${report.summary.failed}
-⏭️ رد شده: ${report.summary.skipped}
-📤 کل: ${report.summary.total}`;
-
-  if (report.failedLogs.length > 0) {
-    message += "\n\n**خطاها:**\n";
-    report.failedLogs.slice(0, 5).forEach((log: any) => {
-      message += `• ${log.first_name} (@${log.username || 'ندارد'}): ${log.error_message}\n`;
+  if (total === 0) {
+    adminStates.set(adminTelegramId, { action: 'menu' });
+    await sendMessage(env, adminChatId, "⚠️ هیچ کاربر تاییدشده‌ای وجود ندارد.", {
+      reply_markup: getAdminMenuKeyboard()
     });
+    return;
   }
 
-  await sendMessage(env, chatId, message, { parse_mode: "Markdown" });
-}
-
-// Handle admin text messages (for announcements, adding admins, etc.)
-export async function handleAdminTextMessage(env: Env, update: TelegramUpdate): Promise<boolean> {
-  const message = update.message;
-  if (!message || !message.from) return false;
-
-  const chatId = message.chat.id;
-  const telegramId = message.from.id;
-  const text = message.text?.trim();
-
-  if (!text) return false;
-
-  const admin = await getAdminByTelegramId(env, telegramId);
-  if (!admin) return false;
-
-  const state = adminStates.get(telegramId);
-  if (!state) return false;
-
-  switch (state.action) {
-    case 'new_announcement':
-      await handleNewAnnouncement(env, chatId, admin, text);
-      break;
-      
-    case 'add_admin':
-      await handleAddAdmin(env, chatId, admin, text);
-      break;
-      
-    case 'change_expire':
-      await handleChangeExpire(env, chatId, admin, text, state.licenseCode);
-      break;
-  }
-
-  return true;
-}
-
-async function handleNewAnnouncement(env: Env, chatId: number, admin: any, text: string): Promise<void> {
-  const announcementId = await createAnnouncement(env, null, text, admin.id);
-  
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "✅ تایید و ارسال", callback_data: `${ADMIN_CB.ANNOUNCE_CONFIRM}:${announcementId}` },
-        { text: "❌ انصراف", callback_data: `${ADMIN_CB.BACK}:0` }
-      ]
-    ]
-  };
-
-  await sendMessage(env, chatId, 
-    `📝 **پیش‌نمایش اطلاعیه**
-
-متن اطلاعیه:
-${text}
-
-آیا مایلید این اطلاعیه را تایید و ارسال کنید؟`, 
-    { reply_markup: keyboard, parse_mode: "Markdown" }
+  await sendMessage(env, adminChatId,
+    `📤 <b>شروع ارسال اطلاعیه</b>\n\nتعداد کاربران: ${total}\n\nارسال شروع شد...`,
+    { parse_mode: "HTML" }
   );
-  
-  adminStates.delete(admin.telegram_id);
-}
 
-async function handleAddAdmin(env: Env, chatId: number, admin: any, text: string): Promise<void> {
-  if (!/^\d+$/.test(text)) {
-    await sendMessage(env, chatId, "❌ لطفاً آیدی عددی تلگرام را وارد کنید.");
-    return;
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  const milestones = [0.25, 0.5, 0.75, 1.0];
+  let nextMilestoneIndex = 0;
+
+  for (let i = 0; i < users.length; i++) {
+    const user = users[i];
+    try {
+      await copyMessage(env, announcement.chatId, announcement.messageId, user.telegram_id);
+      sent++;
+    } catch (err: any) {
+      failed++;
+      const errMsg = err?.message || String(err);
+      if (errors.length < 5) errors.push(`${user.telegram_id}: ${errMsg}`);
+    }
+
+    // Progress report every 25%
+    const progress = (i + 1) / total;
+    if (nextMilestoneIndex < milestones.length && progress >= milestones[nextMilestoneIndex]) {
+      const pct = Math.round(milestones[nextMilestoneIndex] * 100);
+      await sendMessage(env, adminChatId,
+        `📊 <b>گزارش پیشرفت ${pct}%</b>\n✅ ارسال شده: ${sent}\n❌ ناموفق: ${failed}\n📤 کل: ${i + 1}/${total}`,
+        { parse_mode: "HTML" }
+      );
+      nextMilestoneIndex++;
+    }
+
+    // Rate limit: 1 request per second
+    if (i < users.length - 1) {
+      await sleep(1000);
+    }
   }
 
-  const newAdminId = parseInt(text);
-  const success = await addAdmin(env, newAdminId, undefined, undefined, admin.id);
-  
-  if (success) {
-    await sendMessage(env, chatId, `✅ ادمین جدید با آیدی ${newAdminId} با موفقیت اضافه شد.`);
-  } else {
-    await sendMessage(env, chatId, "❌ خطا در افزودن ادمین (احتمالاً قبلاً اضافه شده است).");
-  }
-  
-  adminStates.delete(admin.telegram_id);
-}
+  // Final report
+  let finalMsg =
+    `📊 <b>گزارش نهایی ارسال</b>\n\n` +
+    `✅ ارسال شده: ${sent}\n` +
+    `❌ ناموفق: ${failed}\n` +
+    `📤 کل: ${total}`;
 
-async function handleChangeExpire(env: Env, chatId: number, admin: any, text: string, licenseCode: string): Promise<void> {
-  if (!/^\d+$/.test(text)) {
-    await sendMessage(env, chatId, "❌ لطفاً تعداد روز را به صورت عدد وارد کنید.");
-    return;
+  if (errors.length > 0) {
+    finalMsg += `\n\n<b>نمونه خطاها:</b>\n${errors.join('\n')}`;
   }
 
-  const days = parseInt(text);
-  if (days <= 0 || days > 3650) {
-    await sendMessage(env, chatId, "❌ تعداد روز باید بین ۱ تا ۳۶۵۰ باشد.");
-    return;
-  }
-
-  const success = await updateLicenseExpiration(env, licenseCode, days);
-  
-  if (success) {
-    await sendMessage(env, chatId, `✅ اعتبار لایسنس با موفقیت به ${days} روز تغییر یافت.`);
-  } else {
-    await sendMessage(env, chatId, "❌ خطا در تغییر اعتبار لایسنس (احتمالاً استفاده شده است).");
-  }
-  
-  adminStates.delete(admin.telegram_id);
+  adminStates.set(adminTelegramId, { action: 'menu' });
+  await sendMessage(env, adminChatId, finalMsg, {
+    parse_mode: "HTML",
+    reply_markup: getAdminMenuKeyboard()
+  });
 }

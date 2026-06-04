@@ -34,13 +34,10 @@ import {
   handleSetDisplayNameCommand
 } from "./handlers/profile";
 import {
-  handleAdminCommand,
-  handleAdminCallback,
-  handleAdminTextMessage
+  handleAdminCommand
 } from "./handlers/admin";
 import { CB_PREFIX } from "../config/constants";
 import { getOrCreateUser, getUserByTelegramId } from "../db/users";
-import { isAdmin } from "../db/admin";
 import { queryOne, execute } from "../db/client";
 
 export interface TelegramUser {
@@ -60,6 +57,12 @@ export interface TelegramMessage {
   from?: TelegramUser;
   chat: TelegramChat;
   text?: string;
+  caption?: string;
+  photo?: Array<{ file_id: string; file_size?: number; width?: number; height?: number }>;
+  video?: { file_id: string; file_size?: number; width?: number; height?: number; duration?: number };
+  audio?: { file_id: string; file_size?: number; duration?: number };
+  document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
+  voice?: { file_id: string; file_size?: number; duration?: number };
 }
 
 export interface TelegramCallbackQuery {
@@ -117,12 +120,6 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   // Stats (st:...)
   if (data.startsWith(`${CB_PREFIX.STATS}:`)) {
     await handleStatsCallback(env, callbackQuery);
-    return;
-  }
-
-  // Admin callbacks (admin_...)
-  if (data.startsWith("admin_")) {
-    await handleAdminCallback(env, callbackQuery);
     return;
   }
 
@@ -321,13 +318,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
             return;
         }
      }
-  }
-
-  // Check admin text messages before other user flows
-  const isAdminUser = await isAdmin(env, tgUser.id);
-  if (isAdminUser) {
-    const handled = await handleAdminTextMessage(env, update);
-    if (handled) return;
   }
 
   const isReadingTitle = await handleReadingTitleSelection(env, update, text);

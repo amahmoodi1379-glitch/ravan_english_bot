@@ -52,6 +52,44 @@ export function getProfileMenuKeyboard() {
 }
 
 // === تابع اصلاح شده: کیبورد هوشمند صفحه‌بندی ===
+// === دکمه‌های پنل ادمین (Reply Keyboard) ===
+export const ADMIN_MENU_BUTTON_LICENSE = "🎫 ایجاد لایسنس";
+export const ADMIN_MENU_BUTTON_ANNOUNCE = "📢 اطلاع‌رسانی";
+export const ADMIN_MENU_BUTTON_USER_MGMT = "👥 مدیریت کاربران";
+export const ADMIN_MENU_BUTTON_ADMIN_MGMT = "👤 مدیریت ادمین‌ها";
+export const ADMIN_MENU_BUTTON_EXIT = "🔙 خروج از پنل ادمین";
+
+export const ADMIN_SUBMENU_BUTTON_BACK = "⬅️ بازگشت";
+export const ADMIN_SUBMENU_BUTTON_NEXT_LICENSE = "🔄 لایسنس بعدی";
+export const ADMIN_SUBMENU_BUTTON_CONFIRM = "✅ تایید و ارسال";
+export const ADMIN_SUBMENU_BUTTON_CANCEL = "❌ انصراف";
+export const ADMIN_SUBMENU_BUTTON_BAN = "🚫 مسدود کردن";
+export const ADMIN_SUBMENU_BUTTON_UNBAN = "✅ رفع مسدودیت";
+export const ADMIN_SUBMENU_BUTTON_ADD_ADMIN = "➕ افزودن ادمین";
+export const ADMIN_SUBMENU_BUTTON_REMOVE_ADMIN = "➖ حذف ادمین";
+
+export function getAdminMenuKeyboard() {
+  return {
+    keyboard: [
+      [ADMIN_MENU_BUTTON_LICENSE],
+      [ADMIN_MENU_BUTTON_ANNOUNCE],
+      [ADMIN_MENU_BUTTON_USER_MGMT],
+      [ADMIN_MENU_BUTTON_ADMIN_MGMT],
+      [ADMIN_MENU_BUTTON_EXIT]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false
+  };
+}
+
+export function getAdminSubMenuKeyboard(buttons: string[][]) {
+  return {
+    keyboard: buttons,
+    resize_keyboard: true,
+    one_time_keyboard: false
+  };
+}
+
 export function getPaginatedReadingKeyboard(
   titles: string[], 
   currentPage: number, 
