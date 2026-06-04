@@ -1,6 +1,6 @@
 import { Env } from "../../types";
 import { TelegramUpdate } from "../router";
-import { sendMessage, answerCallbackQuery } from "../telegram-api";
+import { sendMessage, answerCallbackQuery, getBotUsername } from "../telegram-api";
 import { getAdminSubMenuKeyboard, ADMIN_SUBMENU_BUTTON_BACK } from "../keyboards";
 import { CB_PREFIX } from "../../config/constants";
 import { getAdminByTelegramId } from "../../db/admin";
@@ -128,7 +128,9 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
       const lm = parseInt(text); if (isNaN(lm) || lm < 1 || lm > 10080) { await sendMessage(env, chatId, "⚠️ ۱ تا ۱۰۰۸۰:"); return true; }
       const token = genToken(); const expires = new Date(Date.now() + lm * 60 * 1000).toISOString();
       await createQuizLink(env, s.quizId!, token, expires); qaStates.delete(tgId);
-      await sendMessage(env, chatId, `🔗 لینک:\nt.me/${env.BOT_USERNAME || 'bot'}?start=quiz_${token}\n⏳ ${lm} دقیقه`); return true;
+      const botUsername = await getBotUsername(env);
+      const username = botUsername || 'your_bot';
+      await sendMessage(env, chatId, `🔗 لینک:\nt.me/${username}?start=quiz_${token}\n⏳ ${lm} دقیقه`); return true;
     }
 
     case 'quiz_edit_question': {

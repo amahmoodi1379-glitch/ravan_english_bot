@@ -157,6 +157,26 @@ export async function answerCallbackQuery(
   await fetchWithRetry(url, body);
 }
 
+// کش یوزرنیم ربات (برای جلوگیری از فراخوانی مکرر getMe)
+let cachedBotUsername: string | null = null;
+
+export async function getBotUsername(env: Env): Promise<string | null> {
+  if (cachedBotUsername) return cachedBotUsername;
+  try {
+    const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getMe`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.ok && data.result?.username) {
+      cachedBotUsername = data.result.username;
+      return cachedBotUsername;
+    }
+    return null;
+  } catch (err) {
+    console.error("Failed to get bot username:", err);
+    return null;
+  }
+}
+
 // ویرایش پیام
 export async function editMessageText(
   env: Env,
