@@ -72,8 +72,8 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
     if (newRow) {
       wordId = newRow.id;
     } else {
-      // 3) پیش‌خوانی
-      const anyRow = await queryOne<{ word_id: number }>(
+      // 3) پیش‌خوانی محدود — فقط واژه‌هایی که حداقل ۵۰٪ intervalشون گذشته
+      const earlyRow = await queryOne<{ word_id: number }>(
         env,
         `
         SELECT s.word_id
@@ -82,12 +82,16 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
         WHERE s.user_id = ?
           AND s.ignored = 0
           AND w.is_active = 1
+          AND (
+            s.last_reviewed_at IS NULL
+            OR julianday('now', '${TIME_ZONE_OFFSET}') - julianday(s.last_reviewed_at) >= s.interval_days * 0.5
+          )
         ORDER BY date(s.next_review_date) ASC, w.order_index ASC
         LIMIT 1
         `,
         [userId]
       );
-      if (anyRow) wordId = anyRow.word_id;
+      if (earlyRow) wordId = earlyRow.word_id;
     }
   }
 
@@ -190,23 +194,34 @@ export async function prepareUpdateSm2(
     // اگر کاربر دیرتر از موعد مرور کرده، فاصله واقعی را حساب کن
     if (diffDays > state.interval_days) {
       usedInterval = diffDays;
-    } 
-    // اگر زودتر مرور کرده (زودتر از موعد)، همون برنامه قبلی رو نگه دار تا عقب نیفتد
+    }
+    // اگر زودتر مرور کرده، diffDays رو به SM2 بده تا interval بلند نشه
     else {
-      usedInterval = state.interval_days;
+      usedInterval = diffDays;
     }
 
     if (usedInterval < 1) usedInterval = 1;
   }
   // ================================================
 
+  // سقف interval بر اساس stage (جلوگیری از دور شدن واژه‌ها)
+  const STAGE_MAX_INTERVAL: Record<number, number> = {
+    1: 3,
+    2: 7,
+    3: 14,
+    4: 30,
+    5: 60,
+  };
+  const maxInterval = STAGE_MAX_INTERVAL[state.question_stage || 1] || 60;
+
   const sm2Result = sm2(
     {
-      interval: usedInterval, // اینجا قبلاً state.interval_days بود
+      interval: usedInterval,
       repetition: state.repetitions || 0,
       ef: state.ease_factor || 2.5
     },
-    quality
+    quality,
+    maxInterval
   );
 
   const nextReviewIso = addDaysToIso(nowIso, sm2Result.interval);
@@ -215,7 +230,7 @@ export async function prepareUpdateSm2(
   let newCorrectStreak = state.correct_streak || 0;
 
   if (!isCorrect) {
-    newStage = 1;
+    newStage = Math.max(1, (state.question_stage || 1) - 2);
     newCorrectStreak = 0;
   } else {
     newCorrectStreak += 1;
