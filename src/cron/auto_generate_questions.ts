@@ -12,12 +12,6 @@ interface WordWithoutQuestions {
   level: number;
 }
 
-interface GenerationLog {
-  id: number;
-  word_id: number;
-  status: string;
-  error_message?: string;
-}
 
 const BATCH_SIZE = 30; // تعداد واژه در هر اجرا
 const PARALLEL_SIZE = 5; // تعداد واژه‌های موازی در هر گروه
@@ -39,16 +33,6 @@ async function findWordsWithoutQuestions(env: Env): Promise<WordWithoutQuestions
     [BATCH_SIZE]
   );
   return words;
-}
-
-// چک کردن آیا این واژه در حال پردازش هست (لاگ pending دارد)
-async function isWordPending(env: Env, wordId: number): Promise<boolean> {
-  const log = await queryOne<GenerationLog>(
-    env,
-    "SELECT id FROM ai_generation_log WHERE word_id = ? AND status = 'pending'",
-    [wordId]
-  );
-  return !!log;
 }
 
 // ثبت شروع پردازش
@@ -141,12 +125,6 @@ async function processWord(
   apiKey: string,
   word: WordWithoutQuestions
 ): Promise<boolean> {
-  // چک کردن آیا قبلاً در حال پردازش هست
-  if (await isWordPending(env, word.id)) {
-    console.log(`Word "${word.english}" is already pending, skipping...`);
-    return false;
-  }
-
   // ثبت شروع
   await logStart(env, word.id, word.english);
 
@@ -229,6 +207,14 @@ export async function runAutoQuestionGeneration(env: Env): Promise<{ processed: 
   if (await shouldPause(env)) {
     return { processed: 0, success: 0, errors: 0 };
   }
+
+  // expire کردن pending‌هایی که بیشتر از ۵ دقیقه قدیمی‌اند (timeout شده‌اند)
+  await execute(
+    env,
+    `UPDATE ai_generation_log
+     SET status = 'error', error_message = 'Timeout: worker expired before completion', updated_at = datetime('now')
+     WHERE status = 'pending' AND created_at < datetime('now', '-5 minutes')`
+  );
 
   // پیدا کردن واژگان بدون سوال
   const words = await findWordsWithoutQuestions(env);
