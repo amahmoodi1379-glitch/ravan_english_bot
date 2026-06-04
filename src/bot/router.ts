@@ -33,6 +33,11 @@ import {
   handleStatsCallback,
   handleSetDisplayNameCommand
 } from "./handlers/profile";
+import {
+  handleAdminCommand,
+  handleAdminCallback,
+  handleAdminTextMessage
+} from "./handlers/admin";
 import { CB_PREFIX } from "../config/constants";
 import { getOrCreateUser, getUserByTelegramId } from "../db/users";
 import { queryOne, execute } from "../db/client";
@@ -114,6 +119,12 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
     return;
   }
 
+  // Admin callbacks (admin_...)
+  if (data.startsWith("admin_")) {
+    await handleAdminCallback(env, callbackQuery);
+    return;
+  }
+
   // اگر دکمه ناشناس بود، لودینگ را ببند تا کاربر معطل نشود
   await answerCallbackQuery(env, callbackQuery.id);
 }
@@ -152,32 +163,47 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     
     const now = new Date().toISOString();
 
-    // تلاش برای تایید کد
-    const result = await execute(
+    // تلاش برای تایید کد و دریافت اطلاعات لایسنس
+    const licenseInfo = await queryOne(
       env,
-      `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
-      [user.id, now, inputCode]
+      `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
+      [inputCode]
     );
 
-    if (result.meta.changes > 0) {
-      // کد صحیح بود
-      await execute(
+    if (licenseInfo) {
+      // کد صحیح بود - استفاده از لایسنس
+      const result = await execute(
         env,
-        `UPDATE users SET is_approved = 1 WHERE id = ?`,
-        [user.id]
+        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
+        [user.id, now, inputCode]
       );
-      user.is_approved = 1;
-      await sendMessage(env, chatId, "✅ تبریک! لایسنس شما تایید شد.\nحالا می‌تونی از ربات استفاده کنی. برای شروع روی /start بزن یا از منو استفاده کن.");
-      return;
-    } else {
-      // کد غلط بود
-      await sendMessage(
-        env,
-        chatId,
-        "⛔️ کد لایسنس نامعتبر است یا قبلاً استفاده شده.\nلطفاً کد صحیح را ارسال کنید."
-      );
-      return; 
+
+      if (result.meta.changes > 0) {
+        // محاسبه تاریخ انقضا اگر لایسنس محدود داشته باشد
+        let expireMessage = "";
+        if (licenseInfo.expiration_days && licenseInfo.expiration_days > 0) {
+          const expireDate = new Date(Date.now() + licenseInfo.expiration_days * 24 * 60 * 60 * 1000);
+          expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${expireDate.toLocaleDateString('fa-IR')})`;
+        }
+
+        await execute(
+          env,
+          `UPDATE users SET is_approved = 1 WHERE id = ?`,
+          [user.id]
+        );
+        user.is_approved = 1;
+        await sendMessage(env, chatId, `✅ تبریک! لایسنس شما تایید شد.${expireMessage}\nحالا می‌تونی از ربات استفاده کنی. برای شروع روی /start بزن یا از منو استفاده کن.`);
+        return;
+      }
     }
+    
+    // کد غلط بود
+    await sendMessage(
+      env,
+      chatId,
+      "⛔️ کد لایسنس نامعتبر است یا قبلاً استفاده شده.\nلطفاً کد صحیح را ارسال کنید."
+    );
+    return;
   }
 
  // 3. اگر کاربر در دیتابیس هست، اما هنوز تایید نشده
@@ -195,21 +221,40 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
     const now = new Date().toISOString();
 
-    const result = await execute(
+    // تلاش برای تایید کد و دریافت اطلاعات لایسنس
+    const licenseInfo = await queryOne(
       env,
-      `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
-      [user.id, now, inputCode]
+      `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
+      [inputCode]
     );
 
-    if (result.meta.changes > 0) {
-      await execute(
+    if (licenseInfo) {
+      // کد صحیح بود - استفاده از لایسنس
+      const result = await execute(
         env,
-        `UPDATE users SET is_approved = 1 WHERE id = ?`,
-        [user.id]
+        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
+        [user.id, now, inputCode]
       );
-      user.is_approved = 1;
 
-      await sendMessage(env, chatId, "✅ اکانت شما فعال شد! حالا می‌تونید از ربات استفاده کنید.");
+      if (result.meta.changes > 0) {
+        // محاسبه تاریخ انقضا اگر لایسنس محدود داشته باشد
+        let expireMessage = "";
+        if (licenseInfo.expiration_days && licenseInfo.expiration_days > 0) {
+          const expireDate = new Date(Date.now() + licenseInfo.expiration_days * 24 * 60 * 60 * 1000);
+          expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${expireDate.toLocaleDateString('fa-IR')})`;
+        }
+
+        await execute(
+          env,
+          `UPDATE users SET is_approved = 1 WHERE id = ?`,
+          [user.id]
+        );
+        user.is_approved = 1;
+
+        await sendMessage(env, chatId, `✅ اکانت شما فعال شد!${expireMessage}\nحالا می‌تونید از ربات استفاده کنید.`);
+      } else {
+        await sendMessage(env, chatId, "⛔️ کد وارد شده معتبر نیست. لطفاً کد صحیح را ارسال کنید.");
+      }
     } else {
       await sendMessage(env, chatId, "⛔️ کد وارد شده معتبر نیست. لطفاً کد صحیح را ارسال کنید.");
     }
@@ -217,6 +262,22 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   }
 
   // --- از اینجا به بعد یعنی کاربر هم هست و هم تایید شده ---
+
+  // Check if user is banned
+  if (user.is_banned) {
+    const banMessage = user.banned_until ? 
+      `🚫 حساب کاربری شما مسدود شده است.\nتاریخ رفع مسدودیت: ${new Date(user.banned_until).toLocaleDateString('fa-IR')}` :
+      "🚫 حساب کاربری شما به طور دائمی مسدود شده است.";
+    
+    await sendMessage(env, chatId, banMessage);
+    return;
+  }
+
+  // Check for admin commands first (before user authentication)
+  if (text === "/admin") {
+    await handleAdminCommand(env, update);
+    return;
+  }
 
   if (text.startsWith("/setname")) {
     await handleSetDisplayNameCommand(env, update);
@@ -307,6 +368,9 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
   // ============================================================
+
+  // Check for admin text messages (before showing default message)
+  await handleAdminTextMessage(env, update);
 
   await sendMessage(
     env,

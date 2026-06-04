@@ -1080,5 +1080,136 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     return htmlResponse(renderAdminLayout("🤖 مدیریت تولید AI", content, "ai-logs"));
   }
 
+  // --- Analytics Dashboard ---
+  if (url.pathname === "/admin/analytics") {
+    const { getAnalyticsSummary, getCurrentUserStats, getAnalyticsHistory } = await import("../db/analytics");
+    
+    const [analyticsSummary, currentUserStats, dailyHistory, weeklyHistory] = await Promise.all([
+      getAnalyticsSummary(env),
+      getCurrentUserStats(env),
+      getAnalyticsHistory(env, 'daily', 30),
+      getAnalyticsHistory(env, 'weekly', 12)
+    ]);
+
+    // Generate simple charts using CSS bars
+    const generateChart = (data: any[], label: string, valueField: string) => {
+      if (!data || data.length === 0) return '<p style="color:#999;">داده‌ای موجود نیست</p>';
+      
+      const maxValue = Math.max(...data.map(d => d[valueField] || 0));
+      const chartBars = data.slice(0, 10).reverse().map(d => {
+        const value = d[valueField] || 0;
+        const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
+        return `
+          <div style="display:flex; align-items:center; margin-bottom:4px;">
+            <span style="width:60px; font-size:11px; text-align:left;">${d.date}</span>
+            <div style="flex:1; margin:0 8px; background:#e5e7eb; border-radius:3px; height:16px; position:relative;">
+              <div style="background:#2563eb; height:100%; border-radius:3px; width:${percentage}%;"></div>
+            </div>
+            <span style="width:30px; font-size:11px; text-align:right;">${value}</span>
+          </div>
+        `;
+      }).join('');
+      
+      return `
+        <div style="margin-top:16px;">
+          <h4 style="margin-bottom:8px; font-size:14px;">${label}</h4>
+          <div style="font-size:12px;">${chartBars}</div>
+        </div>
+      `;
+    };
+
+    const content = `
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px; margin-bottom:24px;">
+        <div style="background:#f8fafc; padding:16px; border-radius:8px; border-left:4px solid #2563eb;">
+          <div style="font-size:12px; color:#64748b; margin-bottom:4px;">کل کاربران</div>
+          <div style="font-size:24px; font-weight:bold; color:#1e293b;">${currentUserStats.total_users}</div>
+        </div>
+        <div style="background:#f8fafc; padding:16px; border-radius:8px; border-left:4px solid #10b981;">
+          <div style="font-size:12px; color:#64748b; margin-bottom:4px;">کاربران تایید شده</div>
+          <div style="font-size:24px; font-weight:bold; color:#1e293b;">${currentUserStats.approved_users}</div>
+        </div>
+        <div style="background:#f8fafc; padding:16px; border-radius:8px; border-left:4px solid #f59e0b;">
+          <div style="font-size:12px; color:#64748b; margin-bottom:4px;">فعال امروز</div>
+          <div style="font-size:24px; font-weight:bold; color:#1e293b;">${currentUserStats.active_today}</div>
+        </div>
+        <div style="background:#f8fafc; padding:16px; border-radius:8px; border-left:4px solid #ef4444;">
+          <div style="font-size:12px; color:#64748b; margin-bottom:4px;">مسدود شده</div>
+          <div style="font-size:24px; font-weight:bold; color:#1e293b;">${currentUserStats.banned_users}</div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:16px; margin-bottom:24px;">
+        <div style="background:#fef3c7; padding:16px; border-radius:8px;">
+          <h3 style="margin-top:0; font-size:16px; color:#92400e;">📊 آمار روزانه</h3>
+          ${analyticsSummary.daily ? `
+            <div style="font-size:13px; line-height:1.6;">
+              <div>کاربران فعال: <strong>${analyticsSummary.daily.active_users}</strong></div>
+              <div>کاربران جدید: <strong>${analyticsSummary.daily.new_users}</strong></div>
+              <div>کلمات یادگرفته شده: <strong>${analyticsSummary.daily.total_words_learned}</strong></div>
+              <div>جلسات مطالعه: <strong>${analyticsSummary.daily.total_sessions}</strong></div>
+              <div>میانگین زمان جلسه: <strong>${Math.round(analyticsSummary.daily.avg_session_duration)} دقیقه</strong></div>
+            </div>
+          ` : '<p style="color:#999;">داده‌ای برای امروز موجود نیست</p>'}
+        </div>
+
+        <div style="background:#dbeafe; padding:16px; border-radius:8px;">
+          <h3 style="margin-top:0; font-size:16px; color:#1e40af;">📈 آمار هفتگی</h3>
+          ${analyticsSummary.weekly ? `
+            <div style="font-size:13px; line-height:1.6;">
+              <div>کاربران فعال: <strong>${analyticsSummary.weekly.active_users}</strong></div>
+              <div>کاربران جدید: <strong>${analyticsSummary.weekly.new_users}</strong></div>
+              <div>کلمات یادگرفته شده: <strong>${analyticsSummary.weekly.total_words_learned}</strong></div>
+              <div>جلسات مطالعه: <strong>${analyticsSummary.weekly.total_sessions}</strong></div>
+              <div>میانگین زمان جلسه: <strong>${Math.round(analyticsSummary.weekly.avg_session_duration)} دقیقه</strong></div>
+            </div>
+          ` : '<p style="color:#999;">داده‌ای برای این هفته موجود نیست</p>'}
+        </div>
+
+        <div style="background:#dcfce7; padding:16px; border-radius:8px;">
+          <h3 style="margin-top:0; font-size:16px; color:#166534;">📅 آمار ماهانه</h3>
+          ${analyticsSummary.monthly ? `
+            <div style="font-size:13px; line-height:1.6;">
+              <div>کاربران فعال: <strong>${analyticsSummary.monthly.active_users}</strong></div>
+              <div>کاربران جدید: <strong>${analyticsSummary.monthly.new_users}</strong></div>
+              <div>کلمات یادگرفته شده: <strong>${analyticsSummary.monthly.total_words_learned}</strong></div>
+              <div>جلسات مطالعه: <strong>${analyticsSummary.monthly.total_sessions}</strong></div>
+              <div>میانگین زمان جلسه: <strong>${Math.round(analyticsSummary.monthly.avg_session_duration)} دقیقه</strong></div>
+            </div>
+          ` : '<p style="color:#999;">داده‌ای برای این ماه موجود نیست</p>'}
+        </div>
+
+        <div style="background:#fce7f3; padding:16px; border-radius:8px;">
+          <h3 style="margin-top:0; font-size:16px; color:#9f1239;">📊 آمار سالانه</h3>
+          ${analyticsSummary.yearly ? `
+            <div style="font-size:13px; line-height:1.6;">
+              <div>کاربران فعال: <strong>${analyticsSummary.yearly.active_users}</strong></div>
+              <div>کاربران جدید: <strong>${analyticsSummary.yearly.new_users}</strong></div>
+              <div>کلمات یادگرفته شده: <strong>${analyticsSummary.yearly.total_words_learned}</strong></div>
+              <div>جلسات مطالعه: <strong>${analyticsSummary.yearly.total_sessions}</strong></div>
+              <div>میانگین زمان جلسه: <strong>${Math.round(analyticsSummary.yearly.avg_session_duration)} دقیقه</strong></div>
+            </div>
+          ` : '<p style="color:#999;">داده‌ای برای امسال موجود نیست</p>'}
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px;">
+        ${generateChart(dailyHistory, 'کاربران فعال روزانه (۳۰ روز گذشته)', 'active_users')}
+        ${generateChart(weeklyHistory, 'کاربران فعال هفتگی (۱۲ هفته گذشته)', 'active_users')}
+      </div>
+
+      <div style="margin-top:24px; padding:16px; background:#f1f5f9; border-radius:8px;">
+        <h4 style="margin-top:0; font-size:14px; color:#475569;">📝 نکات</h4>
+        <ul style="font-size:12px; color:#64748b; margin:8px 0; padding-right:20px;">
+          <li>آمارها هر روز ساعت ۲:۰۰ بامداد به طور خودکار محاسبه می‌شوند</li>
+          <li>کاربران فعال: کاربرانی که در دوره زمانی مشخص فعالیتی داشته‌اند</li>
+          <li>داده‌های قدیمی‌تر از ۲ سال به طور خودکار حذف می‌شوند</li>
+          <li>برای بهینه‌سازی عملکرد، از داده‌های فشرده استفاده می‌شود</li>
+        </ul>
+      </div>
+    `;
+
+    return htmlResponse(renderAdminLayout("📊 داشبورد آمار", content, "analytics"));
+  }
+
   return htmlResponse("Not Found", 404);
 }

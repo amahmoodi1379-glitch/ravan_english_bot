@@ -12,6 +12,10 @@ export interface DbUser {
   xp_total: number;
   is_approved: number; 
   last_seen_at: string | null;
+  is_banned: number;
+  banned_until: string | null;
+  banned_by_admin_id: number | null;
+  ban_reason: string | null;
 }
 
 // ورودی ساده از تلگرام

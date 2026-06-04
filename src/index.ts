@@ -83,6 +83,15 @@ export default {
         await execute(env, `DELETE FROM reading_sessions WHERE (status = 'in_progress' OR status = 'cancelled') AND started_at < datetime('now', '-1 day')`);
       } catch (err) { console.error("Cleanup reading_sessions error:", err); }
 
+      // ۵. محاسبه آمار کاربران
+      try {
+        const { runAllAnalyticsCalculations } = await import("./db/analytics");
+        await runAllAnalyticsCalculations(env);
+        console.log("📊 Analytics calculations completed.");
+      } catch (err) { 
+        console.error("Analytics calculations error:", err); 
+      }
+
       console.log("✅ Cron job complete.");
     })());
   }
