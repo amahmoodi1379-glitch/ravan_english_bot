@@ -248,7 +248,7 @@ export async function handleLeaderboardCallback(
 
   await answerCallbackQuery(env, callbackQuery.id);
 
-  if (action === "home" || action === "xp_menu" || action === "streak_menu") {
+  if (action === "home") {
     // منوی اصلی لیدربورد
     const text = `🏆 <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
     const replyMarkup = {
