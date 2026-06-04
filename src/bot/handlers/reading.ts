@@ -90,7 +90,21 @@ export async function handleReadingTitleSelection(env: Env, update: TelegramUpda
 
   const user = await getOrCreateUser(env, message.from);
 
-  // ۲. شروع سشن
+  // ۲. اگه کاربر قبلاً یه تست ناتمام داره، اون رو کنسل کن
+  const activeSession = await queryOne<ReadingSession>(
+    env,
+    `SELECT * FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
+    [user.id]
+  );
+  if (activeSession) {
+    await execute(
+      env,
+      `UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`,
+      [activeSession.id]
+    );
+  }
+
+  // ۳. شروع سشن جدید
   const session = await createReadingSession(env, user.id, textRow.id, GAME_CONFIG.READING_QUESTION_COUNT);
 
   // ۳. شروع سوالات
@@ -283,7 +297,9 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     if (stats.total >= limit) {
       await sendReadingSummary(env, user, freshSession, chatId);
     } else {
-      await sendMessage(env, chatId, "متاسفانه در تولید سوال بعدی مشکلی پیش آمد. لطفاً کمی بعد تلاش کنید ❗️");
+      // سوال کافی نیست — تست رو تکمیل کن و خلاصه نشون بده
+      await sendMessage(env, chatId, "✅ تست به پایان رسید. نتیجه رو ببین 👇");
+      await sendReadingSummary(env, user, freshSession, chatId);
     }
   }
 }

@@ -355,20 +355,32 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // === فیکس: اگر کاربر در میانه تست درک مطلب است و کیبورد حذف شده ===
-  const activeReadingSession = await queryOne<{ id: number }>(
+  // === فیکس: اگر کاربر در میانه تست درک مطلب است ===
+  const activeReadingSession = await queryOne<{ id: number; started_at: string }>(
     env,
-    `SELECT id FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
+    `SELECT id, started_at FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
     [user.id]
   );
   if (activeReadingSession) {
-    await sendMessage(
-      env,
-      chatId,
-      "📖 تو الان در حال تست درک مطلب هستی! لطفاً روی دکمه‌های زیر سوالات کلیک کن.\nاگر می‌خوای تست رو رها کنی، دکمه «❌ انصراف و خروج» رو بزن یا از منوی زیر استفاده کن 👇",
-      { reply_markup: getMainMenuKeyboard() }
-    );
-    return;
+    const sessionAgeHours = (Date.now() - new Date(activeReadingSession.started_at).getTime()) / (1000 * 60 * 60);
+
+    // اگه سشن قدیمی‌تر از ۲۴ ساعت هست → خودکار کنسل کن
+    if (sessionAgeHours > 24) {
+      await execute(
+        env,
+        `UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`,
+        [activeReadingSession.id]
+      );
+      // ادامه بده به flow عادی (منوی اصلی)
+    } else {
+      await sendMessage(
+        env,
+        chatId,
+        "📖 تو الان در حال تست درک مطلب هستی! لطفاً روی دکمه‌های شیشه‌ای سوالات کلیک کن.\nاگر می‌خوای تست رو لغو کنی، دکمه «❌ انصراف و خروج» رو بزن 👇",
+        { reply_markup: getMainMenuKeyboard() }
+      );
+      return;
+    }
   }
   // ============================================================
 
