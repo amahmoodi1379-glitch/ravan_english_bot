@@ -325,13 +325,34 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
 
+    // === فیکس: اعتبارسنجی گزینه ===
+    if (!chosenOption || !["A","B","C","D"].includes(chosenOption)) {
+      await answerCallbackQuery(env, callbackQuery.id, "گزینه نامعتبر");
+      return;
+    }
+
     const isCorrect = chosenOption === question.correct_option;
     const now = new Date().toISOString();
+
+    // === فیکس: جلوگیری از دابل‌کلیک ===
+    const alreadyAnswered = await queryOne<{ id: number }>(
+      env,
+      `SELECT id FROM user_word_question_history 
+       WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NOT NULL`,
+      [user.id, question.id]
+    );
+    if (alreadyAnswered) {
+      await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
+      return;
+    }
+
+    // لودینگ رو زود خاموش کن تا UX بهتر بشه
+    await answerCallbackQuery(env, callbackQuery.id);
 
     // === اصلاح: استفاده از تراکنش واقعی (Batch) برای همه عملیات‌ها ===
     const batchStatements: any[] = [];
 
-    // 1. آپدیت تاریخچه (اضافه شده به بچ برای اتمیک بودن)
+    // 1. آپدیت تاریخچه
     batchStatements.push(prepare(
       env,
       `UPDATE user_word_question_history 
@@ -358,8 +379,6 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
         await sendMessage(env, chatId, streakMsg);
       }
     }
-
-    await answerCallbackQuery(env, callbackQuery.id);
 
     const getOptionNumber = (letter: string): string => {
       switch (letter) {

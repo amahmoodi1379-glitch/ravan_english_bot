@@ -94,7 +94,7 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   const data = callbackQuery.data ?? "";
 
   // Leitner (l:...)
-  if (data.startsWith(`${CB_PREFIX.LEITNER}:`)) {
+  if (data.startsWith(`${CB_PREFIX.LEITNER}:`) || data.startsWith(`${CB_PREFIX.LEITNER_IGNORE}:`)) {
     await handleLeitnerCallback(env, callbackQuery);
     return;
   }
