@@ -121,6 +121,11 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_list_ready':
       if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_menu' }); await enterQuizAdminMenu(env, chatId, tgId); return true; }
+      if (text === "➕ ساخت آزمون جدید") {
+        qaStates.set(tgId, { action: 'quiz_await_title' });
+        await sendMessage(env, chatId, "📝 عنوان آزمون را وارد کن:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
+        return true;
+      }
       const idx = parseInt(text) - 1; const admin2 = await getAdminByTelegramId(env, tgId); if (!admin2) return false;
       const quizzes = await getDraftQuizzesByAdmin(env, admin2.id);
       if (isNaN(idx) || idx < 0 || idx >= quizzes.length) { await sendMessage(env, chatId, "⚠️ شماره نامعتبر."); return true; }

@@ -305,6 +305,18 @@ export async function updateCurrentQuestionIndex(
   );
 }
 
+export async function getInProgressAttemptsCount(
+  env: Env,
+  quizId: number
+): Promise<number> {
+  const result = await queryOne(
+    env,
+    `SELECT COUNT(*) as count FROM custom_quiz_attempts WHERE quiz_id = ? AND status = 'in_progress'`,
+    [quizId]
+  ) as { count: number } | null;
+  return result?.count || 0;
+}
+
 export async function saveAnswer(
   env: Env,
   attemptId: number,

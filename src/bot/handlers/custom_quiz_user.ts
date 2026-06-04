@@ -1,12 +1,12 @@
 import { Env } from "../../types";
-import { sendMessage, answerCallbackQuery } from "../telegram-api";
+import { sendMessage, editMessageText, answerCallbackQuery } from "../telegram-api";
 import { CB_PREFIX } from "../../config/constants";
 import { getOrCreateUser } from "../../db/users";
 import {
   getQuizLinkByToken, getQuizById, getQuizQuestions,
   createAttempt, getAttemptByQuizAndUser,
   getAttempt, finishAttempt, saveAnswer, updateCurrentQuestionIndex,
-  getAnswerForQuestion,
+  getAnswerForQuestion, getInProgressAttemptsCount,
   getLeaderboardWithNegative, getLeaderboardWithoutNegative,
   getUserRankWithNegative, getUserRankWithoutNegative,
 } from "../../db/custom_quizzes";
@@ -45,8 +45,14 @@ export async function handleQuizStart(env: Env, user: any, chatId: number, token
     return;
   }
   if (existing && existing.status !== 'in_progress') {
-    const finishedDate = existing.finished_at ? new Date(existing.finished_at).toLocaleDateString('fa-IR') : 'نامشخص';
-    await sendMessage(env, chatId, `✅ شما قبلاً آزمون <b>${quiz.title}</b> را در تاریخ ${finishedDate} داده‌اید.\nبرای شرکت مجدد، لطفاً لینک جدیدی دریافت کنید.`, { parse_mode: "HTML" }); return;
+    const remaining = await getInProgressAttemptsCount(env, quiz.id);
+    if (remaining > 0) {
+      await sendMessage(env, chatId, `⏳ آزمون <b>${quiz.title}</b> هنوز در حال برگزاری است.\nلطفاً تا اتمام زمان آزمون یا پایان شرکت همه شرکت‌کنندگان صبر کنید. نتایج پس از آن ارسال خواهد شد.`, { parse_mode: "HTML" });
+    } else {
+      await sendMessage(env, chatId, `✅ شما قبلاً آزمون <b>${quiz.title}</b> را داده‌اید. نتایج:`, { parse_mode: "HTML" });
+      await sendResults(env, chatId, user.id, quiz.id, existing.id);
+    }
+    return;
   }
 
   const attemptId = await createAttempt(env, quiz.id, user.id);
@@ -62,7 +68,7 @@ function isQuizExpired(attempt: any, quiz: any): boolean {
   return Date.now() > started + limitMs;
 }
 
-async function sendQuizQuestion(env: Env, chatId: number, userId: number, quizId: number, attemptId: number, questionIndex: number): Promise<void> {
+async function sendQuizQuestion(env: Env, chatId: number, userId: number, quizId: number, attemptId: number, questionIndex: number, messageId?: number): Promise<void> {
   const attempt = await getAttempt(env, attemptId);
   const quiz = await getQuizById(env, quizId);
   if (!attempt || !quiz) {
@@ -106,15 +112,24 @@ async function sendQuizQuestion(env: Env, chatId: number, userId: number, quizId
     { text: "🏁 پایان آزمون", callback_data: `${CB_PREFIX.QUIZ}:finish:${attemptId}` }
   ]);
 
-  await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: rows } });
+  if (messageId) {
+    await editMessageText(env, chatId, messageId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: rows } });
+  } else {
+    await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: rows } });
+  }
 }
 
 async function autoFinish(env: Env, chatId: number, userId: number, attemptId: number): Promise<void> {
   const attempt = await getAttempt(env, attemptId); if (!attempt) return;
   await finishAttempt(env, attemptId, 'auto_ended');
   quizUserStates.delete(userId);
-  await sendMessage(env, chatId, "⏰ <b>زمان آزمون تمام شد!</b>\nنتایج شما:", { parse_mode: "HTML" });
-  await sendResults(env, chatId, userId, attempt.quiz_id, attemptId);
+  const remaining = await getInProgressAttemptsCount(env, attempt.quiz_id);
+  if (remaining > 0) {
+    await sendMessage(env, chatId, "⏰ <b>زمان آزمون تمام شد!</b>\n\n⏳ لطفاً صبر کنید. نتایج پس از اتمام آزمون برای همه شرکت‌کنندگان ارسال خواهد شد.", { parse_mode: "HTML" });
+  } else {
+    await sendMessage(env, chatId, "⏰ <b>زمان آزمون تمام شد!</b>\n\n🎉 همه شرکت‌کنندگان پاسخ دادند! نتایج:", { parse_mode: "HTML" });
+    await sendResults(env, chatId, userId, attempt.quiz_id, attemptId);
+  }
 }
 
 export async function handleQuizUserCallback(env: Env, callbackQuery: any): Promise<void> {
@@ -127,8 +142,31 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   const msg = callbackQuery.message; if (!msg) { await answerCallbackQuery(env, callbackQuery.id); return; }
   const chatId = msg.chat.id; const user = await getOrCreateUser(env, callbackQuery.from);
   const state = quizUserStates.get(user.id);
+  const messageId = msg.message_id;
   await answerCallbackQuery(env, callbackQuery.id);
 
+  // Handle explain after quiz is finished (no state needed)
+  if (action === "explain") {
+    const attemptRecord = await getAttempt(env, attemptId);
+    const quizId = attemptRecord?.quiz_id;
+    if (!quizId) { await sendMessage(env, chatId, "⚠️ آزمون یافت نشد."); return; }
+    const q = await getQuizQuestions(env, quizId);
+    const question = q.find(qx => qx.id === id);
+    if (!question) return;
+    const explainText =
+      `❓ <b>${question.question_text}</b>\n\n` +
+      `1️⃣ ${question.option_a}\n2️⃣ ${question.option_b}\n3️⃣ ${question.option_c}\n4️⃣ ${question.option_d}\n\n` +
+      `✅ <b>گزینه درست:</b> ${question.correct_option}\n` +
+      `📖 <b>پاسخنامه:</b> ${question.explanation || 'ندارد'}`;
+    if (messageId) {
+      await editMessageText(env, chatId, messageId, explainText, { parse_mode: "HTML" });
+    } else {
+      await sendMessage(env, chatId, explainText, { parse_mode: "HTML" });
+    }
+    return;
+  }
+
+  // All other actions require active state
   if (!state || state.attemptId !== attemptId) {
     await sendMessage(env, chatId, "⚠️ سشن آزمون تمام شده یا نامعتبر است."); return;
   }
@@ -149,13 +187,13 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
       await updateCurrentQuestionIndex(env, attemptId, nextIndex);
       quizUserStates.set(user.id, { ...state, currentIndex: nextIndex });
     }
-    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, nextIndex);
+    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, nextIndex, messageId);
     return;
   }
 
   if (action === "unans") {
     await saveAnswer(env, attemptId, id, null);
-    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, state.currentIndex);
+    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, state.currentIndex, messageId);
     return;
   }
 
@@ -163,12 +201,12 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
     const idx = id;
     await updateCurrentQuestionIndex(env, attemptId, idx);
     quizUserStates.set(user.id, { ...state, currentIndex: idx });
-    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, idx);
+    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, idx, messageId);
     return;
   }
 
   if (action === "finish") {
-    await sendMessage(env, chatId, "🏁 آیا مطمئن هستی می‌خوای آزمون رو تموم کنی؟", {
+    await editMessageText(env, chatId, messageId, "🏁 آیا مطمئن هستی می‌خوای آزمون رو تموم کنی؟", {
       reply_markup: { inline_keyboard: [[{ text: "✅ بله، پایان", callback_data: `${CB_PREFIX.QUIZ}:confirm_finish:${attemptId}` }, { text: "❌ خیر، ادامه", callback_data: `${CB_PREFIX.QUIZ}:cancel:${attemptId}` }]] }
     });
     return;
@@ -177,29 +215,18 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   if (action === "confirm_finish") {
     await finishAttempt(env, attemptId, 'finished');
     quizUserStates.delete(user.id);
-    await sendResults(env, chatId, user.id, state.quizId, attemptId);
+    const remaining = await getInProgressAttemptsCount(env, state.quizId);
+    if (remaining > 0) {
+      await editMessageText(env, chatId, messageId, "✅ آزمون شما ثبت شد.\n\n⏳ لطفاً تا پایان زمان آزمون یا اتمام شرکت همه شرکت‌کنندگان صبر کنید. نتایج پس از آن ارسال خواهد شد.", { reply_markup: { inline_keyboard: [] } });
+    } else {
+      await editMessageText(env, chatId, messageId, "✅ آزمون شما ثبت شد.\n\n🎉 همه شرکت‌کنندگان پاسخ دادند! نتایج:", { reply_markup: { inline_keyboard: [] } });
+      await sendResults(env, chatId, user.id, state.quizId, attemptId);
+    }
     return;
   }
 
   if (action === "cancel") {
-    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, state.currentIndex);
-    return;
-  }
-
-  if (action === "explain") {
-    const attemptRecord = await getAttempt(env, attemptId);
-    const quizId = attemptRecord?.quiz_id || state?.quizId;
-    if (!quizId) { await sendMessage(env, chatId, "⚠️ آزمون یافت نشد."); return; }
-    const q = await getQuizQuestions(env, quizId);
-    const question = q.find(qx => qx.id === id);
-    if (!question) return;
-    await sendMessage(env, chatId,
-      `❓ <b>${question.question_text}</b>\n\n` +
-      `1️⃣ ${question.option_a}\n2️⃣ ${question.option_b}\n3️⃣ ${question.option_c}\n4️⃣ ${question.option_d}\n\n` +
-      `✅ <b>گزینه درست:</b> ${question.correct_option}\n` +
-      `📖 <b>پاسخنامه:</b> ${question.explanation || 'ندارد'}`,
-      { parse_mode: "HTML" }
-    );
+    await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, state.currentIndex, messageId);
     return;
   }
 }
