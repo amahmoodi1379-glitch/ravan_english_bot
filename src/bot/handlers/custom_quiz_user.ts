@@ -5,7 +5,7 @@ import { getOrCreateUser } from "../../db/users";
 import {
   getQuizLinkByToken, getQuizById, getQuizQuestions,
   createAttempt, getAttemptByQuizAndUser,
-  getAttempt, finishAttempt, saveAnswer,
+  getAttempt, finishAttempt, saveAnswer, updateCurrentQuestionIndex,
   getAnswerForQuestion,
   getLeaderboardWithNegative, getLeaderboardWithoutNegative,
   getUserRankWithNegative, getUserRankWithoutNegative,
@@ -23,14 +23,16 @@ export async function handleQuizStart(env: Env, user: any, chatId: number, token
   if (!link) { await sendMessage(env, chatId, "❌ لینک نامعتبر."); return; }
   if (link.expires_at && new Date(link.expires_at) < new Date()) { await sendMessage(env, chatId, "⏳ لینک منقضی شده."); return; }
   const quiz = await getQuizById(env, link.quiz_id); if (!quiz) { await sendMessage(env, chatId, "❌ آزمون یافت نشد."); return; }
+  if (quiz.status !== 'active') { await sendMessage(env, chatId, "⚠️ این آزمون هنوز فعال نشده یا تمام شده."); return; }
   const questions = await getQuizQuestions(env, quiz.id); if (!questions.length) { await sendMessage(env, chatId, "⚠️ آزمون هنوز سوالی ندارد."); return; }
 
   const existing = await getAttemptByQuizAndUser(env, quiz.id, user.id);
   if (existing && existing.status === 'in_progress') {
-    quizUserStates.set(user.id, { attemptId: existing.id, quizId: quiz.id, currentIndex: 1 });
+    const resumeIndex = existing.current_question_index || 1;
+    quizUserStates.set(user.id, { attemptId: existing.id, quizId: quiz.id, currentIndex: resumeIndex });
     const endTime = new Date(new Date(existing.started_at).getTime() + quiz.total_time_minutes * 60 * 1000);
     await sendMessage(env, chatId, `⏱️ <b>ادامه آزمون</b>\n🕐 پایان: ${endTime.toLocaleTimeString('fa-IR')}`);
-    await sendQuizQuestion(env, chatId, user.id, quiz.id, existing.id, 1);
+    await sendQuizQuestion(env, chatId, user.id, quiz.id, existing.id, resumeIndex);
     return;
   }
   if (existing && existing.status !== 'in_progress') {
@@ -135,6 +137,7 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
 
   if (action === "nav") {
     const idx = id;
+    await updateCurrentQuestionIndex(env, attemptId, idx);
     quizUserStates.set(user.id, { ...state, currentIndex: idx });
     await sendQuizQuestion(env, chatId, user.id, state.quizId, attemptId, idx);
     return;
@@ -160,7 +163,10 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   }
 
   if (action === "explain") {
-    const q = await getQuizQuestions(env, state.quizId);
+    const attemptRecord = await getAttempt(env, attemptId);
+    const quizId = attemptRecord?.quiz_id || state?.quizId;
+    if (!quizId) { await sendMessage(env, chatId, "⚠️ آزمون یافت نشد."); return; }
+    const q = await getQuizQuestions(env, quizId);
     const question = q.find(qx => qx.id === id);
     if (!question) return;
     await sendMessage(env, chatId,

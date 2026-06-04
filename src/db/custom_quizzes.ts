@@ -33,6 +33,7 @@ export interface CustomQuizAttempt {
   started_at: string;
   finished_at: string | null;
   status: string;
+  current_question_index: number;
 }
 
 export interface CustomQuizAnswer {
@@ -278,6 +279,18 @@ export async function finishAttempt(
     env,
     `UPDATE custom_quiz_attempts SET finished_at = datetime('now'), status = ? WHERE id = ?`,
     [status, attemptId]
+  );
+}
+
+export async function updateCurrentQuestionIndex(
+  env: Env,
+  attemptId: number,
+  index: number
+): Promise<void> {
+  await execute(
+    env,
+    `UPDATE custom_quiz_attempts SET current_question_index = ? WHERE id = ?`,
+    [index, attemptId]
   );
 }
 

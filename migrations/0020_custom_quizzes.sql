@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS custom_quiz_attempts (
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   finished_at TEXT,
   status TEXT NOT NULL DEFAULT 'in_progress', -- in_progress, finished, auto_ended
+  current_question_index INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (quiz_id) REFERENCES custom_quizzes(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -55,8 +56,10 @@ CREATE TABLE IF NOT EXISTS custom_quiz_answers (
   FOREIGN KEY (question_id) REFERENCES custom_quiz_questions(id) ON DELETE CASCADE
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cq_questions_quiz_index ON custom_quiz_questions(quiz_id, question_index);
 CREATE INDEX IF NOT EXISTS idx_cq_questions_quiz ON custom_quiz_questions(quiz_id);
 CREATE INDEX IF NOT EXISTS idx_cq_links_token ON custom_quiz_links(link_token);
 CREATE INDEX IF NOT EXISTS idx_cq_attempts_quiz_user ON custom_quiz_attempts(quiz_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_cq_attempts_user ON custom_quiz_attempts(user_id);
 CREATE INDEX IF NOT EXISTS idx_cq_answers_attempt ON custom_quiz_answers(attempt_id);
 CREATE INDEX IF NOT EXISTS idx_cq_answers_question ON custom_quiz_answers(question_id);

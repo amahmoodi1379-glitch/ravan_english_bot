@@ -106,7 +106,11 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_ask_next_or_finish':
       if (text === "➕ سوال بعدی") { qaStates.set(tgId, { action: 'quiz_await_question_text', quizId: s.quizId }); const c = await getQuestionCount(env, s.quizId!); await sendMessage(env, chatId, `❓ متن سوال ${c + 1}:`); return true; }
-      if (text === "✅ تموم شد") { await setQuizStatus(env, s.quizId!, 'active'); qaStates.set(tgId, { action: 'quiz_list_ready' }); await showReadyQuizzes(env, chatId, tgId); return true; }
+      if (text === "✅ تموم شد") {
+        const cnt = await getQuestionCount(env, s.quizId!);
+        if (cnt === 0) { await sendMessage(env, chatId, "⚠️ آزمون باید حداقل ۱ سوال داشته باشد."); return true; }
+        await setQuizStatus(env, s.quizId!, 'active'); qaStates.set(tgId, { action: 'quiz_list_ready' }); await showReadyQuizzes(env, chatId, tgId); return true;
+      }
       await sendMessage(env, chatId, "⚠️ یکی از دکمه‌ها:"); return true;
 
     case 'quiz_list_ready':
@@ -142,6 +146,48 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
       await sendMessage(env, chatId, "⚠️ یکی از دکمه‌ها:"); return true;
     }
 
+    case 'quiz_await_edit_question_text': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      if (!text.trim()) { await sendMessage(env, chatId, "⚠️ متن سوال را وارد کن:"); return true; }
+      const qEdit = await getQuizQuestionById(env, s.questionId!); if (!qEdit) return true;
+      await updateQuizQuestion(env, s.questionId!, text.trim(), qEdit.option_a, qEdit.option_b, qEdit.option_c, qEdit.option_d, qEdit.correct_option, qEdit.explanation || undefined);
+      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await sendMessage(env, chatId, "✅ متن سوال ویرایش شد.");
+      await showEditQuestionOptions(env, chatId, s.questionId!); return true;
+    }
+
+    case 'quiz_await_edit_options': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      const editLines = text.split('\n').map(l => l.trim()).filter(l => l);
+      if (editLines.length < 4) { await sendMessage(env, chatId, "⚠️ حداقل ۴ خط:"); return true; }
+      const editOpts = editLines.slice(0, 4).map(l => l.replace(/^[A-Da-d][\.\)\-]\s*/, '').trim());
+      const qEditOpts = await getQuizQuestionById(env, s.questionId!); if (!qEditOpts) return true;
+      await updateQuizQuestion(env, s.questionId!, qEditOpts.question_text, editOpts[0], editOpts[1], editOpts[2], editOpts[3], qEditOpts.correct_option, qEditOpts.explanation || undefined);
+      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await sendMessage(env, chatId, "✅ گزینه‌ها ویرایش شدند.");
+      await showEditQuestionOptions(env, chatId, s.questionId!); return true;
+    }
+
+    case 'quiz_await_edit_correct': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      const editCorrect = text.trim(); if (!['1','2','3','4'].includes(editCorrect)) { await sendMessage(env, chatId, "⚠️ ۱ تا ۴:"); return true; }
+      const qEditCorrect = await getQuizQuestionById(env, s.questionId!); if (!qEditCorrect) return true;
+      await updateQuizQuestion(env, s.questionId!, qEditCorrect.question_text, qEditCorrect.option_a, qEditCorrect.option_b, qEditCorrect.option_c, qEditCorrect.option_d, editCorrect, qEditCorrect.explanation || undefined);
+      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await sendMessage(env, chatId, `✅ گزینه ${editCorrect} به عنوان درست ثبت شد.`);
+      await showEditQuestionOptions(env, chatId, s.questionId!); return true;
+    }
+
+    case 'quiz_await_edit_explanation': {
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      const editExp = text.trim() || undefined;
+      const qEditExp = await getQuizQuestionById(env, s.questionId!); if (!qEditExp) return true;
+      await updateQuizQuestion(env, s.questionId!, qEditExp.question_text, qEditExp.option_a, qEditExp.option_b, qEditExp.option_c, qEditExp.option_d, qEditExp.correct_option, editExp);
+      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await sendMessage(env, chatId, "✅ پاسخنامه تشریحی ویرایش شد.");
+      await showEditQuestionOptions(env, chatId, s.questionId!); return true;
+    }
+
     default: return false;
   }
 }
@@ -149,7 +195,7 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 async function showReadyQuizzes(env: Env, chatId: number, tgId: number): Promise<void> {
   const admin = await getAdminByTelegramId(env, tgId); if (!admin) return;
   const quizzes = await getDraftQuizzesByAdmin(env, admin.id);
-  if (!quizzes.length) { await sendMessage(env, chatId, "📋 هیچ آزمونی. شروع کن:", { reply_markup: getAdminSubMenuKeyboard([["➕ ساخت آزمون"], [ADMIN_SUBMENU_BUTTON_BACK]]) }); return; }
+  if (!quizzes.length) { await sendMessage(env, chatId, "📋 هیچ آزمونی. شروع کن:", { reply_markup: getAdminSubMenuKeyboard([["➕ ساخت آزمون جدید"], [ADMIN_SUBMENU_BUTTON_BACK]]) }); return; }
   let msg = `📋 <b>آزمون‌ها (${quizzes.length})</b>\n\n`;
   for (let i = 0; i < quizzes.length; i++) { const q = quizzes[i]; const cnt = await getQuestionCount(env, q.id); msg += `${i+1}. <b>${q.title}</b> — ${cnt} سوال — ⏱️ ${q.total_time_minutes} دقیقه\n`; }
   msg += `\nشماره آزمون را وارد کن:`;
@@ -169,6 +215,7 @@ async function showQuestionsInline(env: Env, chatId: number, quizId: number): Pr
   const qs = await getQuizQuestions(env, quizId); if (!qs.length) { await sendMessage(env, chatId, "⚠️ بدون سوال."); return; }
   const rows: any[] = [];
   for (let i = 0; i < qs.length; i += 5) rows.push(qs.slice(i, i + 5).map(q => ({ text: String(q.question_index), callback_data: `${CB_PREFIX.QUIZ}:admin_view:${q.id}` })));
+  rows.push([{ text: "✏️ ادیت سوال", callback_data: `${CB_PREFIX.QUIZ}:admin_edit_select:${quizId}` }]);
   rows.push([{ text: ADMIN_SUBMENU_BUTTON_BACK, callback_data: `${CB_PREFIX.QUIZ}:admin_detail_back:${quizId}` }]);
   await sendMessage(env, chatId, `📋 روی شماره بزن:`, { reply_markup: { inline_keyboard: rows } });
 }

@@ -318,9 +318,10 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // Handle quiz deep link: /start quiz_<token>
-  if (text.startsWith("/start quiz_")) {
-    const token = text.replace("/start quiz_", "").trim();
+  // Handle quiz deep link: /start quiz_<token> or /start@botname quiz_<token>
+  const quizDeepLinkMatch = text.match(/^\/start(?:@[\w_]+)?\s+quiz_(\S+)/);
+  if (quizDeepLinkMatch) {
+    const token = quizDeepLinkMatch[1];
     if (token && user) {
       await handleQuizStart(env, user, chatId, token);
       return;
