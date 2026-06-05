@@ -18,9 +18,6 @@ export function renderAdminLayout(title: string, content: string, section: strin
       <a href="/admin/analytics" style="margin-right: 8px;${
         section === "analytics" ? " font-weight:bold;" : ""
       }">📊 آمار</a>
-      <a href="/admin/ai-logs" style="margin-right: 8px;${
-        section === "ai-logs" ? " font-weight:bold;" : ""
-      }">🤖 لاگ AI</a>
       <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;

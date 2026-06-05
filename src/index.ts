@@ -2,7 +2,6 @@ import { Env } from "./types";
 import { handleTelegramUpdate, TelegramUpdate } from "./bot/router";
 import { queryAll, execute } from "./db/client";
 import { handleAdminRequest } from "./admin/router";
-import { runAutoQuestionGeneration } from "./cron/auto_generate_questions";
 
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
@@ -58,32 +57,22 @@ export default {
     ctx.waitUntil((async () => {
       console.log("🔄 Cron job started...");
 
-      // ۱. تولید خودکار سوالات با AI
-      try {
-        const result = await runAutoQuestionGeneration(env);
-        if (result.processed > 0) {
-          console.log(`🤖 AI Generation: ${result.success} success, ${result.errors} errors out of ${result.processed} words`);
-        }
-      } catch (err) {
-        console.error("AI Generation Error:", err);
-      }
-
-      // ۲. سشن‌های ادمین منقضی شده
+      // ۱. سشن‌های ادمین منقضی شده
       try {
         await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
       } catch (err) { console.error("Cleanup admin_sessions error:", err); }
 
-      // ۳. لاگ فعالیت
+      // ۲. لاگ فعالیت
       try {
         await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");
       } catch (err) { console.error("Cleanup activity_log error:", err); }
 
-      // ۴. پاکسازی سشن‌های ریدینگ (هم نیمه‌کاره و هم کنسل‌شده) که قدیمی شده‌اند
+      // ۳. پاکسازی سشن‌های ریدینگ (هم نیمه‌کاره و هم کنسل‌شده) که قدیمی شده‌اند
       try {
         await execute(env, `DELETE FROM reading_sessions WHERE (status = 'in_progress' OR status = 'cancelled') AND started_at < datetime('now', '-1 day')`);
       } catch (err) { console.error("Cleanup reading_sessions error:", err); }
 
-      // ۵. محاسبه آمار کاربران
+      // ۴. محاسبه آمار کاربران
       try {
         const { runAllAnalyticsCalculations } = await import("./db/analytics");
         await runAllAnalyticsCalculations(env);
