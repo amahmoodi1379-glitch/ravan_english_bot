@@ -27,7 +27,6 @@ export interface ReadingSession {
   completed_at: string | null;
 }
 
-
 export async function createReadingSession(env: Env, userId: number, textId: number, numQuestions: number = 3): Promise<ReadingSession> {
   const now = new Date().toISOString();
   await execute(env, `INSERT INTO reading_sessions (user_id, text_id, status, num_correct, num_questions, xp_gained, started_at) VALUES (?, ?, 'in_progress', 0, ?, 0, ?)`, [userId, textId, numQuestions, now]);
@@ -87,9 +86,7 @@ export async function getNextQuestionForSession(
 
 export async function recordQuestionShown(env: Env, session: ReadingSession, userId: number, questionId: number): Promise<boolean> {
   const now = new Date().toISOString();
-  
-  // این دستور SQL چک می‌کند که آیا این سوال قبلاً در این سشن ثبت شده یا نه
-  // اگر ثبت شده بود، دیگه ثبت نمیکنه (WHERE NOT EXISTS)
+
   const result = await execute(env, `
     INSERT INTO user_text_question_history (user_id, text_id, question_id, reading_session_id, shown_at)
     SELECT ?, ?, ?, ?, ?
@@ -99,8 +96,6 @@ export async function recordQuestionShown(env: Env, session: ReadingSession, use
     )
   `, [userId, session.text_id, questionId, session.id, now, session.id, questionId]);
 
-  // اگر چیزی ثبت شد (changes > 0) یعنی تکراری نبوده و موفق شدیم (True)
-  // اگر 0 بود یعنی تکراری بوده (False)
   return result.meta.changes > 0;
 }
 
@@ -117,8 +112,6 @@ export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number):
   );
 }
 
-// محاسبه تعداد پاسخ‌های درستی که "برای اولین بار" داده شده‌اند (جلوگیری از XP تکراری)
-// بهینه‌سازی: استفاده از LEFT JOIN به جای NOT EXISTS correlated subquery
 export async function getNewCorrectCount(env: Env, sessionId: number, userId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
     env,

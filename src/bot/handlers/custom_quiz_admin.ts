@@ -22,8 +22,6 @@ interface QAState {
   correctOption?: string;
   fromAction?: string;
 }
-// نکته: وضعیت آزمون‌ساز در D1 ذخیره می‌شود (scope = 'quiz') نه در حافظه،
-// چون Cloudflare Workers بدون state است و Map بین درخواست‌ها پاک می‌شود.
 
 function genToken(): string {
   const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

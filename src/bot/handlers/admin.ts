@@ -48,8 +48,6 @@ import {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// State machine
-// نکته: این وضعیت در D1 ذخیره می‌شود (نه در حافظه) چون Worker بدون state است.
 interface AdminState {
   action:
     | 'menu'
@@ -83,19 +81,16 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
   const admin = await getAdminByTelegramId(env, telegramId);
   if (!admin) return false;
 
-  // /admin -> enter admin panel
   if (text === "/admin") {
     await enterAdminPanel(env, chatId, admin);
     return true;
   }
 
-  // Delegate to quiz admin handler if in quiz state
   const quizHandled = await handleQuizAdminMessage(env, update);
   if (quizHandled) return true;
 
   const state = await getAdminState<AdminState>(env, telegramId, 'admin');
 
-  // If no state, admin is not in the panel (or exited) -> only /admin is handled
   if (!state) return false;
 
   switch (state.action) {
@@ -165,7 +160,6 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         await showAdminMenu(env, chatId);
         return true;
       }
-      // Accept text, photo, video, audio, document, voice
       const msg = message;
       let ann: { messageId: number; chatId: number } | undefined;
 
@@ -184,7 +178,6 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
       }
 
       if (ann) {
-        // Detect content type and caption for explicit confirmation message
         let contentType = "متن";
         let caption = "";
         if (msg.photo && msg.photo.length > 0) {
@@ -265,7 +258,6 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         return true;
       }
 
-      // Calculate remaining days and days since join
       const now = Date.now();
       let remainingText = "نامحدود";
       if (user.used_at && user.expiration_days) {
@@ -330,7 +322,6 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         return true;
       }
 
-      // After ban/unban, go back to user search
       await setAdminState(env, telegramId, 'admin', { action: 'await_user_search' });
       await sendMessage(env, chatId,
         `👥 جستجوی کاربر بعدی:\nکد لایسنس، آیدی عددی یا یوزرنیم را ارسال کنید.`
@@ -367,7 +358,6 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         );
       }
 
-      // Return to admin management menu
       await setAdminState(env, telegramId, 'admin', { action: 'menu' });
       await showAdminMgmtMenu(env, chatId);
       return true;
@@ -378,7 +368,6 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 }
 
 async function enterAdminPanel(env: Env, chatId: number, admin: any): Promise<void> {
-  // پاکسازی هر وضعیت قبلی (admin و quiz) برای شروع تمیز
   await clearAllAdminState(env, admin.telegram_id);
   await setAdminState(env, admin.telegram_id, 'admin', { action: 'menu' });
   await sendMessage(env, chatId, "🛠️ در حال ورود به پنل مدیریت...", {
@@ -533,7 +522,6 @@ async function sendAnnouncement(
       if (errors.length < 5) errors.push(`${user.telegram_id}: ${errMsg}`);
     }
 
-    // Progress report every 25%
     const progress = (i + 1) / total;
     if (nextMilestoneIndex < milestones.length && progress >= milestones[nextMilestoneIndex]) {
       const pct = Math.round(milestones[nextMilestoneIndex] * 100);
@@ -544,13 +532,11 @@ async function sendAnnouncement(
       nextMilestoneIndex++;
     }
 
-    // Rate limit: 1 request per second
     if (i < users.length - 1) {
       await sleep(1000);
     }
   }
 
-  // Final report
   let finalMsg =
     `📊 <b>گزارش نهایی ارسال</b>\n\n` +
     `✅ ارسال شده: ${sent}\n` +

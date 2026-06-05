@@ -122,9 +122,6 @@ export async function getUserActivityStats(
   let readingSets = 0;
 
   if (!sinceExpr) {
-    // --- حالت کلی (All Time) ---
-    
-    // 1. XP کل
     const xpRow = await queryOne<{ xp: number | null }>(
       env,
       `SELECT xp_total AS xp FROM users WHERE id = ?`,
@@ -132,7 +129,6 @@ export async function getUserActivityStats(
     );
     xp = xpRow?.xp ?? 0;
 
-    // 2. لایتنر
     const lRow = await queryOne<{ cnt: number }>(
       env,
       `SELECT COUNT(*) AS cnt FROM user_word_question_history WHERE user_id = ? AND context = 'leitner'`,
@@ -140,18 +136,13 @@ export async function getUserActivityStats(
     );
     leitnerQuestions = lRow?.cnt ?? 0;
 
-    // 3. درک مطلب
     const rRow = await queryOne<{ cnt: number }>(
       env,
       `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed'`,
       [userId]
     );
     readingSets = rRow?.cnt ?? 0;
-
   } else {
-    // --- حالت بازه زمانی (Day / Week / Month) ---
-
-    // 1. XP در بازه
     const xpRow = await queryOne<{ xp: number | null }>(
       env,
       `SELECT COALESCE(SUM(xp_delta), 0) AS xp FROM activity_log WHERE user_id = ? AND created_at >= ${sinceExpr}`,
@@ -159,7 +150,6 @@ export async function getUserActivityStats(
     );
     xp = xpRow?.xp ?? 0;
 
-    // 2. لایتنر در بازه
     const lRow = await queryOne<{ cnt: number }>(
       env,
       `SELECT COUNT(*) AS cnt FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at >= ${sinceExpr}`,
@@ -167,7 +157,6 @@ export async function getUserActivityStats(
     );
     leitnerQuestions = lRow?.cnt ?? 0;
 
-    // 3. درک مطلب در بازه
     const rRow = await queryOne<{ cnt: number }>(
       env,
       `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed' AND completed_at >= ${sinceExpr}`,

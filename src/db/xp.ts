@@ -2,11 +2,8 @@ import { Env } from "../types";
 import { prepare } from "./client";
 import { XP_VALUES, TIME_ZONE_OFFSET } from "../config/constants";
 
-export type ActivityType =
-  | "leitner_question"
-  | "reading_session";
+export type ActivityType = "leitner_question" | "reading_session";
 
-// بازگرداندن آرایه‌ای از دستورات (بدون اجرا)
 function prepareAddXp(
   env: Env,
   userId: number,
@@ -41,8 +38,6 @@ function prepareAddXp(
   return [stmt1, stmt2];
 }
 
-// --- توابع آماده‌ساز اختصاصی ---
-
 export function prepareXpForLeitner(
   env: Env,
   userId: number,
@@ -64,7 +59,6 @@ export function prepareXpForLeitner(
   return prepareAddXp(env, userId, xp, "leitner_question", wordId, { word_level: wordLevel });
 }
 
-// این تابع چون باید XP محاسبه شده را برگرداند (برای نمایش به کاربر)، همزمان محاسبه می‌کند و استیتمنت می‌دهد
 export function calculateAndPrepareXpForReading(
   env: Env,
   userId: number,
@@ -94,14 +88,10 @@ export function calculateAndPrepareXpForReading(
   return { totalXp, stmts };
 }
 
-// چک کردن و آپدیت زنجیره (Streak) با پشتیبانی از تایم‌زون
-// شرط streak: حداقل ۵ تست لایتنر در روز (تغییر از ۵۰ XP)
-// بهینه‌سازی: ترکیب ۳ کوئری مجزا در ۲ کوئری
 export async function checkAndUpdateStreak(env: Env, userId: number): Promise<string | null> {
   const TARGET_DAILY_TESTS = 5;
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
 
-  // 1. شمردن تعداد تست لایتنر امروز + گرفتن وضعیت streak کاربر (در یک round-trip)
   const combined = await env.DB.prepare(`
     SELECT
       (SELECT COUNT(*) FROM user_word_question_history
@@ -144,7 +134,6 @@ export async function checkAndUpdateStreak(env: Env, userId: number): Promise<st
 
   const newMaxStreak = Math.max(maxStreakRecord, newStreak);
 
-  // 2. آپدیت دیتابیس (streak + max_streak_record)
   await env.DB.prepare(`
     UPDATE users
     SET streak_count = ?,
