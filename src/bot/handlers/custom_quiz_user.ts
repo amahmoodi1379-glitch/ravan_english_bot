@@ -174,11 +174,12 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   const messageId = msg.message_id;
   await answerCallbackQuery(env, callbackQuery.id);
 
-  // Handle explain — no active state required
+  // Handle explain — no active state required (but verify ownership)
   if (action === "explain") {
     const attemptRecord = await getAttempt(env, attemptId);
     const quizId = attemptRecord?.quiz_id;
     if (!quizId) { await sendMessage(env, chatId, "⚠️ آزمون یافت نشد."); return; }
+    if (attemptRecord.user_id !== user.id) return;
     const q = await getQuizQuestions(env, quizId);
     const question = q.find(qx => qx.id === id);
     if (!question) return;
@@ -196,10 +197,11 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
     return;
   }
 
-  // Handle back to explain list — no active state required
+  // Handle back to explain list — no active state required (but verify ownership)
   if (action === "return_results") {
     const attemptRecord = await getAttempt(env, attemptId);
     if (!attemptRecord) { await sendMessage(env, chatId, "⚠️ آزمون یافت نشد."); return; }
+    if (attemptRecord.user_id !== user.id) return;
     const qs = await getQuizQuestions(env, attemptRecord.quiz_id);
     const rows: any[] = [];
     for (let i = 0; i < qs.length; i += 5) {
@@ -218,6 +220,7 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   if (!state || state.attemptId !== attemptId) {
     const recoveredAttempt = await getAttempt(env, attemptId);
     if (!recoveredAttempt) { await sendMessage(env, chatId, "⚠️ آزمون یافت نشد."); return; }
+    if (recoveredAttempt.user_id !== user.id) return;
     if (recoveredAttempt.status === 'finished' || recoveredAttempt.status === 'auto_ended') {
       await sendMessage(env, chatId, "✅ آزمون شما قبلاً ثبت شده است. برای دیدن نتایج، لینک آزمون را دوباره باز کنید.");
       return;
