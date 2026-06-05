@@ -129,6 +129,36 @@ export async function getActiveQuizzesByAdmin(
   );
 }
 
+export async function getPublishedQuizzesByAdmin(
+  env: Env,
+  adminId: number
+): Promise<CustomQuiz[]> {
+  return queryAll<CustomQuiz>(
+    env,
+    `SELECT * FROM custom_quizzes WHERE admin_id = ? AND status = 'published' ORDER BY created_at DESC`,
+    [adminId]
+  );
+}
+
+export async function deleteQuiz(
+  env: Env,
+  quizId: number
+): Promise<void> {
+  await execute(env, `DELETE FROM custom_quizzes WHERE id = ?`, [quizId]);
+}
+
+export async function getParticipantCount(
+  env: Env,
+  quizId: number
+): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `SELECT COUNT(DISTINCT user_id) as cnt FROM custom_quiz_attempts WHERE quiz_id = ? AND status IN ('finished', 'auto_ended')`,
+    [quizId]
+  );
+  return row?.cnt || 0;
+}
+
 // ============================================================
 // Questions
 // ============================================================
@@ -240,6 +270,17 @@ export async function getQuizLinkByToken(
     env,
     `SELECT quiz_id, expires_at FROM custom_quiz_links WHERE link_token = ?`,
     [token]
+  );
+}
+
+export async function getLatestQuizLink(
+  env: Env,
+  quizId: number
+): Promise<{ link_token: string; expires_at: string | null } | null> {
+  return queryOne(
+    env,
+    `SELECT link_token, expires_at FROM custom_quiz_links WHERE quiz_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [quizId]
   );
 }
 
