@@ -118,23 +118,23 @@ export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number):
 }
 
 // محاسبه تعداد پاسخ‌های درستی که "برای اولین بار" داده شده‌اند (جلوگیری از XP تکراری)
+// بهینه‌سازی: استفاده از LEFT JOIN به جای NOT EXISTS correlated subquery
 export async function getNewCorrectCount(env: Env, sessionId: number, userId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
     env,
     `
     SELECT COUNT(*) as cnt
     FROM user_text_question_history h
+    LEFT JOIN user_text_question_history old
+      ON old.user_id = h.user_id
+      AND old.question_id = h.question_id
+      AND old.is_correct = 1
+      AND old.reading_session_id != h.reading_session_id
     WHERE h.reading_session_id = ?
       AND h.is_correct = 1
-      AND NOT EXISTS (
-        SELECT 1 FROM user_text_question_history old
-        WHERE old.user_id = ?
-          AND old.question_id = h.question_id
-          AND old.is_correct = 1
-          AND old.reading_session_id != ?
-      )
+      AND old.id IS NULL
     `,
-    [sessionId, userId, sessionId]
+    [sessionId]
   );
   return row?.cnt ?? 0;
 }

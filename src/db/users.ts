@@ -75,12 +75,13 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
       [tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, nowIso, nowIso, user.id]
     );
 
-    // دوباره از دیتابیس بخونیم
-    user = await queryOne<DbUser>(env, "SELECT * FROM users WHERE id = ?", [user.id]);
-    if (!user) {
-      // این حالت خیلی بعیده، ولی محض احتیاط
-      throw new Error("User disappeared after update (unexpected).");
-    }
+    // بهینه‌سازی: به جای خواندن مجدد کل رکورد از دیتابیس، 
+    // مقادیر جدید را در آبجکت محلی آپدیت می‌کنیم (صرفه‌جویی ۱ read)
+    user.username = tg.username ?? null;
+    user.first_name = tg.first_name ?? null;
+    user.last_name = tg.last_name ?? null;
+    if (!user.display_name) user.display_name = displayName;
+    user.last_seen_at = nowIso;
     return user;
   }
 

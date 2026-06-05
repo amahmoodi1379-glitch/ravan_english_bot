@@ -29,79 +29,62 @@ export interface UserWordState {
 }
 
 export async function pickNextWordForUser(env: Env, userId: number): Promise<DbWord | null> {
-  // 1) اولویت مرور
-  // تغییر: اضافه کردن TIME_ZONE_OFFSET برای محاسبه درست زمان محلی
-  const dueRow = await queryOne<{ word_id: number }>(
+  // بهینه‌سازی: ترکیب ۳ کوئری مجزا در یک کوئری واحد با UNION ALL
+  // ترتیب اولویت: ۱) واژه‌های due (موعد مرور رسیده) ۲) واژه‌های جدید ۳) پیش‌خوانی
+  // فقط یک سطر برمی‌گردد و بنابراین فقط یک round-trip به دیتابیس انجام می‌شود.
+  const wordRow = await queryOne<DbWord>(
     env,
     `
-    SELECT s.word_id
-    FROM user_words_sm2 s
-    JOIN words w ON w.id = s.word_id
-    WHERE s.user_id = ?
-      AND s.ignored = 0
-      AND w.is_active = 1
-      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
-    ORDER BY date(s.next_review_date) ASC, w.order_index ASC
+    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+    FROM (
+      -- اولویت ۱: واژه‌هایی که موعد مرورشان رسیده
+      SELECT s.word_id as wid, 1 as priority, date(s.next_review_date) as sort_date, 0 as sort_order
+      FROM user_words_sm2 s
+      JOIN words w2 ON w2.id = s.word_id
+      WHERE s.user_id = ?
+        AND s.ignored = 0
+        AND w2.is_active = 1
+        AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+      ORDER BY date(s.next_review_date) ASC, w2.order_index ASC
+      LIMIT 1
+
+      UNION ALL
+
+      -- اولویت ۲: واژه‌های جدید (هنوز در SM2 ثبت نشده‌اند)
+      SELECT w3.id as wid, 2 as priority, '' as sort_date, w3.order_index as sort_order
+      FROM words w3
+      WHERE w3.is_active = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM user_words_sm2 s2
+          WHERE s2.user_id = ? AND s2.word_id = w3.id
+        )
+      ORDER BY w3.order_index ASC, w3.id ASC
+      LIMIT 1
+
+      UNION ALL
+
+      -- اولویت ۳: پیش‌خوانی (واژه‌هایی که ۵۰٪ فاصله مرور گذشته)
+      SELECT s3.word_id as wid, 3 as priority, date(s3.next_review_date) as sort_date, 0 as sort_order
+      FROM user_words_sm2 s3
+      JOIN words w4 ON w4.id = s3.word_id
+      WHERE s3.user_id = ?
+        AND s3.ignored = 0
+        AND w4.is_active = 1
+        AND (
+          s3.last_reviewed_at IS NULL
+          OR julianday('now', '${TIME_ZONE_OFFSET}') - julianday(s3.last_reviewed_at) >= s3.interval_days * 0.5
+        )
+      ORDER BY date(s3.next_review_date) ASC, w4.order_index ASC
+      LIMIT 1
+    ) candidates
+    JOIN words w ON w.id = candidates.wid
+    ORDER BY candidates.priority ASC
     LIMIT 1
     `,
-    [userId]
+    [userId, userId, userId]
   );
 
-  let wordId: number | null = null;
-
-  if (dueRow) {
-    wordId = dueRow.word_id;
-  } else {
-    // 2) واژه‌های جدید
-    const newRow = await queryOne<{ id: number }>(
-      env,
-      `
-      SELECT w.id
-      FROM words w
-      WHERE w.is_active = 1
-        AND NOT EXISTS (
-          SELECT 1 FROM user_words_sm2 s
-          WHERE s.user_id = ? AND s.word_id = w.id
-        )
-      ORDER BY w.order_index ASC, w.id ASC
-      LIMIT 1
-      `,
-      [userId]
-    );
-
-    if (newRow) {
-      wordId = newRow.id;
-    } else {
-      // 3) پیش‌خوانی محدود — فقط واژه‌هایی که حداقل ۵۰٪ intervalشون گذشته
-      const earlyRow = await queryOne<{ word_id: number }>(
-        env,
-        `
-        SELECT s.word_id
-        FROM user_words_sm2 s
-        JOIN words w ON w.id = s.word_id
-        WHERE s.user_id = ?
-          AND s.ignored = 0
-          AND w.is_active = 1
-          AND (
-            s.last_reviewed_at IS NULL
-            OR julianday('now', '${TIME_ZONE_OFFSET}') - julianday(s.last_reviewed_at) >= s.interval_days * 0.5
-          )
-        ORDER BY date(s.next_review_date) ASC, w.order_index ASC
-        LIMIT 1
-        `,
-        [userId]
-      );
-      if (earlyRow) wordId = earlyRow.word_id;
-    }
-  }
-
-  if (!wordId) return null;
-
-  return await queryOne<DbWord>(
-    env,
-    `SELECT * FROM words WHERE id = ?`,
-    [wordId]
-  );
+  return wordRow ?? null;
 }
 
 export async function getOrCreateUserWordState(

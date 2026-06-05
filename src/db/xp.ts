@@ -96,44 +96,36 @@ export function calculateAndPrepareXpForReading(
 
 // چک کردن و آپدیت زنجیره (Streak) با پشتیبانی از تایم‌زون
 // شرط streak: حداقل ۵ تست لایتنر در روز (تغییر از ۵۰ XP)
+// بهینه‌سازی: ترکیب ۳ کوئری مجزا در ۲ کوئری
 export async function checkAndUpdateStreak(env: Env, userId: number): Promise<string | null> {
   const TARGET_DAILY_TESTS = 5;
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
 
-  // 1. شمردن تعداد تست لایتنر امروز
-  const testRow = await env.DB.prepare(`
-    SELECT COUNT(*) as total
-    FROM user_word_question_history
-    WHERE user_id = ?
-      AND context = 'leitner'
-      AND date(answered_at, ?) = date('now', ?)
-  `).bind(userId, TIME_MODIFIER, TIME_MODIFIER).first();
-
-  const todayTests = (testRow?.total as number) || 0;
-
-  if (todayTests < TARGET_DAILY_TESTS) return null;
-
-  // 2. گرفتن وضعیت فعلی کاربر
-  const user = await env.DB.prepare(`
-    SELECT streak_count, last_streak_date, max_streak_record
-    FROM users
-    WHERE id = ?
-  `).bind(userId).first();
-
-  if (!user) return null;
-
-  const currentStreak = (user.streak_count as number) || 0;
-  const maxStreakRecord = (user.max_streak_record as number) || 0;
-  const lastStreakDate = (user.last_streak_date as string) || "";
-
-  const dateCheck = await env.DB.prepare(`
+  // 1. شمردن تعداد تست لایتنر امروز + گرفتن وضعیت streak کاربر (در یک round-trip)
+  const combined = await env.DB.prepare(`
     SELECT
+      (SELECT COUNT(*) FROM user_word_question_history
+       WHERE user_id = ? AND context = 'leitner'
+       AND date(answered_at, ?) = date('now', ?)) as today_tests,
+      u.streak_count,
+      u.last_streak_date,
+      u.max_streak_record,
       date('now', ?) as today_local,
       date('now', ?, '-1 day') as yesterday_local
-  `).bind(TIME_MODIFIER, TIME_MODIFIER).first();
+    FROM users u
+    WHERE u.id = ?
+  `).bind(userId, TIME_MODIFIER, TIME_MODIFIER, TIME_MODIFIER, TIME_MODIFIER, userId).first();
 
-  const todayLocal = dateCheck?.today_local as string;
-  const yesterdayLocal = dateCheck?.yesterday_local as string;
+  if (!combined) return null;
+
+  const todayTests = (combined.today_tests as number) || 0;
+  if (todayTests < TARGET_DAILY_TESTS) return null;
+
+  const currentStreak = (combined.streak_count as number) || 0;
+  const maxStreakRecord = (combined.max_streak_record as number) || 0;
+  const lastStreakDate = (combined.last_streak_date as string) || "";
+  const todayLocal = combined.today_local as string;
+  const yesterdayLocal = combined.yesterday_local as string;
 
   if (lastStreakDate === todayLocal) {
     return null;
@@ -152,7 +144,7 @@ export async function checkAndUpdateStreak(env: Env, userId: number): Promise<st
 
   const newMaxStreak = Math.max(maxStreakRecord, newStreak);
 
-  // 3. آپدیت دیتابیس (streak + max_streak_record)
+  // 2. آپدیت دیتابیس (streak + max_streak_record)
   await env.DB.prepare(`
     UPDATE users
     SET streak_count = ?,

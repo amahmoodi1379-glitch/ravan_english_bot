@@ -20,6 +20,9 @@ export interface UserRank {
 
 // ============================================================
 // XP Leaderboard
+// بهینه‌سازی: به جای LEFT JOIN کل users با activity_log
+// (که همه کاربران حتی بدون XP را اسکن می‌کند)
+// ابتدا از activity_log شروع می‌کنیم و فقط کاربران فعال را JOIN می‌کنیم.
 // ============================================================
 
 export async function getLeaderboardXp(
@@ -34,18 +37,18 @@ export async function getLeaderboardXp(
     rows = await queryAll(
       env,
       `
-      SELECT u.id as user_id,
+      SELECT al.user_id,
              COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
              u.avatar_code,
-             COALESCE(SUM(al.xp_delta), 0) as score
-      FROM users u
-      LEFT JOIN activity_log al ON al.user_id = u.id
-        AND al.created_at >= datetime('now', '-7 days', ?)
-      WHERE u.is_approved = 1
+             SUM(al.xp_delta) as score
+      FROM activity_log al
+      JOIN users u ON u.id = al.user_id
+      WHERE al.created_at >= datetime('now', '-7 days', ?)
+        AND u.is_approved = 1
         AND (u.is_banned IS NULL OR u.is_banned = 0)
-      GROUP BY u.id
+      GROUP BY al.user_id
       HAVING score > 0
-      ORDER BY score DESC, u.id ASC
+      ORDER BY score DESC, al.user_id ASC
       LIMIT ?
       `,
       [TIME_MODIFIER, limit]
@@ -54,23 +57,24 @@ export async function getLeaderboardXp(
     rows = await queryAll(
       env,
       `
-      SELECT u.id as user_id,
+      SELECT al.user_id,
              COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
              u.avatar_code,
-             COALESCE(SUM(al.xp_delta), 0) as score
-      FROM users u
-      LEFT JOIN activity_log al ON al.user_id = u.id
-        AND al.created_at >= datetime('now', '-30 days', ?)
-      WHERE u.is_approved = 1
+             SUM(al.xp_delta) as score
+      FROM activity_log al
+      JOIN users u ON u.id = al.user_id
+      WHERE al.created_at >= datetime('now', '-30 days', ?)
+        AND u.is_approved = 1
         AND (u.is_banned IS NULL OR u.is_banned = 0)
-      GROUP BY u.id
+      GROUP BY al.user_id
       HAVING score > 0
-      ORDER BY score DESC, u.id ASC
+      ORDER BY score DESC, al.user_id ASC
       LIMIT ?
       `,
       [TIME_MODIFIER, limit]
     );
   } else {
+    // لیدربورد "همیشگی" از xp_total کاربر می‌خواند (بسیار سریع - از ایندکس)
     rows = await queryAll(
       env,
       `
@@ -105,67 +109,61 @@ export async function getUserRankXp(
 ): Promise<UserRank | null> {
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
 
-  const user = await queryOne<{ score: number }>(
-    env,
-    `SELECT xp_total as score FROM users WHERE id = ? AND is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)`,
-    [userId]
-  );
-  if (!user) return null;
-
-  let rank = 0;
-
-  if (period === "weekly") {
-    const result = await queryOne<{ cnt: number }>(
+  if (period === "all") {
+    // لیدربورد همیشگی: سریع چون از ایندکس xp_total استفاده می‌کند
+    const user = await queryOne<{ xp_total: number }>(
       env,
-      `
-      SELECT COUNT(*) as cnt FROM (
-        SELECT u.id, COALESCE(SUM(al.xp_delta), 0) as s
-        FROM users u
-        LEFT JOIN activity_log al ON al.user_id = u.id
-          AND al.created_at >= datetime('now', '-7 days', ?)
-        WHERE u.is_approved = 1 AND (u.is_banned IS NULL OR u.is_banned = 0)
-        GROUP BY u.id
-        HAVING s > (SELECT COALESCE(SUM(xp_delta),0) FROM activity_log WHERE user_id = ? AND created_at >= datetime('now', '-7 days', ?))
-      )
-      `,
-      [TIME_MODIFIER, userId, TIME_MODIFIER]
-    );
-    rank = (result?.cnt ?? 0) + 1;
-  } else if (period === "monthly") {
-    const result = await queryOne<{ cnt: number }>(
-      env,
-      `
-      SELECT COUNT(*) as cnt FROM (
-        SELECT u.id, COALESCE(SUM(al.xp_delta), 0) as s
-        FROM users u
-        LEFT JOIN activity_log al ON al.user_id = u.id
-          AND al.created_at >= datetime('now', '-30 days', ?)
-        WHERE u.is_approved = 1 AND (u.is_banned IS NULL OR u.is_banned = 0)
-        GROUP BY u.id
-        HAVING s > (SELECT COALESCE(SUM(xp_delta),0) FROM activity_log WHERE user_id = ? AND created_at >= datetime('now', '-30 days', ?))
-      )
-      `,
-      [TIME_MODIFIER, userId, TIME_MODIFIER]
-    );
-    rank = (result?.cnt ?? 0) + 1;
-  } else {
-    const result = await queryOne<{ cnt: number }>(
-      env,
-      `
-      SELECT COUNT(*) as cnt FROM users
-      WHERE is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)
-        AND xp_total > (SELECT xp_total FROM users WHERE id = ?)
-      `,
+      `SELECT xp_total FROM users WHERE id = ? AND is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)`,
       [userId]
     );
-    rank = (result?.cnt ?? 0) + 1;
+    if (!user) return null;
+
+    const result = await queryOne<{ cnt: number }>(
+      env,
+      `SELECT COUNT(*) as cnt FROM users
+       WHERE is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)
+         AND xp_total > ?`,
+      [user.xp_total]
+    );
+    return { rank: (result?.cnt ?? 0) + 1, score: user.xp_total };
   }
 
-  return { rank, score: user.score };
+  // بهینه‌سازی: ابتدا XP کاربر را حساب کن، بعد COUNT افرادی که بیشتر دارند
+  const daysBack = period === "weekly" ? "-7 days" : "-30 days";
+
+  const userScore = await queryOne<{ score: number }>(
+    env,
+    `SELECT COALESCE(SUM(xp_delta), 0) as score
+     FROM activity_log
+     WHERE user_id = ? AND created_at >= datetime('now', ?, ?)`,
+    [userId, daysBack, TIME_MODIFIER]
+  );
+  if (!userScore) return null;
+
+  // شمارش افرادی که امتیاز بیشتری دارند
+  const result = await queryOne<{ cnt: number }>(
+    env,
+    `
+    SELECT COUNT(*) as cnt FROM (
+      SELECT al.user_id
+      FROM activity_log al
+      JOIN users u ON u.id = al.user_id
+      WHERE al.created_at >= datetime('now', ?, ?)
+        AND u.is_approved = 1
+        AND (u.is_banned IS NULL OR u.is_banned = 0)
+      GROUP BY al.user_id
+      HAVING SUM(al.xp_delta) > ?
+    )
+    `,
+    [daysBack, TIME_MODIFIER, userScore.score]
+  );
+
+  return { rank: (result?.cnt ?? 0) + 1, score: userScore.score };
 }
 
 // ============================================================
 // Streak Leaderboard
+// (از قبل بهینه بود - فقط users table استفاده می‌شود)
 // ============================================================
 
 export async function getLeaderboardStreak(
