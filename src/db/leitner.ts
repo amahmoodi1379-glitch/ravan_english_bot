@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, execute, prepare } from "./client"; 
+import { queryOne, execute, prepare } from "./client";
 import { sm2 } from "../utils/sm2";
 import { TIME_ZONE_OFFSET } from "../config/constants";
 
@@ -29,19 +29,11 @@ export interface UserWordState {
 }
 
 export async function pickNextWordForUser(env: Env, userId: number): Promise<DbWord | null> {
-  // بهینه‌سازی: ترکیب ۳ کوئری مجزا در یک کوئری واحد با UNION ALL
-  // ترتیب اولویت: ۱) واژه‌های due (موعد مرور رسیده) ۲) واژه‌های جدید ۳) پیش‌خوانی
-  // فقط یک سطر برمی‌گردد و بنابراین فقط یک round-trip به دیتابیس انجام می‌شود.
-  //
-  // نکته مهم SQLite: هر بخش UNION ALL که ORDER BY/LIMIT دارد باید داخل
-  // یک ساب‌کوئری (پرانتز) قرار بگیرد، وگرنه خطای
-  // "ORDER BY clause should come after UNION ALL not before" می‌دهد.
   const wordRow = await queryOne<DbWord>(
     env,
     `
     SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
     FROM (
-      -- اولویت ۱: واژه‌هایی که موعد مرورشان رسیده
       SELECT wid, priority FROM (
         SELECT s.word_id as wid, 1 as priority
         FROM user_words_sm2 s
@@ -56,7 +48,6 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
 
       UNION ALL
 
-      -- اولویت ۲: واژه‌های جدید (هنوز در SM2 ثبت نشده‌اند)
       SELECT wid, priority FROM (
         SELECT w3.id as wid, 2 as priority
         FROM words w3
@@ -71,7 +62,6 @@ export async function pickNextWordForUser(env: Env, userId: number): Promise<DbW
 
       UNION ALL
 
-      -- اولویت ۳: پیش‌خوانی (واژه‌هایی که ۵۰٪ فاصله مرور گذشته)
       SELECT wid, priority FROM (
         SELECT s3.word_id as wid, 3 as priority
         FROM user_words_sm2 s3
@@ -102,19 +92,16 @@ export async function getOrCreateUserWordState(
   userId: number,
   wordId: number
 ): Promise<UserWordState> {
-  // 1. تلاش اول: آیا قبلاً وضعیت لایتنر برای این کلمه وجود دارد؟
   let state = await queryOne<UserWordState>(
     env,
     `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
     [userId, wordId]
   );
 
-  // اگر بود، همونو برگردون و تمام.
   if (state) return state;
 
   const nowIso = new Date().toISOString();
 
-  // 2. تلاش برای ساختن رکورد جدید (با محافظت در برابر تداخل)
   try {
     await execute(
       env,
@@ -126,12 +113,9 @@ export async function getOrCreateUserWordState(
       [userId, wordId, nowIso, nowIso]
     );
   } catch (e) {
-    // اگر ارور داد (مثلاً گفت تکراریه)، یعنی در همین لحظه یکی دیگه ساخته.
-    // پس ارور رو نادیده می‌گیریم و میریم مرحله بعد که دوباره بخونیمش.
     console.warn("Race condition caught in getOrCreateUserWordState (duplicate insert avoided).");
   }
 
-  // 3. تلاش دوم: حالا قطعاً باید وجود داشته باشه (چه ما ساخته باشیم، چه قبلاً بوده باشه)
   state = await queryOne<UserWordState>(
     env,
     `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
@@ -154,14 +138,12 @@ function normalizeQuestionStage(stage: number | null | undefined): number {
   return stage;
 }
 
-// تابع اصلی که تغییر کرده است
 export async function prepareUpdateSm2(
   env: Env,
   userId: number,
   wordId: number,
   isCorrect: boolean
 ): Promise<any[]> {
-  
   let state = await queryOne<UserWordState>(
     env,
     `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
@@ -176,28 +158,16 @@ export async function prepareUpdateSm2(
   const nowIso = now.toISOString();
   const quality = isCorrect ? 4 : 2;
 
-  // === اصلاح شده: محاسبه هوشمند فاصله مرور (Fix Bug) ===
   let usedInterval = state.interval_days || 1;
 
   if (state.last_reviewed_at) {
     const lastReviewDate = new Date(state.last_reviewed_at);
     const diffMs = now.getTime() - lastReviewDate.getTime();
     const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
-    // اگر کاربر دیرتر از موعد مرور کرده، فاصله واقعی را حساب کن
-    if (diffDays > state.interval_days) {
-      usedInterval = diffDays;
-    }
-    // اگر زودتر مرور کرده، diffDays رو به SM2 بده تا interval بلند نشه
-    else {
-      usedInterval = diffDays;
-    }
-
+    usedInterval = diffDays;
     if (usedInterval < 1) usedInterval = 1;
   }
-  // ================================================
 
-  // سقف interval بر اساس stage (جلوگیری از دور شدن واژه‌ها)
   const STAGE_MAX_INTERVAL: Record<number, number> = {
     1: 3,
     2: 7,
@@ -259,7 +229,6 @@ export async function prepareUpdateSm2(
 
   return [stmt];
 }
-
 
 export async function markWordAsIgnored(env: Env, userId: number, wordId: number): Promise<void> {
   const now = new Date().toISOString();

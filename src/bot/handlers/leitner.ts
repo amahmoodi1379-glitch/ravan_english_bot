@@ -1,5 +1,5 @@
 import { Env } from "../../types";
-import { TelegramUpdate, TelegramCallbackQuery } from "../router";
+import { TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import { queryOne, execute, prepare } from "../../db/client";
@@ -18,6 +18,7 @@ import {
   LeitnerTestType
 } from "../../config/constants";
 import { getWordStylePrioritySql } from "../../db/question_priority";
+import { optionLetterToNumber } from "../../utils/options";
 
 interface LeitnerQuestionRow {
   id: number;
@@ -42,7 +43,6 @@ const TEST_TYPE_STAGE: Record<LeitnerTestType, number> = {
   [LEITNER_TEST_TYPES.CLOZE]: 5,
 };
 
-// نگاشت استایل‌های جدید و قدیمی (Legacy) برای سازگاری با داده‌های قبلی
 const TEST_TYPE_STYLE_ALIASES: Record<LeitnerTestType, string[]> = {
   [LEITNER_TEST_TYPES.EN_TO_FA]: ["en_to_fa", "fa_meaning"],
   [LEITNER_TEST_TYPES.FA_TO_EN]: ["fa_to_en", "en_meaning"],
@@ -60,18 +60,11 @@ function getStylesForType(testType: LeitnerTestType): string[] {
   return TEST_TYPE_STYLE_ALIASES[testType] || [];
 }
 
-
-export async function startLeitnerForUser(env: Env, update: TelegramUpdate): Promise<void> {
-  const message = update.message;
-  if (!message || !message.from) return;
-  const chatId = message.chat.id;
-  const tgUser = message.from;
-  const user = await getOrCreateUser(env, tgUser);
+export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number): Promise<void> {
   await sendLeitnerQuestion(env, user, chatId);
 }
 
 async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Promise<void> {
-  // ۱. انتخاب واژه
   const word = await pickNextWordForUser(env, user.id);
 
   if (!word) {
@@ -79,11 +72,9 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     return;
   }
 
-  // ۴. انتخاب سوال برای نمایش به کاربر
   const state = await getOrCreateUserWordState(env, user.id, word.id);
   const stage = state.question_stage || 1;
-  
-  // اولویت نوع تست بر اساس مرحله (شماره کمتر اول)
+
   const prioritizedTypes = getQuestionStyleForStage(stage);
 
   let question: LeitnerQuestionRow | null = null;
@@ -96,13 +87,10 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     if (question) break;
   }
 
-  // اگر هیچ سوالی با اولویت‌های فعلی پیدا نشد، از کل سوالات ندیده انتخاب کن
-  // (شامل استایل‌های legacy مثل synonym/antonym)
   if (!question) {
-     question = await pickRandomUnseenQuestion(env, user, word);
+    question = await pickRandomUnseenQuestion(env, user, word);
   }
 
-  // اگر باز هم پیدا نشد (یعنی همه سوالات موجود رو دیده)، یک سوال تصادفی از کل سوالات انتخاب کن (تکراری)
   if (!question) {
     question = await pickRandomQuestionAny(env, user, word);
   }
@@ -112,7 +100,6 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     return;
   }
 
-  // ثبت نمایش (برای جلوگیری از تکرار پشت سر هم در کوتاه مدت)
   const now = new Date().toISOString();
   await execute(
     env,
@@ -124,7 +111,7 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
     [user.id, question.word_id, question.id, now]
   );
 
-  const messageText = 
+  const messageText =
     `❓ <b>${question.question_text}</b>\n\n` +
     `1️⃣ ${question.option_a}\n` +
     `2️⃣ ${question.option_b}\n` +
@@ -148,7 +135,6 @@ async function sendLeitnerQuestion(env: Env, user: DbUser, chatId: number): Prom
   });
 }
 
-// انتخاب سوال با استایل خاص که کاربر ندیده
 async function pickQuestionForUserWord(
   env: Env,
   user: DbUser,
@@ -185,7 +171,6 @@ async function pickQuestionForUserWord(
   );
 }
 
-// انتخاب هر سوالی که کاربر ندیده (بدون توجه به استایل - برای شافل کردن)
 async function pickRandomUnseenQuestion(
   env: Env,
   user: DbUser,
@@ -217,7 +202,6 @@ async function pickRandomUnseenQuestion(
   );
 }
 
-// انتخاب هر سوالی (تکراری هم باشد اشکال ندارد - فال‌بک نهایی)
 async function pickRandomQuestionAny(
   env: Env,
   user: DbUser,
@@ -270,8 +254,7 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
     const chatId = message.chat.id;
-    const tgUser = callbackQuery.from;
-    const user = await getOrCreateUser(env, tgUser);
+    const user = await getOrCreateUser(env, callbackQuery.from);
 
     const question = await queryOne<{ word_id: number; english: string }>(
       env,
@@ -306,8 +289,7 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
     const chatId = message.chat.id;
-    const tgUser = callbackQuery.from;
-    const user = await getOrCreateUser(env, tgUser);
+    const user = await getOrCreateUser(env, callbackQuery.from);
 
     const question = await queryOne<LeitnerQuestionRow>(
       env,
@@ -325,8 +307,7 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
 
-    // === فیکس: اعتبارسنجی گزینه ===
-    if (!chosenOption || !["A","B","C","D"].includes(chosenOption)) {
+    if (!chosenOption || !["A", "B", "C", "D"].includes(chosenOption)) {
       await answerCallbackQuery(env, callbackQuery.id, "گزینه نامعتبر");
       return;
     }
@@ -334,7 +315,6 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     const isCorrect = chosenOption === question.correct_option;
     const now = new Date().toISOString();
 
-    // === فیکس: جلوگیری از دابل‌کلیک ===
     const alreadyAnswered = await queryOne<{ id: number }>(
       env,
       `SELECT id FROM user_word_question_history 
@@ -346,13 +326,10 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       return;
     }
 
-    // لودینگ رو زود خاموش کن تا UX بهتر بشه
     await answerCallbackQuery(env, callbackQuery.id);
 
-    // === اصلاح: استفاده از تراکنش واقعی (Batch) برای همه عملیات‌ها ===
     const batchStatements: any[] = [];
 
-    // 1. آپدیت تاریخچه
     batchStatements.push(prepare(
       env,
       `UPDATE user_word_question_history 
@@ -361,17 +338,13 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       [isCorrect ? 1 : 0, now, user.id, question.id]
     ));
 
-    // 2. آپدیت الگوریتم SM2 (زمان مرور بعدی)
     const sm2Stmts = await prepareUpdateSm2(env, user.id, question.word_id, isCorrect);
     batchStatements.push(...sm2Stmts);
 
-    // 3. آپدیت امتیاز (XP)
     const xpStmts = prepareXpForLeitner(env, user.id, question.word_id, question.level, isCorrect);
     batchStatements.push(...xpStmts);
 
-    // اجرای همه دستورات با هم (یا همه انجام می‌شوند یا هیچکدام)
     await env.DB.batch(batchStatements);
-    // ================================================
 
     if (isCorrect) {
       const streakMsg = await checkAndUpdateStreak(env, user.id);
@@ -380,23 +353,13 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       }
     }
 
-    const getOptionNumber = (letter: string): string => {
-      switch (letter) {
-        case "A": return "1";
-        case "B": return "2";
-        case "C": return "3";
-        case "D": return "4";
-        default: return "";
-      }
-    };
-
     let correctText = "";
     if (question.correct_option === "A") correctText = question.option_a;
     else if (question.correct_option === "B") correctText = question.option_b;
     else if (question.correct_option === "C") correctText = question.option_c;
     else if (question.correct_option === "D") correctText = question.option_d;
 
-    const correctNum = getOptionNumber(question.correct_option);
+    const correctNum = optionLetterToNumber(question.correct_option);
     let replyText: string;
     if (isCorrect) {
       replyText = `آفرین! ✅ جواب درست بود.\n\nکلمه: <b>${question.english}</b>\nمعنی: <b>${question.persian}</b>`;

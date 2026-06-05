@@ -1,6 +1,5 @@
 import { Env } from "../types";
 
-
 export async function queryOne<T>(
   env: Env,
   sql: string,
@@ -28,13 +27,8 @@ export async function execute(
   sql: string,
   params: any[] = []
 ): Promise<any> {
-  // بهینه‌سازی: حذف PRAGMA foreign_keys از batch
-  // دلیل: در D1، Foreign Key ها در سطح اسکیما تعریف شده‌اند و خود D1 آنها را اعمال می‌کند.
-  // PRAGMA foreign_keys در D1 به‌صورت خودکار فعال است و نیاز به تنظیم دستی ندارد.
-  // این تغییر باعث کاهش ۵۰٪ تعداد write ها می‌شود.
   const stmt = env.DB.prepare(sql).bind(...params);
-  const res = await stmt.run();
-  return res;
+  return await stmt.run();
 }
 
 export function prepare(

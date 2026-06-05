@@ -1,9 +1,6 @@
 import { Env } from "../types";
-import { queryAll, queryOne, execute, prepare } from "./client";
+import { queryAll, queryOne, execute } from "./client";
 
-// ============================================================
-// Types
-// ============================================================
 export interface CustomQuiz {
   id: number;
   admin_id: number;
@@ -44,10 +41,6 @@ export interface CustomQuizAnswer {
   chosen_option: string | null;
   answered_at: string | null;
 }
-
-// ============================================================
-// Quiz CRUD
-// ============================================================
 
 export async function createQuiz(
   env: Env,
@@ -108,17 +101,6 @@ export async function getQuizById(
   );
 }
 
-export async function getDraftQuizzesByAdmin(
-  env: Env,
-  adminId: number
-): Promise<CustomQuiz[]> {
-  return queryAll<CustomQuiz>(
-    env,
-    `SELECT * FROM custom_quizzes WHERE admin_id = ? AND status = 'draft' ORDER BY created_at DESC`,
-    [adminId]
-  );
-}
-
 export async function getActiveQuizzesByAdmin(
   env: Env,
   adminId: number
@@ -159,10 +141,6 @@ export async function getParticipantCount(
   );
   return row?.cnt || 0;
 }
-
-// ============================================================
-// Questions
-// ============================================================
 
 export async function addQuizQuestion(
   env: Env,
@@ -214,18 +192,6 @@ export async function getQuizQuestions(
   );
 }
 
-export async function getQuizQuestionByIndex(
-  env: Env,
-  quizId: number,
-  questionIndex: number
-): Promise<CustomQuizQuestion | null> {
-  return queryOne<CustomQuizQuestion>(
-    env,
-    `SELECT * FROM custom_quiz_questions WHERE quiz_id = ? AND question_index = ?`,
-    [quizId, questionIndex]
-  );
-}
-
 export async function getQuizQuestionById(
   env: Env,
   questionId: number
@@ -237,18 +203,10 @@ export async function getQuizQuestionById(
   );
 }
 
-export async function deleteQuizQuestion(env: Env, questionId: number): Promise<void> {
-  await execute(env, `DELETE FROM custom_quiz_questions WHERE id = ?`, [questionId]);
-}
-
 export async function getQuestionCount(env: Env, quizId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(env, `SELECT COUNT(*) as cnt FROM custom_quiz_questions WHERE quiz_id = ?`, [quizId]);
   return row?.cnt || 0;
 }
-
-// ============================================================
-// Links
-// ============================================================
 
 export async function createQuizLink(
   env: Env,
@@ -284,10 +242,6 @@ export async function getLatestQuizLink(
     [quizId]
   );
 }
-
-// ============================================================
-// Attempts & Answers
-// ============================================================
 
 export async function createAttempt(
   env: Env,
@@ -403,17 +357,6 @@ export async function saveAnswer(
   }
 }
 
-export async function getAnswersForAttempt(
-  env: Env,
-  attemptId: number
-): Promise<CustomQuizAnswer[]> {
-  return queryAll<CustomQuizAnswer>(
-    env,
-    `SELECT * FROM custom_quiz_answers WHERE attempt_id = ?`,
-    [attemptId]
-  );
-}
-
 export async function getAnswerForQuestion(
   env: Env,
   attemptId: number,
@@ -425,10 +368,6 @@ export async function getAnswerForQuestion(
     [attemptId, questionId]
   );
 }
-
-// ============================================================
-// Scoring & Leaderboard
-// ============================================================
 
 export async function getLeaderboardWithNegative(
   env: Env,

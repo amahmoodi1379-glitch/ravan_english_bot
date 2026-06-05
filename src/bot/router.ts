@@ -2,7 +2,6 @@ import { Env } from "../types";
 import {
   getMainMenuKeyboard,
   getTrainingMenuKeyboard,
-  getProfileMenuKeyboard,
   MAIN_MENU_BUTTON_TRAINING,
   MAIN_MENU_BUTTON_PROFILE,
   MAIN_MENU_BUTTON_LEADERBOARD,
@@ -49,7 +48,7 @@ import {
   handleAdminCommand
 } from "./handlers/admin";
 import { CB_PREFIX } from "../config/constants";
-import { getOrCreateUser, getUserByTelegramId } from "../db/users";
+import { getOrCreateUser, getUserByTelegramId, touchExistingUser, DbUser } from "../db/users";
 import { queryOne, execute } from "../db/client";
 
 export interface TelegramUser {
@@ -105,45 +104,37 @@ export async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Pr
 async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
 
-  // Leitner (l:...)
   if (data.startsWith(`${CB_PREFIX.LEITNER}:`) || data.startsWith(`${CB_PREFIX.LEITNER_IGNORE}:`)) {
     await handleLeitnerCallback(env, callbackQuery);
     return;
   }
 
-  // Reading Text Selection (rt:...)
   if (data.startsWith(`${CB_PREFIX.READING_TEXT}:`)) {
     await handleReadingTextChosen(env, callbackQuery);
     return;
   }
 
-  // Reading Answer (ra:...)
   if (data.startsWith(`${CB_PREFIX.READING_ANSWER}:`)) {
     await handleReadingAnswerCallback(env, callbackQuery);
     return;
   }
 
-  // Avatar (av:...)
   if (data.startsWith(`${CB_PREFIX.AVATAR}:`)) {
     await handleAvatarCallback(env, callbackQuery);
     return;
   }
 
-  // Stats (st:...)
   if (data.startsWith(`${CB_PREFIX.STATS}:`)) {
     await handleStatsCallback(env, callbackQuery);
     return;
   }
 
-  // Leaderboard (lb:...)
   if (data.startsWith(`${CB_PREFIX.LEADERBOARD}:`)) {
     await handleLeaderboardCallback(env, callbackQuery);
     return;
   }
 
-  // Quiz (qz:...)
   if (data.startsWith(`${CB_PREFIX.QUIZ}:`)) {
-    // Admin quiz callbacks (admin_view, admin_detail_back, etc.)
     const parts = data.split(":");
     const subAction = parts[1] || "";
     if (subAction.startsWith("admin")) {
@@ -154,8 +145,46 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
     return;
   }
 
-  // اگر دکمه ناشناس بود، لودینگ را ببند تا کاربر معطل نشود
   await answerCallbackQuery(env, callbackQuery.id);
+}
+
+function extractLicenseCode(text: string): string {
+  let code = text.trim();
+  if (code.startsWith("/start")) {
+    code = code.replace("/start", "").trim();
+  }
+  return code;
+}
+
+async function applyLicenseCode(
+  env: Env,
+  user: DbUser,
+  code: string
+): Promise<{ ok: boolean; expireMessage: string }> {
+  const licenseInfo = await queryOne<{ expiration_days: number | null }>(
+    env,
+    `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
+    [code]
+  );
+  if (!licenseInfo) return { ok: false, expireMessage: "" };
+
+  const now = new Date().toISOString();
+  const result = await execute(
+    env,
+    `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
+    [user.id, now, code]
+  );
+  if (result.meta.changes === 0) return { ok: false, expireMessage: "" };
+
+  let expireMessage = "";
+  if (licenseInfo.expiration_days && licenseInfo.expiration_days > 0) {
+    const expireDate = new Date(Date.now() + licenseInfo.expiration_days * 24 * 60 * 60 * 1000);
+    expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${expireDate.toLocaleDateString('fa-IR')})`;
+  }
+
+  await execute(env, `UPDATE users SET is_approved = 1 WHERE id = ?`, [user.id]);
+  user.is_approved = 1;
+  return { ok: true, expireMessage };
 }
 
 async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
@@ -166,163 +195,72 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   const chatId = message.chat.id;
   const tgUser = message.from;
 
-  // Must have a user to proceed
   if (!tgUser) {
     return;
   }
 
-  // Check admin commands FIRST — this handles text AND media (photos/videos/etc.)
-  // because the admin might be in 'await_announcement_content' state
   const adminHandled = await handleAdminCommand(env, update);
   if (adminHandled) return;
 
-  // From here on, text is required for normal user flows
   if (!text) {
     return;
   }
 
-  // 1. اول فقط چک می‌کنیم کاربر قبلاً ثبت نام کرده یا نه (بدون ساختن)
   let user = await getUserByTelegramId(env, tgUser.id);
 
-  // 2. اگر کاربر در دیتابیس نیست (یعنی هنوز ثبت نام نشده)
   if (!user) {
-    // اصلاح باگ: جدا کردن دستور /start از کد لایسنس
-    let inputCode = text.trim();
-    if (inputCode.startsWith("/start")) {
-      inputCode = inputCode.replace("/start", "").trim();
-    }
-
-    // اگر کاربر فقط /start خالی فرستاده بود (بدون کد)
+    const inputCode = extractLicenseCode(text);
     if (!inputCode) {
       await sendMessage(env, chatId, "👋 سلام! به ربات خوش اومدی.\n\nاین یک ربات خصوصی است. لطفاً کد لایسنس (Access Code) خودتون رو ارسال کنید تا اکانت شما فعال شود.");
       return;
     }
 
-    // کاربر را می‌سازیم
     user = await getOrCreateUser(env, tgUser);
-    
-    const now = new Date().toISOString();
-
-    // تلاش برای تایید کد و دریافت اطلاعات لایسنس
-    const licenseInfo = await queryOne<{ expiration_days: number | null }>(
-      env,
-      `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
-      [inputCode]
-    );
-
-    if (licenseInfo) {
-      // کد صحیح بود - استفاده از لایسنس
-      const result = await execute(
-        env,
-        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
-        [user.id, now, inputCode]
-      );
-
-      if (result.meta.changes > 0) {
-        // محاسبه تاریخ انقضا اگر لایسنس محدود داشته باشد
-        let expireMessage = "";
-        if (licenseInfo.expiration_days && licenseInfo.expiration_days > 0) {
-          const expireDate = new Date(Date.now() + licenseInfo.expiration_days * 24 * 60 * 60 * 1000);
-          expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${expireDate.toLocaleDateString('fa-IR')})`;
-        }
-
-        await execute(
-          env,
-          `UPDATE users SET is_approved = 1 WHERE id = ?`,
-          [user.id]
-        );
-        user.is_approved = 1;
-        await sendMessage(env, chatId, `✅ تبریک! لایسنس شما تایید شد.${expireMessage}\nحالا می‌تونی از ربات استفاده کنی. برای شروع روی /start بزن یا از منو استفاده کن.`);
-        return;
-      }
+    const result = await applyLicenseCode(env, user, inputCode);
+    if (result.ok) {
+      await sendMessage(env, chatId, `✅ تبریک! لایسنس شما تایید شد.${result.expireMessage}\nحالا می‌تونی از ربات استفاده کنی. برای شروع روی /start بزن یا از منو استفاده کن.`);
+    } else {
+      await sendMessage(env, chatId, "⛔️ کد لایسنس نامعتبر است یا قبلاً استفاده شده.\nلطفاً کد صحیح را ارسال کنید.");
     }
-    
-    // کد غلط بود
-    await sendMessage(
-      env,
-      chatId,
-      "⛔️ کد لایسنس نامعتبر است یا قبلاً استفاده شده.\nلطفاً کد صحیح را ارسال کنید."
-    );
     return;
   }
 
- // 3. اگر کاربر در دیتابیس هست، اما هنوز تایید نشده
-  if (user && !user.is_approved) {
-    // اصلاح باگ: اینجا هم باید /start رو تمیز کنیم
-    let inputCode = text.trim();
-    if (inputCode.startsWith("/start")) {
-      inputCode = inputCode.replace("/start", "").trim();
-    }
-
+  if (!user.is_approved) {
+    const inputCode = extractLicenseCode(text);
     if (!inputCode) {
       await sendMessage(env, chatId, "لطفاً کد لایسنس خود را ارسال کنید:");
       return;
     }
 
-    const now = new Date().toISOString();
-
-    // تلاش برای تایید کد و دریافت اطلاعات لایسنس
-    const licenseInfo = await queryOne<{ expiration_days: number | null }>(
-      env,
-      `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
-      [inputCode]
-    );
-
-    if (licenseInfo) {
-      // کد صحیح بود - استفاده از لایسنس
-      const result = await execute(
-        env,
-        `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
-        [user.id, now, inputCode]
-      );
-
-      if (result.meta.changes > 0) {
-        // محاسبه تاریخ انقضا اگر لایسنس محدود داشته باشد
-        let expireMessage = "";
-        if (licenseInfo.expiration_days && licenseInfo.expiration_days > 0) {
-          const expireDate = new Date(Date.now() + licenseInfo.expiration_days * 24 * 60 * 60 * 1000);
-          expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${expireDate.toLocaleDateString('fa-IR')})`;
-        }
-
-        await execute(
-          env,
-          `UPDATE users SET is_approved = 1 WHERE id = ?`,
-          [user.id]
-        );
-        user.is_approved = 1;
-
-        await sendMessage(env, chatId, `✅ اکانت شما فعال شد!${expireMessage}\nحالا می‌تونید از ربات استفاده کنید.`);
-      } else {
-        await sendMessage(env, chatId, "⛔️ کد وارد شده معتبر نیست. لطفاً کد صحیح را ارسال کنید.");
-      }
+    const result = await applyLicenseCode(env, user, inputCode);
+    if (result.ok) {
+      await sendMessage(env, chatId, `✅ اکانت شما فعال شد!${result.expireMessage}\nحالا می‌تونید از ربات استفاده کنید.`);
     } else {
       await sendMessage(env, chatId, "⛔️ کد وارد شده معتبر نیست. لطفاً کد صحیح را ارسال کنید.");
     }
     return;
   }
 
-  // --- از اینجا به بعد یعنی کاربر هم هست و هم تایید شده ---
-
-  // Check if user is banned
   if (user.is_banned) {
-    const banMessage = user.banned_until ? 
-      `🚫 حساب کاربری شما مسدود شده است.\nتاریخ رفع مسدودیت: ${new Date(user.banned_until).toLocaleDateString('fa-IR')}` :
-      "🚫 حساب کاربری شما به طور دائمی مسدود شده است.";
-    
+    const banMessage = user.banned_until
+      ? `🚫 حساب کاربری شما مسدود شده است.\nتاریخ رفع مسدودیت: ${new Date(user.banned_until).toLocaleDateString('fa-IR')}`
+      : "🚫 حساب کاربری شما به طور دائمی مسدود شده است.";
+
     await sendMessage(env, chatId, banMessage);
     return;
   }
 
+  await touchExistingUser(env, user, tgUser);
+
   if (text.startsWith("/setname")) {
-    await handleSetDisplayNameCommand(env, update);
+    await handleSetDisplayNameCommand(env, user, chatId, text);
     return;
   }
 
-  // Handle quiz deep link: /start quiz_<token> or /start@botname quiz_<token>
   const quizDeepLinkMatch = text.match(/^\/start(?:@[\w_]+)?\s+quiz_(\S+)/);
   if (quizDeepLinkMatch) {
     const token = quizDeepLinkMatch[1];
-    if (token && user) {
+    if (token) {
       await handleQuizStart(env, user, chatId, token);
       return;
     }
@@ -343,37 +281,37 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
   if (text === MAIN_MENU_BUTTON_PROFILE) {
-    await showProfileHome(env, update);
+    await showProfileHome(env, user, chatId);
     return;
   }
 
   if (text === MAIN_MENU_BUTTON_LEADERBOARD) {
-    await showLeaderboardHome(env, update);
+    await showLeaderboardHome(env, chatId);
     return;
   }
 
   if (text === TRAINING_MENU_BUTTON_LEITNER) {
-    await startLeitnerForUser(env, update);
+    await startLeitnerForUser(env, user, chatId);
     return;
   }
 
   if (text === TRAINING_MENU_BUTTON_READING) {
-    await startReadingMenuForUser(env, update, 1);
+    await startReadingMenuForUser(env, chatId, 1);
     return;
   }
 
   if (text.includes("صفحه") && (text.includes("◀️") || text.includes("▶️"))) {
-     const numMatch = text.match(/\d+/);
-     if (numMatch) {
-        const page = parseInt(numMatch[0]);
-        if (!isNaN(page)) {
-            await startReadingMenuForUser(env, update, page);
-            return;
-        }
-     }
+    const numMatch = text.match(/\d+/);
+    if (numMatch) {
+      const page = parseInt(numMatch[0]);
+      if (!isNaN(page)) {
+        await startReadingMenuForUser(env, chatId, page);
+        return;
+      }
+    }
   }
 
-  const isReadingTitle = await handleReadingTitleSelection(env, update, text);
+  const isReadingTitle = await handleReadingTitleSelection(env, user, chatId, text);
   if (isReadingTitle) {
     return;
   }
@@ -389,19 +327,18 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   }
 
   if (text === PROFILE_MENU_BUTTON_SETTINGS) {
-    await showProfileSettings(env, update);
+    await showProfileSettings(env, user, chatId);
     return;
   }
   if (text === PROFILE_MENU_BUTTON_STATS) {
-    await startProfileStats(env, update);
+    await startProfileStats(env, chatId);
     return;
   }
   if (text === PROFILE_MENU_BUTTON_SUMMARY) {
-    await showProfileSummary(env, update);
+    await showProfileSummary(env, user, chatId);
     return;
   }
 
-  // === فیکس: اگر کاربر در میانه تست درک مطلب است ===
   const activeReadingSession = await queryOne<{ id: number; started_at: string }>(
     env,
     `SELECT id, started_at FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
@@ -410,14 +347,12 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   if (activeReadingSession) {
     const sessionAgeHours = (Date.now() - new Date(activeReadingSession.started_at).getTime()) / (1000 * 60 * 60);
 
-    // اگه سشن قدیمی‌تر از ۲۴ ساعت هست → خودکار کنسل کن
     if (sessionAgeHours > 24) {
       await execute(
         env,
         `UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`,
         [activeReadingSession.id]
       );
-      // ادامه بده به flow عادی (منوی اصلی)
     } else {
       await sendMessage(
         env,
@@ -428,7 +363,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
       return;
     }
   }
-  // ============================================================
 
   await sendMessage(
     env,

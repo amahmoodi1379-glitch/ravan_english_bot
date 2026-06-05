@@ -1,8 +1,8 @@
 import { Env } from "../../types";
-import { TelegramUpdate, TelegramCallbackQuery } from "../router";
+import { TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getProfileMenuKeyboard } from "../keyboards";
-import { getOrCreateUser } from "../../db/users";
+import { getOrCreateUser, DbUser } from "../../db/users";
 import {
   getUserProfile,
   updateDisplayName,
@@ -12,64 +12,17 @@ import {
   ActivityStats
 } from "../../db/profile";
 import { CB_PREFIX, TIME_ZONE_OFFSET } from "../../config/constants";
+import { AVATARS, getAvatarEmoji, getAvatarLabel } from "../avatars";
 
-// لیست جدید، متنوع و جذاب آواتارها
-const AVATARS: { code: string; emoji: string; label: string }[] = [
-  // حیوانات بامزه
-  { code: "cat", emoji: "😺", label: "گربه" },
-  { code: "fox", emoji: "🦊", label: "روباه" },
-  { code: "panda", emoji: "🐼", label: "پاندا" },
-  { code: "koala", emoji: "🐨", label: "کوالا" },
-  
-  // حیوانات قدرتمند
-  { code: "lion", emoji: "🦁", label: "شیر" },
-  { code: "tiger", emoji: "🐯", label: "ببر" },
-  { code: "wolf", emoji: "🐺", label: "گرگ" },
-  { code: "eagle", emoji: "🦅", label: "عقاب" },
-
-  // پرندگان و فانتزی
-  { code: "owl", emoji: "🦉", label: "جغد" },
-  { code: "unicorn", emoji: "🦄", label: "تک‌شاخ" },
-  { code: "dragon", emoji: "🐉", label: "اژدها" },
-  { code: "dino", emoji: "🦖", label: "دایناسور" },
-
-  // شخصیت‌ها
-  { code: "robot", emoji: "🤖", label: "ربات" },
-  { code: "alien", emoji: "👽", label: "فضایی" },
-  { code: "ninja", emoji: "🥷", label: "نینجا" },
-  { code: "ghost", emoji: "👻", label: "روح" },
-
-  // مشاغل و انسان‌ها
-  { code: "detective", emoji: "🕵️‍♂️", label: "کارآگاه" },
-  { code: "astronaut", emoji: "👩‍🚀", label: "فضانورد" },
-  { code: "scientist", emoji: "👨‍🔬", label: "دانشمند" },
-  { code: "wizard", emoji: "🧙‍♂️", label: "جادوگر" }
-];
-
-function getAvatarEmoji(code: string | null | undefined): string {
-  if (!code) return "👤"; // آواتار پیش‌فرض برای کاربرانی که انتخاب نکردند
-  const found = AVATARS.find((a) => a.code === code);
-  return found ? found.emoji : "👤"; // فال‌بک امن
-}
-
-function getAvatarLabel(code: string | null | undefined): string {
-  if (!code) return "انتخاب نشده";
-  const found = AVATARS.find((a) => a.code === code);
-  return found ? found.label : "نامشخص";
-}
-
-// تابع اصلاح شده برای محاسبه دقیق زنجیره با ساعت ایران
 async function getStreakInfo(env: Env, userId: number): Promise<number> {
-  // ۱. گرفتن اطلاعات زنجیره کاربر از دیتابیس
   const row = await env.DB.prepare(`SELECT streak_count, last_streak_date FROM users WHERE id = ?`).bind(userId).first();
   if (!row) return 0;
-  
+
   const count = (row.streak_count as number) || 0;
-  const lastDate = (row.last_streak_date as string) || ""; 
-  
+  const lastDate = (row.last_streak_date as string) || "";
+
   if (count === 0) return 0;
 
-  // ۲. گرفتن تاریخ دقیق "امروز" و "دیروز" به وقت ایران
   const dateCheck = await env.DB.prepare(`
     SELECT 
       date('now', ?) as today_local,
@@ -79,22 +32,14 @@ async function getStreakInfo(env: Env, userId: number): Promise<number> {
   const todayStr = dateCheck?.today_local as string;
   const yesterdayStr = dateCheck?.yesterday_local as string;
 
-  // ۳. مقایسه تاریخ‌ها
   if (lastDate === todayStr || lastDate === yesterdayStr) {
     return count;
   }
-  
-  return 0; 
+
+  return 0;
 }
 
-export async function showProfileHome(env: Env, update: TelegramUpdate): Promise<void> {
-  const message = update.message;
-  if (!message || !message.from) return;
-
-  const chatId = message.chat.id;
-  const tgUser = message.from;
-
-  const user = await getOrCreateUser(env, tgUser);
+export async function showProfileHome(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
   const displayName =
@@ -106,7 +51,6 @@ export async function showProfileHome(env: Env, update: TelegramUpdate): Promise
   const xpTotal = profile?.xp_total ?? 0;
   const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
 
-  // دریافت وضعیت زنجیره
   const streakCount = await getStreakInfo(env, user.id);
   const streakText = streakCount > 0 ? `🔥 <b>${streakCount}</b> روز` : "خاموش ❄️";
 
@@ -123,14 +67,7 @@ export async function showProfileHome(env: Env, update: TelegramUpdate): Promise
   });
 }
 
-export async function showProfileSettings(env: Env, update: TelegramUpdate): Promise<void> {
-  const message = update.message;
-  if (!message || !message.from) return;
-
-  const chatId = message.chat.id;
-  const tgUser = message.from;
-
-  const user = await getOrCreateUser(env, tgUser);
+export async function showProfileSettings(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
   const displayName =
@@ -153,12 +90,11 @@ export async function showProfileSettings(env: Env, update: TelegramUpdate): Pro
     `برای تغییر، یکی از گزینه‌های زیر رو انتخاب کن: 👇`;
 
   const inlineRows: any[][] = [];
-  // تغییر چیدمان به ۴ تایی برای زیبایی بیشتر
   for (let i = 0; i < AVATARS.length; i += 4) {
     const slice = AVATARS.slice(i, i + 4);
     inlineRows.push(
       slice.map((a) => ({
-        text: `${a.emoji}`, // فقط ایموجی رو نشون میدیم که جا بشه
+        text: `${a.emoji}`,
         callback_data: `${CB_PREFIX.AVATAR}:${a.code}`
       }))
     );
@@ -178,7 +114,6 @@ export async function handleAvatarCallback(
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
 
-  // av:<code>
   if (parts.length !== 2 || parts[0] !== CB_PREFIX.AVATAR) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
@@ -198,8 +133,7 @@ export async function handleAvatarCallback(
   }
 
   const chatId = message.chat.id;
-  const tgUser = callbackQuery.from;
-  const user = await getOrCreateUser(env, tgUser);
+  const user = await getOrCreateUser(env, callbackQuery.from);
 
   await setAvatar(env, user.id, code);
 
@@ -213,17 +147,11 @@ export async function handleAvatarCallback(
 
 export async function handleSetDisplayNameCommand(
   env: Env,
-  update: TelegramUpdate
+  user: DbUser,
+  chatId: number,
+  text: string
 ): Promise<void> {
-  const message = update.message;
-  if (!message || !message.from || !message.text) return;
-
-  const chatId = message.chat.id;
-  const tgUser = message.from;
-  const user = await getOrCreateUser(env, tgUser);
-
-  const fullText = message.text.trim();
-  const parts = fullText.split(" ");
+  const parts = text.trim().split(" ");
   const newName = parts.slice(1).join(" ").trim();
 
   if (!newName) {
@@ -267,15 +195,7 @@ export async function handleSetDisplayNameCommand(
   );
 }
 
-export async function startProfileStats(env: Env, update: TelegramUpdate): Promise<void> {
-  const message = update.message;
-  if (!message || !message.from) return;
-
-  const chatId = message.chat.id;
-  const tgUser = message.from;
-
-  await getOrCreateUser(env, tgUser);
-
+export async function startProfileStats(env: Env, chatId: number): Promise<void> {
   await sendMessage(
     env,
     chatId,
@@ -305,13 +225,12 @@ function periodLabel(period: ActivityPeriod): string {
 function buildStatsText(stats: ActivityStats): string {
   const label = periodLabel(stats.period);
 
-  let text =
+  return (
     `📈 <b>گزارش عملکرد (${label})</b>\n\n` +
     `🧠 سوال‌های لایتنر: <b>${stats.leitner_questions}</b>\n` +
     `📖 درک مطلب (Reading): <b>${stats.reading_sets}</b>\n` +
     `\n⭐️ <b>XP کسب شده: ${stats.xp}</b>`
-
-  return text;
+  );
 }
 
 export async function handleStatsCallback(
@@ -339,8 +258,7 @@ export async function handleStatsCallback(
   }
 
   const chatId = message.chat.id;
-  const tgUser = callbackQuery.from;
-  const user = await getOrCreateUser(env, tgUser);
+  const user = await getOrCreateUser(env, callbackQuery.from);
 
   const stats = await getUserActivityStats(env, user.id, period);
 
@@ -350,14 +268,7 @@ export async function handleStatsCallback(
   await sendMessage(env, chatId, text);
 }
 
-export async function showProfileSummary(env: Env, update: TelegramUpdate): Promise<void> {
-  const message = update.message;
-  if (!message || !message.from) return;
-
-  const chatId = message.chat.id;
-  const tgUser = message.from;
-
-  const user = await getOrCreateUser(env, tgUser);
+export async function showProfileSummary(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
   const displayName =

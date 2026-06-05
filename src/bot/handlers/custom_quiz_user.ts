@@ -174,7 +174,6 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   const messageId = msg.message_id;
   await answerCallbackQuery(env, callbackQuery.id);
 
-  // Handle explain — no active state required (but verify ownership)
   if (action === "explain") {
     const attemptRecord = await getAttempt(env, attemptId);
     const quizId = attemptRecord?.quiz_id;
@@ -197,7 +196,6 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
     return;
   }
 
-  // Handle back to explain list — no active state required (but verify ownership)
   if (action === "return_results") {
     const attemptRecord = await getAttempt(env, attemptId);
     if (!attemptRecord) { await sendMessage(env, chatId, "⚠️ آزمون یافت نشد."); return; }
@@ -215,7 +213,6 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
     return;
   }
 
-  // For all other actions, get or recover state from DB on Worker restart
   let state = quizUserStates.get(user.id);
   if (!state || state.attemptId !== attemptId) {
     const recoveredAttempt = await getAttempt(env, attemptId);
@@ -234,7 +231,6 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
     }
   }
 
-  // Check expiry on every interaction
   const attempt = await getAttempt(env, attemptId);
   const quiz = await getQuizById(env, state.quizId);
   if (attempt && quiz && isQuizExpired(attempt, quiz)) {

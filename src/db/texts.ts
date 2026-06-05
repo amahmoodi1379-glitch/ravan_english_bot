@@ -9,7 +9,6 @@ export interface DbReadingText {
   is_active: number;
 }
 
-// ۱. گرفتن تعداد کل متن‌ها (برای اینکه بفهمیم چند صفحه داریم)
 export async function getReadingTextsCount(env: Env): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
     env,
@@ -18,9 +17,8 @@ export async function getReadingTextsCount(env: Env): Promise<number> {
   return row?.cnt ?? 0;
 }
 
-// ۲. گرفتن متن‌ها به صورت صفحه‌بندی شده (مثلاً ۵ تا ۵ تا)
 export async function getPaginatedReadingTexts(env: Env, limit: number, offset: number): Promise<DbReadingText[]> {
-  const rows = await queryAll<DbReadingText>(
+  return await queryAll<DbReadingText>(
     env,
     `
     SELECT id, title, body_en, level, is_active
@@ -31,10 +29,8 @@ export async function getPaginatedReadingTexts(env: Env, limit: number, offset: 
     `,
     [limit, offset]
   );
-  return rows;
 }
 
-// ۳. پیدا کردن متن بر اساس "عنوان" (چون کاربر روی دکمه‌ی اسم متن کلیک می‌کند)
 export async function getReadingTextByTitle(env: Env, title: string): Promise<DbReadingText | null> {
   const row = await queryOne<DbReadingText>(
     env,

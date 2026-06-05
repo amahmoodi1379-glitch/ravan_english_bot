@@ -3,7 +3,6 @@ import { TelegramUpdate } from "../router";
 import { sendMessage } from "../telegram-api";
 import { getMainMenuKeyboard } from "../keyboards";
 
-// هندل کردن /start
 export async function handleStartCommand(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
   if (!message) return;

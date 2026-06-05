@@ -1,5 +1,5 @@
 import { Env } from "../../types";
-import { TelegramUpdate, TelegramCallbackQuery } from "../router";
+import { TelegramCallbackQuery } from "../router";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser } from "../../db/users";
 import { CB_PREFIX } from "../../config/constants";
@@ -11,42 +11,11 @@ import {
   LeaderboardPeriod,
   StreakType,
 } from "../../db/leaderboard";
+import { getAvatarEmoji } from "../avatars";
 
-// دکمه‌های منوی لیدربورد
 const LB_BTN_XP = "📊 لیدربورد امتیاز (XP)";
 const LB_BTN_STREAK = "🔥 لیدربورد استریک";
 const LB_BTN_BACK = "⬅️ بازگشت";
-
-function getAvatarEmoji(code: string | null): string {
-  if (!code) return "👤";
-  const avatars: Record<string, string> = {
-    lion: "🦁",
-    fox: "🦊",
-    panda: "🐼",
-    owl: "🦉",
-    wolf: "🐺",
-    eagle: "🦅",
-    dragon: "🐉",
-    cat: "🐱",
-    dog: "🐶",
-    bear: "🐻",
-    rabbit: "🐰",
-    tiger: "🐯",
-    koala: "🐨",
-    frog: "🐸",
-    penguin: "🐧",
-    monkey: "🐵",
-    horse: "🐴",
-    unicorn: "🦄",
-    bee: "🐝",
-    butterfly: "🦋",
-    shark: "🦈",
-    whale: "🐋",
-    turtle: "🐢",
-    octopus: "🐙",
-  };
-  return avatars[code] || "👤";
-}
 
 function getRankEmoji(rank: number): string {
   if (rank === 1) return "🥇";
@@ -83,15 +52,7 @@ function buildLeaderboardText(
   return text;
 }
 
-// ============================================================
-// منوی اصلی لیدربورد
-// ============================================================
-export async function showLeaderboardHome(env: Env, update: TelegramUpdate): Promise<void> {
-  const message = update.message;
-  if (!message || !message.from) return;
-
-  const chatId = message.chat.id;
-
+export async function showLeaderboardHome(env: Env, chatId: number): Promise<void> {
   const text = `🏆 <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
@@ -103,9 +64,6 @@ export async function showLeaderboardHome(env: Env, update: TelegramUpdate): Pro
   await sendMessage(env, chatId, text, { reply_markup: replyMarkup });
 }
 
-// ============================================================
-// منوی XP
-// ============================================================
 async function showXpMenu(env: Env, chatId: number): Promise<void> {
   const text = `📊 <b>لیدربورد امتیاز (XP)</b>\n\nدوره زمانی رو انتخاب کن:`;
   const replyMarkup = {
@@ -122,9 +80,6 @@ async function showXpMenu(env: Env, chatId: number): Promise<void> {
   await sendMessage(env, chatId, text, { reply_markup: replyMarkup });
 }
 
-// ============================================================
-// منوی Streak
-// ============================================================
 async function showStreakMenu(env: Env, chatId: number): Promise<void> {
   const text = `🔥 <b>لیدربورد استریک</b>\n\nکدوم نوع رو می‌خوای ببینی؟`;
   const replyMarkup = {
@@ -140,9 +95,6 @@ async function showStreakMenu(env: Env, chatId: number): Promise<void> {
   await sendMessage(env, chatId, text, { reply_markup: replyMarkup });
 }
 
-// ============================================================
-// نمایش XP Leaderboard
-// ============================================================
 async function showXpLeaderboard(
   env: Env,
   chatId: number,
@@ -155,21 +107,10 @@ async function showXpLeaderboard(
     all: "📊 لیدربورد XP — همیشگی",
   };
 
-  const scoreLabels: Record<LeaderboardPeriod, string> = {
-    weekly: "XP",
-    monthly: "XP",
-    all: "XP",
-  };
-
   const entries = await getLeaderboardXp(env, period);
   const userRank = await getUserRankXp(env, userId, period);
 
-  const text = buildLeaderboardText(
-    periodLabels[period],
-    entries,
-    userRank,
-    scoreLabels[period]
-  );
+  const text = buildLeaderboardText(periodLabels[period], entries, userRank, "XP");
 
   const replyMarkup = {
     inline_keyboard: [
@@ -187,9 +128,6 @@ async function showXpLeaderboard(
   await sendMessage(env, chatId, text, { reply_markup: replyMarkup });
 }
 
-// ============================================================
-// نمایش Streak Leaderboard
-// ============================================================
 async function showStreakLeaderboard(
   env: Env,
   chatId: number,
@@ -201,17 +139,10 @@ async function showStreakLeaderboard(
     record: "🏅 لیدربورد استریک — رکورد تاریخی",
   };
 
-  const scoreLabel = type === "live" ? "روز" : "روز";
-
   const entries = await getLeaderboardStreak(env, type);
   const userRank = await getUserRankStreak(env, userId, type);
 
-  const text = buildLeaderboardText(
-    typeLabels[type],
-    entries,
-    userRank,
-    scoreLabel
-  );
+  const text = buildLeaderboardText(typeLabels[type], entries, userRank, "روز");
 
   const replyMarkup = {
     inline_keyboard: [
@@ -226,9 +157,6 @@ async function showStreakLeaderboard(
   await sendMessage(env, chatId, text, { reply_markup: replyMarkup });
 }
 
-// ============================================================
-// Callback Handler
-// ============================================================
 export async function handleLeaderboardCallback(
   env: Env,
   callbackQuery: TelegramCallbackQuery
@@ -243,21 +171,12 @@ export async function handleLeaderboardCallback(
     return;
   }
   const chatId = message.chat.id;
-  const tgUser = callbackQuery.from;
-  const user = await getOrCreateUser(env, tgUser);
+  const user = await getOrCreateUser(env, callbackQuery.from);
 
   await answerCallbackQuery(env, callbackQuery.id);
 
   if (action === "home") {
-    // منوی اصلی لیدربورد
-    const text = `🏆 <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
-    const replyMarkup = {
-      inline_keyboard: [
-        [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu` }],
-        [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu` }],
-      ],
-    };
-    await sendMessage(env, chatId, text, { reply_markup: replyMarkup });
+    await showLeaderboardHome(env, chatId);
     return;
   }
 

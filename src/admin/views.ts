@@ -15,9 +15,6 @@ export function renderAdminLayout(title: string, content: string, section: strin
       <a href="/admin/licenses" style="margin-right: 8px;${
         section === "licenses" ? " font-weight:bold;" : ""
       }">لایسنس‌ها</a>
-      <a href="/admin/analytics" style="margin-right: 8px;${
-        section === "analytics" ? " font-weight:bold;" : ""
-      }">📊 آمار</a>
       <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;

@@ -18,13 +18,6 @@ export interface UserRank {
   score: number;
 }
 
-// ============================================================
-// XP Leaderboard
-// بهینه‌سازی: به جای LEFT JOIN کل users با activity_log
-// (که همه کاربران حتی بدون XP را اسکن می‌کند)
-// ابتدا از activity_log شروع می‌کنیم و فقط کاربران فعال را JOIN می‌کنیم.
-// ============================================================
-
 export async function getLeaderboardXp(
   env: Env,
   period: LeaderboardPeriod,
@@ -74,7 +67,6 @@ export async function getLeaderboardXp(
       [TIME_MODIFIER, limit]
     );
   } else {
-    // لیدربورد "همیشگی" از xp_total کاربر می‌خواند (بسیار سریع - از ایندکس)
     rows = await queryAll(
       env,
       `
@@ -110,7 +102,6 @@ export async function getUserRankXp(
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
 
   if (period === "all") {
-    // لیدربورد همیشگی: سریع چون از ایندکس xp_total استفاده می‌کند
     const user = await queryOne<{ xp_total: number }>(
       env,
       `SELECT xp_total FROM users WHERE id = ? AND is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)`,
@@ -128,7 +119,6 @@ export async function getUserRankXp(
     return { rank: (result?.cnt ?? 0) + 1, score: user.xp_total };
   }
 
-  // بهینه‌سازی: ابتدا XP کاربر را حساب کن، بعد COUNT افرادی که بیشتر دارند
   const daysBack = period === "weekly" ? "-7 days" : "-30 days";
 
   const userScore = await queryOne<{ score: number }>(
@@ -140,7 +130,6 @@ export async function getUserRankXp(
   );
   if (!userScore) return null;
 
-  // شمارش افرادی که امتیاز بیشتری دارند
   const result = await queryOne<{ cnt: number }>(
     env,
     `
@@ -160,11 +149,6 @@ export async function getUserRankXp(
 
   return { rank: (result?.cnt ?? 0) + 1, score: userScore.score };
 }
-
-// ============================================================
-// Streak Leaderboard
-// (از قبل بهینه بود - فقط users table استفاده می‌شود)
-// ============================================================
 
 export async function getLeaderboardStreak(
   env: Env,

@@ -1,21 +1,10 @@
 import { Env } from "../types";
 import { queryOne, execute } from "./client";
 
-// ============================================================
-// وضعیت مکالمه ادمین (پایدار در D1 به جای Map درون حافظه)
-//
-// چرا؟ Cloudflare Workers بدون state است و Map های سراسری بین درخواست‌ها
-// از بین می‌روند. این باعث می‌شد فرآیندهای چندمرحله‌ای ادمین (مثل ساخت لایسنس)
-// نیمه‌کاره بمانند و ربات پیام بی‌ربط بدهد. اینجا وضعیت را در دیتابیس ذخیره می‌کنیم.
-// ============================================================
-
-// مدت اعتبار وضعیت (ساعت). بعد از این مدت، وضعیتِ رهاشده نادیده گرفته می‌شود
-// تا ادمین در یک فرآیند نیمه‌کاره قدیمی گیر نکند (رفتار مشابه پاک شدن حافظه قبلی).
 const STATE_TTL_HOURS = 6;
 
 export type AdminStateScope = "admin" | "quiz";
 
-// خواندن وضعیت. اگر وجود نداشته باشد یا منقضی شده باشد، null برمی‌گرداند.
 export async function getAdminState<T>(
   env: Env,
   telegramId: number,
@@ -36,7 +25,6 @@ export async function getAdminState<T>(
   }
 }
 
-// ذخیره/به‌روزرسانی وضعیت
 export async function setAdminState<T>(
   env: Env,
   telegramId: number,
@@ -53,7 +41,6 @@ export async function setAdminState<T>(
   );
 }
 
-// حذف وضعیت یک scope مشخص
 export async function deleteAdminState(
   env: Env,
   telegramId: number,
@@ -66,7 +53,6 @@ export async function deleteAdminState(
   );
 }
 
-// حذف کامل تمام وضعیت‌های یک ادمین (مثلاً هنگام ورود/خروج از پنل برای شروع تمیز)
 export async function clearAllAdminState(env: Env, telegramId: number): Promise<void> {
   await execute(
     env,
