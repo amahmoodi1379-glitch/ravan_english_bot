@@ -18,7 +18,7 @@ import {
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
-import { queryAll, queryOne, prepare } from "../../db/client";
+import { queryAll, queryOne, prepare, execute } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
 import { getPaginatedReadingKeyboard, getMainMenuKeyboard } from "../keyboards";

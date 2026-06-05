@@ -204,7 +204,7 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     const now = new Date().toISOString();
 
     // تلاش برای تایید کد و دریافت اطلاعات لایسنس
-    const licenseInfo = await queryOne(
+    const licenseInfo = await queryOne<{ expiration_days: number | null }>(
       env,
       `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
       [inputCode]
@@ -262,7 +262,7 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     const now = new Date().toISOString();
 
     // تلاش برای تایید کد و دریافت اطلاعات لایسنس
-    const licenseInfo = await queryOne(
+    const licenseInfo = await queryOne<{ expiration_days: number | null }>(
       env,
       `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
       [inputCode]

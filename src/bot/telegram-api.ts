@@ -165,7 +165,7 @@ export async function getBotUsername(env: Env): Promise<string | null> {
   try {
     const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getMe`;
     const resp = await fetch(url);
-    const data = await resp.json();
+    const data = await resp.json() as { ok?: boolean; result?: { username?: string } };
     if (data.ok && data.result?.username) {
       cachedBotUsername = data.result.username;
       return cachedBotUsername;
