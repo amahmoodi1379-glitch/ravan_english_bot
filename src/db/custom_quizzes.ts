@@ -30,6 +30,7 @@ export interface CustomQuizAttempt {
   id: number;
   quiz_id: number;
   user_id: number;
+  chat_id: number | null;
   started_at: string;
   finished_at: string | null;
   status: string;
@@ -291,11 +292,12 @@ export async function getLatestQuizLink(
 export async function createAttempt(
   env: Env,
   quizId: number,
-  userId: number
+  userId: number,
+  chatId?: number
 ): Promise<number> {
   const result = await env.DB.prepare(
-    `INSERT INTO custom_quiz_attempts (quiz_id, user_id, status) VALUES (?, ?, 'in_progress')`
-  ).bind(quizId, userId).run();
+    `INSERT INTO custom_quiz_attempts (quiz_id, user_id, chat_id, status) VALUES (?, ?, ?, 'in_progress')`
+  ).bind(quizId, userId, chatId ?? null).run();
   return (result.meta as any)?.last_row_id || 0;
 }
 
@@ -352,10 +354,27 @@ export async function getInProgressAttemptsCount(
 ): Promise<number> {
   const result = await queryOne(
     env,
-    `SELECT COUNT(*) as count FROM custom_quiz_attempts WHERE quiz_id = ? AND status = 'in_progress'`,
+    `SELECT COUNT(*) as count
+     FROM custom_quiz_attempts a
+     JOIN custom_quizzes q ON q.id = a.quiz_id
+     WHERE a.quiz_id = ?
+       AND a.status = 'in_progress'
+       AND datetime(a.started_at, '+' || q.total_time_minutes || ' minutes') > datetime('now')`,
     [quizId]
   ) as { count: number } | null;
   return result?.count || 0;
+}
+
+export async function getFinishedAttemptsWithChatId(
+  env: Env,
+  quizId: number
+): Promise<{ id: number; user_id: number; chat_id: number }[]> {
+  return queryAll<{ id: number; user_id: number; chat_id: number }>(
+    env,
+    `SELECT id, user_id, chat_id FROM custom_quiz_attempts
+     WHERE quiz_id = ? AND status IN ('finished', 'auto_ended') AND chat_id IS NOT NULL`,
+    [quizId]
+  );
 }
 
 export async function saveAnswer(
