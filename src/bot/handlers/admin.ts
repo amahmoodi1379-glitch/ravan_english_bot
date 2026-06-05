@@ -39,10 +39,17 @@ import {
   unbanUser,
   getApprovedUsers
 } from "../../db/admin";
+import {
+  getAdminState,
+  setAdminState,
+  deleteAdminState,
+  clearAllAdminState
+} from "../../db/admin_state";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // State machine
+// نکته: این وضعیت در D1 ذخیره می‌شود (نه در حافظه) چون Worker بدون state است.
 interface AdminState {
   action:
     | 'menu'
@@ -62,8 +69,6 @@ interface AdminState {
   };
   adminAction?: 'add' | 'remove';
 }
-
-const adminStates = new Map<number, AdminState>();
 
 export async function handleAdminCommand(env: Env, update: TelegramUpdate): Promise<boolean> {
   const message = update.message;
@@ -88,7 +93,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
   const quizHandled = await handleQuizAdminMessage(env, update);
   if (quizHandled) return true;
 
-  const state = adminStates.get(telegramId);
+  const state = await getAdminState<AdminState>(env, telegramId, 'admin');
 
   // If no state, admin is not in the panel (or exited) -> only /admin is handled
   if (!state) return false;
@@ -99,12 +104,12 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 
     case 'await_license_code':
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        adminStates.set(telegramId, { action: 'menu' });
+        await setAdminState(env, telegramId, 'admin', { action: 'menu' });
         await showAdminMenu(env, chatId);
         return true;
       }
       if (text && text.trim().length > 0) {
-        adminStates.set(telegramId, {
+        await setAdminState(env, telegramId, 'admin', {
           action: 'await_license_days',
           licenseCode: text.trim()
         });
@@ -118,7 +123,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 
     case 'await_license_days': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        adminStates.set(telegramId, { action: 'menu' });
+        await setAdminState(env, telegramId, 'admin', { action: 'menu' });
         await showAdminMenu(env, chatId);
         return true;
       }
@@ -150,13 +155,13 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
           { parse_mode: "HTML" }
         );
       }
-      adminStates.set(telegramId, { action: 'menu' });
+      await setAdminState(env, telegramId, 'admin', { action: 'menu' });
       return true;
     }
 
     case 'await_announcement_content': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        adminStates.set(telegramId, { action: 'menu' });
+        await setAdminState(env, telegramId, 'admin', { action: 'menu' });
         await showAdminMenu(env, chatId);
         return true;
       }
@@ -202,7 +207,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
           caption = msg.text;
         }
 
-        adminStates.set(telegramId, {
+        await setAdminState(env, telegramId, 'admin', {
           action: 'await_announcement_confirm',
           announcement: ann
         });
@@ -233,7 +238,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         return true;
       }
       if (text === ADMIN_SUBMENU_BUTTON_CANCEL) {
-        adminStates.set(telegramId, { action: 'menu' });
+        await setAdminState(env, telegramId, 'admin', { action: 'menu' });
         await showAdminMenu(env, chatId);
         return true;
       }
@@ -242,7 +247,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 
     case 'await_user_search': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        adminStates.set(telegramId, { action: 'menu' });
+        await setAdminState(env, telegramId, 'admin', { action: 'menu' });
         await showAdminMenu(env, chatId);
         return true;
       }
@@ -289,7 +294,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         `📈 <b>وضعیت:</b> ${statusText}`;
 
       const isBanned = !!user.is_banned;
-      adminStates.set(telegramId, {
+      await setAdminState(env, telegramId, 'admin', {
         action: 'user_actions',
         targetUserId: user.id,
         targetUserTelegramId: user.telegram_id
@@ -317,7 +322,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
           ok ? "✅ مسدودیت کاربر رفع شد." : "❌ خطا در رفع مسدودیت."
         );
       } else if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        adminStates.set(telegramId, { action: 'menu' });
+        await setAdminState(env, telegramId, 'admin', { action: 'menu' });
         await showAdminMenu(env, chatId);
         return true;
       } else {
@@ -326,7 +331,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
       }
 
       // After ban/unban, go back to user search
-      adminStates.set(telegramId, { action: 'await_user_search' });
+      await setAdminState(env, telegramId, 'admin', { action: 'await_user_search' });
       await sendMessage(env, chatId,
         `👥 جستجوی کاربر بعدی:\nکد لایسنس، آیدی عددی یا یوزرنیم را ارسال کنید.`
       );
@@ -363,7 +368,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
       }
 
       // Return to admin management menu
-      adminStates.set(telegramId, { action: 'menu' });
+      await setAdminState(env, telegramId, 'admin', { action: 'menu' });
       await showAdminMgmtMenu(env, chatId);
       return true;
     }
@@ -373,7 +378,9 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 }
 
 async function enterAdminPanel(env: Env, chatId: number, admin: any): Promise<void> {
-  adminStates.set(admin.telegram_id, { action: 'menu' });
+  // پاکسازی هر وضعیت قبلی (admin و quiz) برای شروع تمیز
+  await clearAllAdminState(env, admin.telegram_id);
+  await setAdminState(env, admin.telegram_id, 'admin', { action: 'menu' });
   await sendMessage(env, chatId, "🛠️ در حال ورود به پنل مدیریت...", {
     reply_markup: { remove_keyboard: true }
   });
@@ -396,7 +403,7 @@ async function handleMenuSelection(
 ): Promise<boolean> {
   switch (text) {
     case ADMIN_MENU_BUTTON_LICENSE:
-      adminStates.set(telegramId, { action: 'await_license_code' });
+      await setAdminState(env, telegramId, 'admin', { action: 'await_license_code' });
       await sendMessage(env, chatId,
         `🎫 <b>ایجاد لایسنس</b>\n\nکد لایسنس را وارد کنید:`,
         { parse_mode: "HTML", reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }
@@ -404,7 +411,7 @@ async function handleMenuSelection(
       return true;
 
     case ADMIN_MENU_BUTTON_ANNOUNCE:
-      adminStates.set(telegramId, { action: 'await_announcement_content' });
+      await setAdminState(env, telegramId, 'admin', { action: 'await_announcement_content' });
       await sendMessage(env, chatId,
         `📢 <b>اطلاع‌رسانی</b>\n\nمتن یا رسانه (عکس/فیلم/صوت/فایل) اطلاعیه را ارسال کنید.`,
         { parse_mode: "HTML", reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }
@@ -412,7 +419,7 @@ async function handleMenuSelection(
       return true;
 
     case ADMIN_MENU_BUTTON_USER_MGMT:
-      adminStates.set(telegramId, { action: 'await_user_search' });
+      await setAdminState(env, telegramId, 'admin', { action: 'await_user_search' });
       await sendMessage(env, chatId,
         `👥 <b>مدیریت کاربران</b>\n\nکد لایسنس، آیدی عددی یا یوزرنیم کاربر را ارسال کنید:`,
         { parse_mode: "HTML", reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }
@@ -428,31 +435,31 @@ async function handleMenuSelection(
       return true;
 
     case ADMIN_SUBMENU_BUTTON_NEXT_LICENSE:
-      adminStates.set(telegramId, { action: 'await_license_code' });
+      await setAdminState(env, telegramId, 'admin', { action: 'await_license_code' });
       await sendMessage(env, chatId, `🎫 کد لایسنس بعدی را وارد کنید:`);
       return true;
 
     case ADMIN_SUBMENU_BUTTON_ADD_ADMIN:
-      adminStates.set(telegramId, { action: 'await_admin_id', adminAction: 'add' });
+      await setAdminState(env, telegramId, 'admin', { action: 'await_admin_id', adminAction: 'add' });
       await sendMessage(env, chatId, `➕ آیدی عددی تلگرام ادمین جدید:`, {
         reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
       });
       return true;
 
     case ADMIN_SUBMENU_BUTTON_REMOVE_ADMIN:
-      adminStates.set(telegramId, { action: 'await_admin_id', adminAction: 'remove' });
+      await setAdminState(env, telegramId, 'admin', { action: 'await_admin_id', adminAction: 'remove' });
       await sendMessage(env, chatId, `➖ آیدی عددی ادمین برای حذف:`, {
         reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
       });
       return true;
 
     case ADMIN_SUBMENU_BUTTON_BACK:
-      adminStates.set(telegramId, { action: 'menu' });
+      await setAdminState(env, telegramId, 'admin', { action: 'menu' });
       await showAdminMenu(env, chatId);
       return true;
 
     case ADMIN_MENU_BUTTON_EXIT:
-      adminStates.delete(telegramId);
+      await clearAllAdminState(env, telegramId);
       await sendMessage(env, chatId, "✅ از پنل ادمین خارج شدی. به منوی اصلی برگشتی 👇", {
         reply_markup: getMainMenuKeyboard()
       });
@@ -497,7 +504,7 @@ async function sendAnnouncement(
   const total = users.length;
 
   if (total === 0) {
-    adminStates.set(adminTelegramId, { action: 'menu' });
+    await setAdminState(env, adminTelegramId, 'admin', { action: 'menu' });
     await sendMessage(env, adminChatId, "⚠️ هیچ کاربر تاییدشده‌ای وجود ندارد.", {
       reply_markup: getAdminMenuKeyboard()
     });
@@ -554,7 +561,7 @@ async function sendAnnouncement(
     finalMsg += `\n\n<b>نمونه خطاها:</b>\n${errors.join('\n')}`;
   }
 
-  adminStates.set(adminTelegramId, { action: 'menu' });
+  await setAdminState(env, adminTelegramId, 'admin', { action: 'menu' });
   await sendMessage(env, adminChatId, finalMsg, {
     parse_mode: "HTML",
     reply_markup: getAdminMenuKeyboard()

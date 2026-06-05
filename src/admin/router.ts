@@ -43,7 +43,7 @@ type QuestionFormPayload = {
   source: "manual";
 };
 
-function parseAndValidateQuestionForm(form: FormData): { error?: string; data?: QuestionFormPayload } {
+function parseAndValidateQuestionForm(form: URLSearchParams): { error?: string; data?: QuestionFormPayload } {
   const questionText = (form.get("question_text") || "").toString().trim();
   const optionA = (form.get("option_a") || "").toString().trim();
   const optionB = (form.get("option_b") || "").toString().trim();

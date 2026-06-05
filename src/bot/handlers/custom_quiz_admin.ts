@@ -11,6 +11,7 @@ import {
   getQuizQuestions, getQuizQuestionById, getQuestionCount, createQuizLink,
   getParticipantCount, getLeaderboardWithNegative, getLatestQuizLink,
 } from "../../db/custom_quizzes";
+import { getAdminState, setAdminState, deleteAdminState } from "../../db/admin_state";
 
 interface QAState {
   action: string;
@@ -21,7 +22,8 @@ interface QAState {
   correctOption?: string;
   fromAction?: string;
 }
-const qaStates = new Map<number, QAState>();
+// نکته: وضعیت آزمون‌ساز در D1 ذخیره می‌شود (scope = 'quiz') نه در حافظه،
+// چون Cloudflare Workers بدون state است و Map بین درخواست‌ها پاک می‌شود.
 
 function genToken(): string {
   const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -37,7 +39,7 @@ function normalizeDigits(text: string): string {
 }
 
 export async function enterQuizAdminMenu(env: Env, chatId: number, tgId: number): Promise<void> {
-  qaStates.set(tgId, { action: 'quiz_menu' });
+  await setAdminState(env, tgId, 'quiz', { action: 'quiz_menu' });
   await sendMessage(env, chatId, `📝 <b>مدیریت آزمون‌ها</b>\n\nیکی از گزینه‌ها رو انتخاب کن:`, {
     parse_mode: "HTML",
     reply_markup: getAdminSubMenuKeyboard([
@@ -52,29 +54,29 @@ export async function enterQuizAdminMenu(env: Env, chatId: number, tgId: number)
 export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): Promise<boolean> {
   const msg = update.message; if (!msg || !msg.from) return false;
   const chatId = msg.chat.id; const tgId = msg.from.id; const text = msg.text || "";
-  const s = qaStates.get(tgId); if (!s) return false;
+  const s = await getAdminState<QAState>(env, tgId, 'quiz'); if (!s) return false;
 
   switch (s.action) {
     case 'quiz_menu':
       if (text === "➕ ساخت آزمون جدید") {
-        qaStates.set(tgId, { action: 'quiz_await_title' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_title' });
         await sendMessage(env, chatId, "📝 عنوان آزمون را وارد کن:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
       if (text === "📋 لیست آزمون‌های آماده") {
-        qaStates.set(tgId, { action: 'quiz_list_ready' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_list_ready' });
         await showReadyQuizzes(env, chatId, tgId); return true;
       }
       if (text === "📊 نتایج آزمون‌ها") {
-        qaStates.set(tgId, { action: 'quiz_results_list' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_results_list' });
         await showPublishedQuizzes(env, chatId, tgId); return true;
       }
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.delete(tgId); return false; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await deleteAdminState(env, tgId, 'quiz'); return false; }
       await sendMessage(env, chatId, "⚠️ لطفاً یکی از گزینه‌ها را انتخاب کن."); return true;
 
     case 'quiz_await_title': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.delete(tgId);
+        await deleteAdminState(env, tgId, 'quiz');
         return false;
       }
       if (!text.trim()) { await sendMessage(env, chatId, "⚠️ عنوان آزمون را وارد کن:"); return true; }
@@ -86,7 +88,7 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
       } else {
         qid = await createQuiz(env, adm.id, text.trim(), 30);
       }
-      qaStates.set(tgId, { action: 'quiz_await_time', quizId: qid });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_time', quizId: qid });
       await sendMessage(env, chatId, `✅ عنوان ثبت شد.\n⏱️ تایم کلی آزمون (دقیقه):`, {
         reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
       });
@@ -95,14 +97,14 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_time': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_await_title', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_title', quizId: s.quizId });
         await sendMessage(env, chatId, "📝 عنوان آزمون را وارد کن:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
       const m = parseInt(normalizeDigits(text.trim()));
       if (isNaN(m) || m < 1 || m > 300) { await sendMessage(env, chatId, "⚠️ لطفاً یک عدد بین ۱ تا ۳۰۰ وارد کن:"); return true; }
       await updateQuizTime(env, s.quizId!, m);
-      qaStates.set(tgId, { action: 'quiz_await_question_text', quizId: s.quizId });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_question_text', quizId: s.quizId });
       await sendMessage(env, chatId, `⏱️ ${m} دقیقه ثبت شد.\n\n❓ متن سوال ۱ را وارد کن:`, {
         reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
       });
@@ -111,12 +113,12 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_question_text':
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_await_time', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_time', quizId: s.quizId });
         await sendMessage(env, chatId, "⏱️ تایم کلی آزمون (دقیقه):", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
       if (!text.trim()) { await sendMessage(env, chatId, "⚠️ متن سوال را وارد کن:"); return true; }
-      qaStates.set(tgId, { action: 'quiz_await_options', quizId: s.quizId, questionText: text.trim() });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_options', quizId: s.quizId, questionText: text.trim() });
       await sendMessage(env, chatId, `گزینه‌ها را در ۴ خط وارد کن:\nA) ...\nB) ...\nC) ...\nD) ...`, {
         reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
       });
@@ -124,14 +126,14 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_options': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_await_question_text', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_question_text', quizId: s.quizId });
         await sendMessage(env, chatId, "❓ متن سوال را وارد کن:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
       const lines = text.split('\n').map(l => l.trim()).filter(l => l);
       if (lines.length < 4) { await sendMessage(env, chatId, "⚠️ حداقل ۴ خط لازم است:"); return true; }
       const opts = lines.slice(0, 4).map(l => l.replace(/^[A-Da-d][\.\)\-]\s*/, '').trim());
-      qaStates.set(tgId, { action: 'quiz_await_correct', quizId: s.quizId, questionText: s.questionText, options: opts });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_correct', quizId: s.quizId, questionText: s.questionText, options: opts });
       await sendMessage(env, chatId, `1) ${opts[0]}\n2) ${opts[1]}\n3) ${opts[2]}\n4) ${opts[3]}\n\nشماره گزینه درست را وارد کن (۱-۴):`, {
         reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
       });
@@ -140,13 +142,13 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_correct': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_await_options', quizId: s.quizId, questionText: s.questionText });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_options', quizId: s.quizId, questionText: s.questionText });
         await sendMessage(env, chatId, "گزینه‌ها را وارد کن:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
       const c = normalizeDigits(text.trim());
       if (!['1','2','3','4'].includes(c)) { await sendMessage(env, chatId, "⚠️ عدد ۱ تا ۴ وارد کن:"); return true; }
-      qaStates.set(tgId, { action: 'quiz_await_explanation', quizId: s.quizId, questionText: s.questionText, options: s.options, correctOption: c });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_explanation', quizId: s.quizId, questionText: s.questionText, options: s.options, correctOption: c });
       await sendMessage(env, chatId, `✅ گزینه ${c} به عنوان پاسخ درست ثبت شد.\n\n📖 پاسخنامه تشریحی را وارد کن (اختیاری):`, {
         reply_markup: getAdminSubMenuKeyboard([["⏭️ رد شدن"], [ADMIN_SUBMENU_BUTTON_BACK]])
       });
@@ -155,14 +157,14 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_explanation': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_await_correct', quizId: s.quizId, questionText: s.questionText, options: s.options });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_correct', quizId: s.quizId, questionText: s.questionText, options: s.options });
         await sendMessage(env, chatId, "شماره گزینه درست (۱-۴):", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
       const exp = text === "⏭️ رد شدن" ? undefined : text.trim() || undefined;
       const cnt = await getQuestionCount(env, s.quizId!);
       await addQuizQuestion(env, s.quizId!, cnt + 1, s.questionText!, s.options![0], s.options![1], s.options![2], s.options![3], s.correctOption!, exp);
-      qaStates.set(tgId, { action: 'quiz_ask_next_or_finish', quizId: s.quizId });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_ask_next_or_finish', quizId: s.quizId });
       await sendMessage(env, chatId, `✅ سوال ${cnt + 1} ثبت شد.\n\nسوال بعدی اضافه می‌کنی یا آزمون آماده است؟`, {
         reply_markup: getAdminSubMenuKeyboard([["➕ سوال بعدی"], ["✅ تموم شد"]])
       });
@@ -171,7 +173,7 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_ask_next_or_finish':
       if (text === "➕ سوال بعدی") {
-        qaStates.set(tgId, { action: 'quiz_await_question_text', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_question_text', quizId: s.quizId });
         const c = await getQuestionCount(env, s.quizId!);
         await sendMessage(env, chatId, `❓ متن سوال ${c + 1} را وارد کن:`, { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
@@ -180,16 +182,16 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
         const cnt = await getQuestionCount(env, s.quizId!);
         if (cnt === 0) { await sendMessage(env, chatId, "⚠️ آزمون باید حداقل ۱ سوال داشته باشد."); return true; }
         await setQuizStatus(env, s.quizId!, 'active');
-        qaStates.set(tgId, { action: 'quiz_list_ready' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_list_ready' });
         await showReadyQuizzes(env, chatId, tgId);
         return true;
       }
       await sendMessage(env, chatId, "⚠️ یکی از دکمه‌ها را انتخاب کن."); return true;
 
     case 'quiz_list_ready': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_menu' }); await enterQuizAdminMenu(env, chatId, tgId); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_menu' }); await enterQuizAdminMenu(env, chatId, tgId); return true; }
       if (text === "➕ ساخت آزمون جدید") {
-        qaStates.set(tgId, { action: 'quiz_await_title' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_title' });
         await sendMessage(env, chatId, "📝 عنوان آزمون را وارد کن:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
@@ -197,14 +199,14 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
       const quizzes = await getActiveQuizzesByAdmin(env, admin2.id);
       const idx = parseInt(normalizeDigits(text.trim())) - 1;
       if (isNaN(idx) || idx < 0 || idx >= quizzes.length) { await sendMessage(env, chatId, "⚠️ شماره نامعتبر است. یک عدد از لیست وارد کن."); return true; }
-      qaStates.set(tgId, { action: 'quiz_view_detail', quizId: quizzes[idx].id });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_view_detail', quizId: quizzes[idx].id });
       await showQuizDetail(env, chatId, quizzes[idx].id);
       return true;
     }
 
     case 'quiz_view_detail': {
       if (text === "🔗 دریافت لینک") {
-        qaStates.set(tgId, { action: 'quiz_await_link_confirm', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_link_confirm', quizId: s.quizId });
         await sendMessage(env, chatId, "⚠️ بعد از گرفتن لینک، آزمون از لیست آماده حذف می‌شود و به منتشرشده منتقل می‌شود.\nادامه می‌دهید؟", {
           reply_markup: getAdminSubMenuKeyboard([["✅ بله، ادامه"], [ADMIN_SUBMENU_BUTTON_BACK]])
         });
@@ -212,13 +214,13 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
       }
       if (text === "📋 مشاهده سوالات") { await showQuestionsInline(env, chatId, s.quizId!); return true; }
       if (text === "🗑 حذف آزمون") {
-        qaStates.set(tgId, { action: 'quiz_delete_confirm', quizId: s.quizId, fromAction: 'quiz_view_detail' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_delete_confirm', quizId: s.quizId, fromAction: 'quiz_view_detail' });
         await sendMessage(env, chatId, "⚠️ آیا مطمئنی می‌خوای این آزمون را حذف کنی؟\nاین عمل برگشت‌پذیر نیست.", {
           reply_markup: getAdminSubMenuKeyboard([["🗑 بله، حذف کن"], [ADMIN_SUBMENU_BUTTON_BACK]])
         });
         return true;
       }
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_list_ready' }); await showReadyQuizzes(env, chatId, tgId); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_list_ready' }); await showReadyQuizzes(env, chatId, tgId); return true; }
       await sendMessage(env, chatId, "⚠️ یکی از دکمه‌ها را انتخاب کن."); return true;
     }
 
@@ -227,20 +229,20 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
         await deleteQuiz(env, s.quizId!);
         await sendMessage(env, chatId, "✅ آزمون با موفقیت حذف شد.");
         if (s.fromAction === 'quiz_results_view') {
-          qaStates.set(tgId, { action: 'quiz_results_list' });
+          await setAdminState(env, tgId, 'quiz', { action: 'quiz_results_list' });
           await showPublishedQuizzes(env, chatId, tgId);
         } else {
-          qaStates.set(tgId, { action: 'quiz_list_ready' });
+          await setAdminState(env, tgId, 'quiz', { action: 'quiz_list_ready' });
           await showReadyQuizzes(env, chatId, tgId);
         }
         return true;
       }
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
         if (s.fromAction === 'quiz_results_view') {
-          qaStates.set(tgId, { action: 'quiz_results_view', quizId: s.quizId });
+          await setAdminState(env, tgId, 'quiz', { action: 'quiz_results_view', quizId: s.quizId });
           await showQuizLeaderboardAdmin(env, chatId, s.quizId!);
         } else {
-          qaStates.set(tgId, { action: 'quiz_view_detail', quizId: s.quizId });
+          await setAdminState(env, tgId, 'quiz', { action: 'quiz_view_detail', quizId: s.quizId });
           await showQuizDetail(env, chatId, s.quizId!);
         }
         return true;
@@ -249,9 +251,9 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
     }
 
     case 'quiz_await_link_confirm': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
       if (text === "✅ بله، ادامه") {
-        qaStates.set(tgId, { action: 'quiz_await_link_minutes', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_link_minutes', quizId: s.quizId });
         await sendMessage(env, chatId, "⏳ لینک چند دقیقه معتبر باشه؟", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) });
         return true;
       }
@@ -259,7 +261,7 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
     }
 
     case 'quiz_await_link_minutes': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
       const lm = parseInt(normalizeDigits(text.trim()));
       if (isNaN(lm) || lm < 1 || lm > 10080) { await sendMessage(env, chatId, "⚠️ عدد ۱ تا ۱۰۰۸۰ وارد کن:"); return true; }
       const token = genToken();
@@ -277,19 +279,19 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
     }
 
     case 'quiz_results_list': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_menu' }); await enterQuizAdminMenu(env, chatId, tgId); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_menu' }); await enterQuizAdminMenu(env, chatId, tgId); return true; }
       const admin3 = await getAdminByTelegramId(env, tgId); if (!admin3) return false;
       const pubQuizzes = await getPublishedQuizzesByAdmin(env, admin3.id);
       const pidx = parseInt(normalizeDigits(text.trim())) - 1;
       if (isNaN(pidx) || pidx < 0 || pidx >= pubQuizzes.length) { await sendMessage(env, chatId, "⚠️ شماره نامعتبر است."); return true; }
-      qaStates.set(tgId, { action: 'quiz_results_view', quizId: pubQuizzes[pidx].id });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_results_view', quizId: pubQuizzes[pidx].id });
       await showQuizLeaderboardAdmin(env, chatId, pubQuizzes[pidx].id);
       return true;
     }
 
     case 'quiz_results_view': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_results_list' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_results_list' });
         await showPublishedQuizzes(env, chatId, tgId);
         return true;
       }
@@ -313,11 +315,11 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
             reply_markup: getAdminSubMenuKeyboard([["🔗 لینک جدید"], [ADMIN_SUBMENU_BUTTON_BACK]])
           });
         }
-        qaStates.set(tgId, { action: 'quiz_show_link', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_show_link', quizId: s.quizId });
         return true;
       }
       if (text === "🗑 حذف آزمون") {
-        qaStates.set(tgId, { action: 'quiz_delete_confirm', quizId: s.quizId, fromAction: 'quiz_results_view' });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_delete_confirm', quizId: s.quizId, fromAction: 'quiz_results_view' });
         await sendMessage(env, chatId, "⚠️ آیا مطمئنی می‌خوای این آزمون را حذف کنی؟\nاین عمل برگشت‌پذیر نیست.", {
           reply_markup: getAdminSubMenuKeyboard([["🗑 بله، حذف کن"], [ADMIN_SUBMENU_BUTTON_BACK]])
         });
@@ -328,12 +330,12 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_show_link': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_results_view', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_results_view', quizId: s.quizId });
         await showQuizLeaderboardAdmin(env, chatId, s.quizId!);
         return true;
       }
       if (text === "🔗 لینک جدید") {
-        qaStates.set(tgId, { action: 'quiz_await_relink_minutes', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_relink_minutes', quizId: s.quizId });
         await sendMessage(env, chatId, "⏳ لینک جدید چند دقیقه معتبر باشه؟", {
           reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
         });
@@ -344,7 +346,7 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
 
     case 'quiz_await_relink_minutes': {
       if (text === ADMIN_SUBMENU_BUTTON_BACK) {
-        qaStates.set(tgId, { action: 'quiz_show_link', quizId: s.quizId });
+        await setAdminState(env, tgId, 'quiz', { action: 'quiz_show_link', quizId: s.quizId });
         const linkRow2 = await getLatestQuizLink(env, s.quizId!);
         const botUsername2 = await getBotUsername(env);
         const username2 = botUsername2 || 'your_bot';
@@ -377,59 +379,59 @@ export async function handleQuizAdminMessage(env: Env, update: TelegramUpdate): 
         `✅ <b>لینک جدید آزمون:</b>\n<code>https://t.me/${username3}?start=quiz_${rtoken}</code>\n\n⏳ اعتبار: ${rlm} دقیقه`,
         { parse_mode: "HTML" }
       );
-      qaStates.set(tgId, { action: 'quiz_results_view', quizId: s.quizId });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_results_view', quizId: s.quizId });
       await showQuizLeaderboardAdmin(env, chatId, s.quizId!);
       return true;
     }
 
     case 'quiz_edit_question': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
-      if (text === "✏️ متن سوال") { qaStates.set(tgId, { action: 'quiz_await_edit_question_text', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "❓ متن جدید سوال:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
-      if (text === "✏️ گزینه‌ها") { qaStates.set(tgId, { action: 'quiz_await_edit_options', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "گزینه‌های جدید در ۴ خط:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
-      if (text === "✏️ گزینه درست") { qaStates.set(tgId, { action: 'quiz_await_edit_correct', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "شماره درست (۱-۴):", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
-      if (text === "✏️ پاسخنامه") { qaStates.set(tgId, { action: 'quiz_await_edit_explanation', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "📖 پاسخنامه جدید:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_view_detail', quizId: s.quizId }); await showQuizDetail(env, chatId, s.quizId!); return true; }
+      if (text === "✏️ متن سوال") { await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_edit_question_text', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "❓ متن جدید سوال:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
+      if (text === "✏️ گزینه‌ها") { await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_edit_options', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "گزینه‌های جدید در ۴ خط:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
+      if (text === "✏️ گزینه درست") { await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_edit_correct', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "شماره درست (۱-۴):", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
+      if (text === "✏️ پاسخنامه") { await setAdminState(env, tgId, 'quiz', { action: 'quiz_await_edit_explanation', quizId: s.quizId, questionId: s.questionId }); await sendMessage(env, chatId, "📖 پاسخنامه جدید:", { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }); return true; }
       await sendMessage(env, chatId, "⚠️ یکی از دکمه‌ها را انتخاب کن."); return true;
     }
 
     case 'quiz_await_edit_question_text': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
       if (!text.trim()) { await sendMessage(env, chatId, "⚠️ متن سوال را وارد کن:"); return true; }
       const qEdit = await getQuizQuestionById(env, s.questionId!); if (!qEdit) return true;
       await updateQuizQuestion(env, s.questionId!, text.trim(), qEdit.option_a, qEdit.option_b, qEdit.option_c, qEdit.option_d, qEdit.correct_option, qEdit.explanation || undefined);
-      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
       await sendMessage(env, chatId, "✅ متن سوال ویرایش شد.");
       await showEditQuestionOptions(env, chatId, s.questionId!); return true;
     }
 
     case 'quiz_await_edit_options': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
       const editLines = text.split('\n').map(l => l.trim()).filter(l => l);
       if (editLines.length < 4) { await sendMessage(env, chatId, "⚠️ حداقل ۴ خط:"); return true; }
       const editOpts = editLines.slice(0, 4).map(l => l.replace(/^[A-Da-d][\.\)\-]\s*/, '').trim());
       const qEditOpts = await getQuizQuestionById(env, s.questionId!); if (!qEditOpts) return true;
       await updateQuizQuestion(env, s.questionId!, qEditOpts.question_text, editOpts[0], editOpts[1], editOpts[2], editOpts[3], qEditOpts.correct_option, qEditOpts.explanation || undefined);
-      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
       await sendMessage(env, chatId, "✅ گزینه‌ها ویرایش شدند.");
       await showEditQuestionOptions(env, chatId, s.questionId!); return true;
     }
 
     case 'quiz_await_edit_correct': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
       const editCorrect = normalizeDigits(text.trim());
       if (!['1','2','3','4'].includes(editCorrect)) { await sendMessage(env, chatId, "⚠️ ۱ تا ۴:"); return true; }
       const qEditCorrect = await getQuizQuestionById(env, s.questionId!); if (!qEditCorrect) return true;
       await updateQuizQuestion(env, s.questionId!, qEditCorrect.question_text, qEditCorrect.option_a, qEditCorrect.option_b, qEditCorrect.option_c, qEditCorrect.option_d, editCorrect, qEditCorrect.explanation || undefined);
-      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
       await sendMessage(env, chatId, `✅ گزینه ${editCorrect} به عنوان درست ثبت شد.`);
       await showEditQuestionOptions(env, chatId, s.questionId!); return true;
     }
 
     case 'quiz_await_edit_explanation': {
-      if (text === ADMIN_SUBMENU_BUTTON_BACK) { qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
+      if (text === ADMIN_SUBMENU_BUTTON_BACK) { await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId }); await showEditQuestionOptions(env, chatId, s.questionId!); return true; }
       const editExp = text.trim() || undefined;
       const qEditExp = await getQuizQuestionById(env, s.questionId!); if (!qEditExp) return true;
       await updateQuizQuestion(env, s.questionId!, qEditExp.question_text, qEditExp.option_a, qEditExp.option_b, qEditExp.option_c, qEditExp.option_d, qEditExp.correct_option, editExp);
-      qaStates.set(tgId, { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
+      await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: s.quizId, questionId: s.questionId });
       await sendMessage(env, chatId, "✅ پاسخنامه تشریحی ویرایش شد.");
       await showEditQuestionOptions(env, chatId, s.questionId!); return true;
     }
@@ -560,7 +562,7 @@ export async function handleQuizAdminCallback(env: Env, callbackQuery: any): Pro
   } else if (action === "admin_edit_q" && id) {
     const tgId = callbackQuery.from.id;
     const q = await getQuizQuestionById(env, id);
-    qaStates.set(tgId, { action: 'quiz_edit_question', quizId: q?.quiz_id || id, questionId: id });
+    await setAdminState(env, tgId, 'quiz', { action: 'quiz_edit_question', quizId: q?.quiz_id || id, questionId: id });
     await showEditQuestionOptions(env, chatId, id);
   }
 }
@@ -578,9 +580,4 @@ async function showEditQuestionOptions(env: Env, chatId: number, questionId: num
       ])
     }
   );
-}
-
-export async function isInQuizAdminState(tgId: number): Promise<boolean> {
-  const s = qaStates.get(tgId);
-  return !!s;
 }
