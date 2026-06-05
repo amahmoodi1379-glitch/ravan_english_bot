@@ -6,7 +6,6 @@ export async function queryOne<T>(
   sql: string,
   params: any[] = []
 ): Promise<T | null> {
-  // await enableForeignKeys(env); // اگر سرعت خیلی مهم نیست این خط را فعال کن
   const stmt = env.DB.prepare(sql);
   const res = await stmt.bind(...params).first();
   if (!res) return null;
@@ -29,15 +28,13 @@ export async function execute(
   sql: string,
   params: any[] = []
 ): Promise<any> {
-  // اصلاح باگ: استفاده از batch برای اینکه مطمئن شویم Foreign Key ها حتماً اعمال می‌شوند
-  // ما دستور فعال‌سازی و دستور اصلی را در یک "بسته" می‌فرستیم
-  const batchResult = await env.DB.batch([
-    env.DB.prepare("PRAGMA foreign_keys = ON;"),
-    env.DB.prepare(sql).bind(...params)
-  ]);
-  
-  // خروجی اول مربوط به تنظیمات است، خروجی دوم (ایندکس 1) نتیجه دستور اصلی ماست
-  return batchResult[1];
+  // بهینه‌سازی: حذف PRAGMA foreign_keys از batch
+  // دلیل: در D1، Foreign Key ها در سطح اسکیما تعریف شده‌اند و خود D1 آنها را اعمال می‌کند.
+  // PRAGMA foreign_keys در D1 به‌صورت خودکار فعال است و نیاز به تنظیم دستی ندارد.
+  // این تغییر باعث کاهش ۵۰٪ تعداد write ها می‌شود.
+  const stmt = env.DB.prepare(sql).bind(...params);
+  const res = await stmt.run();
+  return res;
 }
 
 export function prepare(
