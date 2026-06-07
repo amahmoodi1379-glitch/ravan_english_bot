@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { queryOne, execute, prepare } from "./client";
-import { sm2 } from "../utils/sm2";
+import { schedule, Rating, CardState, FsrsCard } from "../utils/fsrs";
 import { TIME_ZONE_OFFSET } from "../config/constants";
 
 export interface DbWord {
@@ -26,67 +26,110 @@ export interface UserWordState {
   ignored: number;
   correct_streak: number;
   question_stage: number;
+  // FSRS fields
+  stability: number;
+  difficulty: number;
+  card_state: number;
+  lapses: number;
+  reps: number;
 }
 
-export async function pickNextWordForUser(env: Env, userId: number): Promise<DbWord | null> {
-  const wordRow = await queryOne<DbWord>(
+export interface ReviewStats {
+  correct: number;
+  incorrect: number;
+  total: number;
+}
+
+/**
+ * Count words due for review today (FSRS scheduling).
+ */
+export async function countDueWords(env: Env, userId: number): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `
+    SELECT COUNT(*) as cnt
+    FROM user_words_sm2 s
+    JOIN words w ON w.id = s.word_id
+    WHERE s.user_id = ?
+      AND s.ignored = 0
+      AND w.is_active = 1
+      AND s.card_state != 0
+      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+    `,
+    [userId]
+  );
+  return row?.cnt ?? 0;
+}
+
+/**
+ * Count new words available (never seen by user).
+ */
+export async function countNewWords(env: Env, userId: number): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `
+    SELECT COUNT(*) as cnt
+    FROM words w
+    WHERE w.is_active = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM user_words_sm2 s
+        WHERE s.user_id = ? AND s.word_id = w.id
+      )
+    `,
+    [userId]
+  );
+  return row?.cnt ?? 0;
+}
+
+/**
+ * Pick the next word due for review (only words the user has already seen).
+ * Priority: overdue cards first (sorted by most overdue).
+ */
+export async function pickNextReviewWord(env: Env, userId: number): Promise<DbWord | null> {
+  const row = await queryOne<DbWord>(
     env,
     `
     SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
-    FROM (
-      SELECT wid, priority FROM (
-        SELECT s.word_id as wid, 1 as priority
-        FROM user_words_sm2 s
-        JOIN words w2 ON w2.id = s.word_id
-        WHERE s.user_id = ?
-          AND s.ignored = 0
-          AND w2.is_active = 1
-          AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
-        ORDER BY date(s.next_review_date) ASC, w2.order_index ASC
-        LIMIT 1
-      )
-
-      UNION ALL
-
-      SELECT wid, priority FROM (
-        SELECT w3.id as wid, 2 as priority
-        FROM words w3
-        WHERE w3.is_active = 1
-          AND NOT EXISTS (
-            SELECT 1 FROM user_words_sm2 s2
-            WHERE s2.user_id = ? AND s2.word_id = w3.id
-          )
-        ORDER BY w3.order_index ASC, w3.id ASC
-        LIMIT 1
-      )
-
-      UNION ALL
-
-      SELECT wid, priority FROM (
-        SELECT s3.word_id as wid, 3 as priority
-        FROM user_words_sm2 s3
-        JOIN words w4 ON w4.id = s3.word_id
-        WHERE s3.user_id = ?
-          AND s3.ignored = 0
-          AND w4.is_active = 1
-          AND (
-            s3.last_reviewed_at IS NULL
-            OR julianday('now', '${TIME_ZONE_OFFSET}') - julianday(s3.last_reviewed_at) >= s3.interval_days * 0.5
-          )
-        ORDER BY date(s3.next_review_date) ASC, w4.order_index ASC
-        LIMIT 1
-      )
-    ) candidates
-    JOIN words w ON w.id = candidates.wid
-    ORDER BY candidates.priority ASC
+    FROM user_words_sm2 s
+    JOIN words w ON w.id = s.word_id
+    WHERE s.user_id = ?
+      AND s.ignored = 0
+      AND w.is_active = 1
+      AND s.card_state != 0
+      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+    ORDER BY date(s.next_review_date) ASC, w.order_index ASC
     LIMIT 1
     `,
-    [userId, userId, userId]
+    [userId]
   );
-
-  return wordRow ?? null;
+  return row ?? null;
 }
 
+/**
+ * Pick the next new word for the user to learn.
+ */
+export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord | null> {
+  const row = await queryOne<DbWord>(
+    env,
+    `
+    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+    FROM words w
+    WHERE w.is_active = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM user_words_sm2 s
+        WHERE s.user_id = ? AND s.word_id = w.id
+      )
+    ORDER BY w.order_index ASC, w.id ASC
+    LIMIT 1
+    `,
+    [userId]
+  );
+  return row ?? null;
+}
+
+/**
+ * Get or create the user's FSRS state for a word.
+ */
 export async function getOrCreateUserWordState(
   env: Env,
   userId: number,
@@ -107,8 +150,9 @@ export async function getOrCreateUserWordState(
       env,
       `
       INSERT INTO user_words_sm2
-        (user_id, word_id, interval_days, repetitions, ease_factor, next_review_date, question_stage, created_at)
-      VALUES (?, ?, 1, 0, 2.5, ?, 1, ?)
+        (user_id, word_id, interval_days, repetitions, ease_factor, next_review_date,
+         question_stage, stability, difficulty, card_state, lapses, reps, created_at)
+      VALUES (?, ?, 0, 0, 2.5, ?, 1, 0, 0, 0, 0, 0, ?)
       `,
       [userId, wordId, nowIso, nowIso]
     );
@@ -132,17 +176,14 @@ function addDaysToIso(iso: string, days: number): string {
   return d.toISOString();
 }
 
-function normalizeQuestionStage(stage: number | null | undefined): number {
-  if (!stage || stage < 1) return 1;
-  if (stage > 5) return 5;
-  return stage;
-}
-
-export async function prepareUpdateSm2(
+/**
+ * Prepare the DB statements to update a card's FSRS state after a review.
+ */
+export async function prepareUpdateFsrs(
   env: Env,
   userId: number,
   wordId: number,
-  isCorrect: boolean
+  rating: Rating
 ): Promise<any[]> {
   let state = await queryOne<UserWordState>(
     env,
@@ -156,48 +197,40 @@ export async function prepareUpdateSm2(
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const quality = isCorrect ? 4 : 2;
 
-  let usedInterval = state.interval_days || 1;
-
-  if (state.last_reviewed_at) {
-    const lastReviewDate = new Date(state.last_reviewed_at);
-    const diffMs = now.getTime() - lastReviewDate.getTime();
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-    usedInterval = diffDays;
-    if (usedInterval < 1) usedInterval = 1;
-  }
-
-  const STAGE_MAX_INTERVAL: Record<number, number> = {
-    1: 3,
-    2: 7,
-    3: 14,
-    4: 30,
-    5: 60,
+  // Build FSRS card from DB state
+  const card: FsrsCard = {
+    stability: state.stability || 0,
+    difficulty: state.difficulty || 0,
+    state: (state.card_state || 0) as CardState,
+    lastReview: state.last_reviewed_at,
+    reps: state.reps || 0,
+    lapses: state.lapses || 0,
   };
-  const maxInterval = STAGE_MAX_INTERVAL[state.question_stage || 1] || 60;
 
-  const sm2Result = sm2(
-    {
-      interval: usedInterval,
-      repetition: state.repetitions || 0,
-      ef: state.ease_factor || 2.5
-    },
-    quality,
-    maxInterval
-  );
+  // Run FSRS scheduling
+  const result = schedule(card, rating, now);
 
-  const nextReviewIso = addDaysToIso(nowIso, sm2Result.interval);
+  // Calculate next review date
+  const nextReviewIso = addDaysToIso(nowIso, result.interval);
 
-  let newStage = normalizeQuestionStage(state.question_stage);
+  // Update question stage based on rating (preserve stage system for question variety)
+  let newStage = state.question_stage || 1;
   let newCorrectStreak = state.correct_streak || 0;
 
-  if (!isCorrect) {
-    newStage = Math.max(1, (state.question_stage || 1) - 2);
+  if (rating === Rating.Again) {
+    newStage = Math.max(1, newStage - 2);
+    newCorrectStreak = 0;
+  } else if (rating === Rating.Hard) {
+    newStage = Math.max(1, newStage - 1);
     newCorrectStreak = 0;
   } else {
     newCorrectStreak += 1;
-    if (newStage < 5) newStage++;
+    if (rating === Rating.Easy && newStage < 5) {
+      newStage = Math.min(5, newStage + 2);
+    } else if (newStage < 5) {
+      newStage += 1;
+    }
   }
 
   const stmt = prepare(
@@ -211,17 +244,27 @@ export async function prepareUpdateSm2(
         last_reviewed_at = ?,
         correct_streak = ?,
         question_stage = ?,
+        stability = ?,
+        difficulty = ?,
+        card_state = ?,
+        lapses = ?,
+        reps = ?,
         updated_at = ?
     WHERE id = ?
     `,
     [
-      sm2Result.interval,
-      sm2Result.repetition,
-      sm2Result.ef,
+      result.interval,
+      result.reps,
+      2.5, // keep ease_factor for legacy compat (not used by FSRS)
       nextReviewIso,
       nowIso,
       newCorrectStreak,
       newStage,
+      result.stability,
+      result.difficulty,
+      result.state,
+      result.lapses,
+      result.reps,
       nowIso,
       state.id
     ]
@@ -230,6 +273,9 @@ export async function prepareUpdateSm2(
   return [stmt];
 }
 
+/**
+ * Mark a word as ignored (remove from review cycle).
+ */
 export async function markWordAsIgnored(env: Env, userId: number, wordId: number): Promise<void> {
   const now = new Date().toISOString();
   const row = await queryOne<{ id: number }>(
@@ -249,10 +295,33 @@ export async function markWordAsIgnored(env: Env, userId: number, wordId: number
       env,
       `
       INSERT INTO user_words_sm2
-        (user_id, word_id, interval_days, repetitions, ease_factor, next_review_date, question_stage, ignored, created_at)
-      VALUES (?, ?, 1, 0, 2.5, ?, 1, 1, ?)
+        (user_id, word_id, interval_days, repetitions, ease_factor, next_review_date,
+         question_stage, ignored, stability, difficulty, card_state, lapses, reps, created_at)
+      VALUES (?, ?, 0, 0, 2.5, ?, 1, 1, 0, 0, 0, 0, 0, ?)
       `,
       [userId, wordId, now, now]
     );
   }
+}
+
+/**
+ * Get review stats for a user in the last N hours.
+ */
+export async function getReviewStats(env: Env, userId: number, hours: number = 24): Promise<ReviewStats> {
+  const row = await queryOne<{ correct: number; incorrect: number; total: number }>(
+    env,
+    `
+    SELECT
+      COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
+      COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) as incorrect,
+      COUNT(*) as total
+    FROM user_word_question_history
+    WHERE user_id = ?
+      AND context = 'leitner'
+      AND answered_at IS NOT NULL
+      AND datetime(answered_at) >= datetime('now', '-${hours} hours')
+    `,
+    [userId]
+  );
+  return row ?? { correct: 0, incorrect: 0, total: 0 };
 }

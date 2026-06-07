@@ -16,6 +16,11 @@ export const GAME_CONFIG = {
 export const CB_PREFIX = {
   LEITNER: "l",
   LEITNER_IGNORE: "lig",
+  LEITNER_RATE: "lr",
+  LEITNER_NEXT: "lnx",
+  LEITNER_EXIT: "lex",
+  LEITNER_EXIT_CONFIRM: "lexc",
+  LEITNER_DUNNO: "ldn",
   READING_TEXT: "rt",
   READING_ANSWER: "ra",
   AVATAR: "av",
