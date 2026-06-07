@@ -1,7 +1,7 @@
 import { Env } from "../types";
 import { queryOne, execute, prepare } from "./client";
 import { schedule, Rating, CardState, FsrsCard } from "../utils/fsrs";
-import { TIME_ZONE_OFFSET } from "../config/constants";
+import { TIME_ZONE_OFFSET, LEITNER_LEECH_THRESHOLD } from "../config/constants";
 
 export interface DbWord {
   id: number;
@@ -42,6 +42,7 @@ export interface ReviewStats {
 
 /**
  * Count words due for review today (FSRS scheduling).
+ * Only counts words that actually have at least one question.
  */
 export async function countDueWords(env: Env, userId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
@@ -55,6 +56,7 @@ export async function countDueWords(env: Env, userId: number): Promise<number> {
       AND w.is_active = 1
       AND s.card_state != 0
       AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     `,
     [userId]
   );
@@ -62,7 +64,7 @@ export async function countDueWords(env: Env, userId: number): Promise<number> {
 }
 
 /**
- * Count new words available (never seen by user).
+ * Count new words available (never seen by user) that have at least one question.
  */
 export async function countNewWords(env: Env, userId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
@@ -75,6 +77,7 @@ export async function countNewWords(env: Env, userId: number): Promise<number> {
         SELECT 1 FROM user_words_sm2 s
         WHERE s.user_id = ? AND s.word_id = w.id
       )
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     `,
     [userId]
   );
@@ -83,7 +86,7 @@ export async function countNewWords(env: Env, userId: number): Promise<number> {
 
 /**
  * Pick the next word due for review (only words the user has already seen).
- * Priority: overdue cards first (sorted by most overdue).
+ * Priority: most overdue first. Only words with at least one question.
  */
 export async function pickNextReviewWord(env: Env, userId: number): Promise<DbWord | null> {
   const row = await queryOne<DbWord>(
@@ -97,6 +100,7 @@ export async function pickNextReviewWord(env: Env, userId: number): Promise<DbWo
       AND w.is_active = 1
       AND s.card_state != 0
       AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     ORDER BY date(s.next_review_date) ASC, w.order_index ASC
     LIMIT 1
     `,
@@ -136,6 +140,7 @@ export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord 
           SELECT 1 FROM user_words_sm2 s
           WHERE s.user_id = ? AND s.word_id = w.id
         )
+        AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
       ORDER BY w.order_index ASC, w.id ASC
       LIMIT 1
       `,
@@ -156,6 +161,7 @@ export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord 
         SELECT 1 FROM user_words_sm2 s
         WHERE s.user_id = ? AND s.word_id = w.id
       )
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     ORDER BY w.order_index ASC, w.id ASC
     LIMIT 1
     `,
@@ -248,8 +254,11 @@ export async function prepareUpdateFsrs(
   // Run FSRS scheduling
   const result = schedule(card, rating, now);
 
-  // Calculate next review date
-  const nextReviewIso = addDaysToIso(nowIso, result.interval);
+  // Lapses (Again) become due again immediately (same day) so the user can
+  // relearn them within the session; successful ratings are scheduled forward.
+  const nextReviewIso = rating === Rating.Again
+    ? nowIso
+    : addDaysToIso(nowIso, result.interval);
 
   // Update question stage based on rating (preserve stage system for question variety)
   let newStage = state.question_stage || 1;
@@ -361,4 +370,78 @@ export async function getReviewStats(env: Env, userId: number, hours: number = 2
     [userId]
   );
   return row ?? { correct: 0, incorrect: 0, total: 0 };
+}
+
+/**
+ * Read a word's question_stage WITHOUT creating a state row.
+ * Returns 1 (default) if the user has no state for this word yet.
+ * This is important so that merely *showing* a new-word question does not
+ * create a half-initialized row that would orphan the word.
+ */
+export async function getWordStage(env: Env, userId: number, wordId: number): Promise<number> {
+  const row = await queryOne<{ question_stage: number }>(
+    env,
+    `SELECT question_stage FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
+    [userId, wordId]
+  );
+  return row?.question_stage || 1;
+}
+
+/**
+ * Count "leech" words: words the user has failed (lapsed) at least
+ * LEITNER_LEECH_THRESHOLD times. These are the hardest words.
+ */
+export async function countLeechWords(env: Env, userId: number): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `
+    SELECT COUNT(*) as cnt
+    FROM user_words_sm2 s
+    JOIN words w ON w.id = s.word_id
+    WHERE s.user_id = ?
+      AND s.ignored = 0
+      AND w.is_active = 1
+      AND s.lapses >= ?
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    `,
+    [userId, LEITNER_LEECH_THRESHOLD]
+  );
+  return row?.cnt ?? 0;
+}
+
+/**
+ * Pick the next leech word to practice. Rotates by least-recently-reviewed
+ * so the user cycles through all their hard words rather than getting stuck.
+ */
+export async function pickNextLeechWord(env: Env, userId: number): Promise<DbWord | null> {
+  const row = await queryOne<DbWord>(
+    env,
+    `
+    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+    FROM user_words_sm2 s
+    JOIN words w ON w.id = s.word_id
+    WHERE s.user_id = ?
+      AND s.ignored = 0
+      AND w.is_active = 1
+      AND s.lapses >= ?
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    ORDER BY (s.last_reviewed_at IS NULL) DESC, s.last_reviewed_at ASC, w.order_index ASC
+    LIMIT 1
+    `,
+    [userId, LEITNER_LEECH_THRESHOLD]
+  );
+  return row ?? null;
+}
+
+/**
+ * Remove a word from the "hard words" list by resetting its lapse counter.
+ * The word stays in the normal review cycle (it just isn't a leech anymore).
+ */
+export async function clearLeech(env: Env, userId: number, wordId: number): Promise<void> {
+  const now = new Date().toISOString();
+  await execute(
+    env,
+    `UPDATE user_words_sm2 SET lapses = 0, updated_at = ? WHERE user_id = ? AND word_id = ?`,
+    [now, userId, wordId]
+  );
 }

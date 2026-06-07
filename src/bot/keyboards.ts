@@ -13,9 +13,9 @@ export const PROFILE_MENU_BUTTON_SUMMARY = "🪪 خلاصه پروفایل";
 export function getMainMenuKeyboard() {
   return {
     keyboard: [
-      [{ text: MAIN_MENU_BUTTON_TRAINING }],
-      [{ text: MAIN_MENU_BUTTON_LEADERBOARD }],
-      [{ text: MAIN_MENU_BUTTON_PROFILE }]
+      [{ text: MAIN_MENU_BUTTON_TRAINING, style: "success" }],
+      [{ text: MAIN_MENU_BUTTON_LEADERBOARD, style: "primary" }],
+      [{ text: MAIN_MENU_BUTTON_PROFILE, style: "success" }]
     ],
     resize_keyboard: true,
     one_time_keyboard: false
@@ -25,8 +25,8 @@ export function getMainMenuKeyboard() {
 export function getTrainingMenuKeyboard() {
   return {
     keyboard: [
-      [{ text: TRAINING_MENU_BUTTON_LEITNER }],
-      [{ text: TRAINING_MENU_BUTTON_READING }],
+      [{ text: TRAINING_MENU_BUTTON_LEITNER, style: "success" }],
+      [{ text: TRAINING_MENU_BUTTON_READING, style: "primary" }],
       [{ text: TRAINING_MENU_BUTTON_BACK }]
     ],
     resize_keyboard: true,

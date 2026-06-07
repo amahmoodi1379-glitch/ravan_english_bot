@@ -21,6 +21,8 @@ export const CB_PREFIX = {
   LEITNER_EXIT: "lex",
   LEITNER_EXIT_CONFIRM: "lexc",
   LEITNER_DUNNO: "ldn",
+  LEITNER_HOME: "lhm",
+  LEITNER_UNLEECH: "lul",
   READING_TEXT: "rt",
   READING_ANSWER: "ra",
   AVATAR: "av",
@@ -28,6 +30,8 @@ export const CB_PREFIX = {
   LEADERBOARD: "lb",
   QUIZ: "qz",
 };
+
+export const LEITNER_LEECH_THRESHOLD = 4;
 
 export const TIME_ZONE_OFFSET = '+3.5 hours';
 
