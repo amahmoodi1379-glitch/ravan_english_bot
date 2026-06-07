@@ -45,14 +45,30 @@ interface LeitnerQuestionRow {
 
 type ReviewMode = "review" | "new";
 
-// --- Mode-aware text helpers ---
+// --- Mode-aware button builders (single source of truth for buttons) ---
 
 function exitButtonText(mode: ReviewMode): string {
   return mode === "review" ? "🚪 پایان مرور" : "🚪 پایان یادگیری";
 }
 
-function nextButtonText(): string {
-  return "➡️ سوال بعدی";
+/** "Next question" button (blue). */
+function nextButton(mode: ReviewMode) {
+  return { text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}`, style: "primary" };
+}
+
+/** "Exit review" button (red). */
+function exitButton(mode: ReviewMode) {
+  return { text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}`, style: "danger" };
+}
+
+/** "Remove this word from review forever" button. */
+function ignoreButton(questionId: number, mode: ReviewMode) {
+  return { text: "🗑 دیگه این واژه رو نشونم نده", callback_data: `${CB_PREFIX.LEITNER_IGNORE}:${questionId}:${mode}` };
+}
+
+/** Standard footer shown after an answer/feedback: next + exit. */
+function nextAndExitRows(mode: ReviewMode) {
+  return [[nextButton(mode)], [exitButton(mode)]];
 }
 
 // --- Stage/Question Type Logic ---
@@ -209,10 +225,10 @@ async function sendLeitnerQuestion(
           { text: "4", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:D:${mode}` },
         ],
         [
-          { text: "❌ نمیدونم", callback_data: `${CB_PREFIX.LEITNER_DUNNO}:${question.id}:${mode}` },
+          { text: "🤔 نمیدونم", callback_data: `${CB_PREFIX.LEITNER_DUNNO}:${question.id}:${mode}` },
         ],
         [
-          { text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` },
+          exitButton(mode),
         ],
       ],
     };
@@ -241,7 +257,7 @@ async function sendCompletionMessage(
     const keyboard: any[][] = [];
     if (newCount > 0) {
       text += `\n\n🆕 ${newCount} واژه جدید آماده یادگیری. میخوای ادامه بدی؟`;
-      keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }]);
+      keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "primary" }]);
     }
     keyboard.push([{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]);
 
@@ -510,8 +526,9 @@ async function handleDunno(
   await sendMessage(env, chatId, replyText, {
     reply_markup: {
       inline_keyboard: [
-        [{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
+        [ignoreButton(question.id, mode)],
+        [nextButton(mode)],
+        [exitButton(mode)],
       ],
     },
   });
@@ -538,8 +555,8 @@ async function handleExitRequest(
     reply_markup: {
       inline_keyboard: [
         [
-          { text: "✅ بله، خروج", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` },
-          { text: "❌ نه، ادامه بده", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` },
+          { text: "✅ بله، خروج", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}`, style: "danger" },
+          { text: "❌ نه، ادامه بده", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}`, style: "success" },
         ],
       ],
     },
@@ -632,7 +649,7 @@ async function handleRating(
   if (!question) {
     await sendMessage(env, chatId, "❗️ خطا: سوال پیدا نشد.", {
       reply_markup: {
-        inline_keyboard: [[{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }]],
+        inline_keyboard: [[nextButton(mode)]],
       },
     });
     return;
@@ -663,10 +680,7 @@ async function handleRating(
   const emoji = ratingEmoji(ratingValue);
   await sendMessage(env, chatId, `${emoji} ثبت شد!`, {
     reply_markup: {
-      inline_keyboard: [
-        [{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
-      ],
+      inline_keyboard: nextAndExitRows(mode),
     },
   });
 }
@@ -706,10 +720,7 @@ async function handleIgnoreWord(
 
   await sendMessage(env, chatId, `واژه‌ی <b>${question.english}</b> از چرخه مرور حذف شد ✅`, {
     reply_markup: {
-      inline_keyboard: [
-        [{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
-      ],
+      inline_keyboard: nextAndExitRows(mode),
     },
   });
 }
@@ -835,7 +846,8 @@ async function handleAnswer(
     reply_markup: {
       inline_keyboard: [
         ratingButtons,
-        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
+        [ignoreButton(question.id, mode)],
+        [exitButton(mode)],
       ],
     },
   });

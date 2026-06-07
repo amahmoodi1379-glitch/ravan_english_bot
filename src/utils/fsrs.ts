@@ -74,7 +74,7 @@ const DESIRED_RETENTION = 0.9;
 /**
  * Calculate retrievability (probability of recall) at time t days after last review.
  */
-export function retrievability(elapsedDays: number, stability: number): number {
+function retrievability(elapsedDays: number, stability: number): number {
   if (stability <= 0) return 0;
   if (elapsedDays <= 0) return 1;
   return Math.pow(1 + FACTOR * (elapsedDays / stability), DECAY);
@@ -83,7 +83,7 @@ export function retrievability(elapsedDays: number, stability: number): number {
 /**
  * Calculate the optimal review interval given desired retention and stability.
  */
-export function nextInterval(stability: number, requestedRetention: number = DESIRED_RETENTION): number {
+function nextInterval(stability: number, requestedRetention: number = DESIRED_RETENTION): number {
   if (stability <= 0) return 1;
   const interval = (stability / FACTOR) * (Math.pow(requestedRetention, 1.0 / DECAY) - 1.0);
   return Math.max(1, Math.round(interval));
@@ -232,20 +232,6 @@ export function schedule(card: FsrsCard, rating: Rating, now: Date = new Date())
     state: newState,
     reps: card.reps + 1,
     lapses,
-  };
-}
-
-/**
- * Create a new (blank) card state.
- */
-export function createNewCard(): FsrsCard {
-  return {
-    stability: 0,
-    difficulty: 0,
-    state: CardState.New,
-    lastReview: null,
-    reps: 0,
-    lapses: 0,
   };
 }
 
