@@ -114,10 +114,10 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
   const keyboard: any[][] = [];
 
   if (dueCount > 0) {
-    keyboard.push([{ text: "📋 شروع مرور", callback_data: `${CB_PREFIX.LEITNER_NEXT}:review` }]);
+    keyboard.push([{ text: "📋 شروع مرور", callback_data: `${CB_PREFIX.LEITNER_NEXT}:review`, style: "success" }]);
   }
   if (newCount > 0) {
-    keyboard.push([{ text: "🆕 واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }]);
+    keyboard.push([{ text: "🆕 واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "primary" }]);
   }
 
   // Hide the reply keyboard when entering leitner mode
@@ -139,7 +139,6 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
 /**
  * Send the next question to the user.
  * Uses a bounded loop to avoid stack overflow when words have no questions.
- * Also avoids showing the same English word consecutively in "new" mode.
  */
 async function sendLeitnerQuestion(
   env: Env,
@@ -148,20 +147,6 @@ async function sendLeitnerQuestion(
   mode: ReviewMode
 ): Promise<void> {
   const MAX_ATTEMPTS = 15;
-  let lastSeenEnglish: string | null = null;
-
-  // For "new" mode, check what the last word the user saw was to avoid repeats
-  if (mode === "new") {
-    const lastWord = await queryOne<{ english: string }>(
-      env,
-      `SELECT w.english FROM user_word_question_history h
-       JOIN words w ON w.id = h.word_id
-       WHERE h.user_id = ? AND h.context = 'leitner'
-       ORDER BY h.shown_at DESC LIMIT 1`,
-      [user.id]
-    );
-    lastSeenEnglish = lastWord?.english?.toLowerCase() ?? null;
-  }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const word = mode === "review"
@@ -171,16 +156,6 @@ async function sendLeitnerQuestion(
     if (!word) {
       await sendCompletionMessage(env, user, chatId, mode);
       return;
-    }
-
-    // In "new" mode, skip words with same English as the one just reviewed
-    if (mode === "new" && lastSeenEnglish && word.english.toLowerCase() === lastSeenEnglish) {
-      // Mark this word state so it's not "new" anymore, then skip to next
-      await getOrCreateUserWordState(env, user.id, word.id);
-      // Update lastSeenEnglish so we don't skip infinite words with same english
-      // Actually we only skip once — let the next iteration pick it or a different one
-      lastSeenEnglish = null;
-      continue;
     }
 
     const state = await getOrCreateUserWordState(env, user.id, word.id);
@@ -829,23 +804,27 @@ async function handleAnswer(
   if (isCorrect) {
     ratingButtons = [
       {
-        text: `🟢 ${ratingLabel(Rating.Good)}`,
+        text: `${ratingLabel(Rating.Good)}`,
         callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Good}:${mode}`,
+        style: "success",
       },
       {
-        text: `⭐ ${ratingLabel(Rating.Easy)}`,
+        text: `${ratingLabel(Rating.Easy)}`,
         callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Easy}:${mode}`,
+        style: "primary",
       },
     ];
   } else {
     ratingButtons = [
       {
-        text: `🔴 ${ratingLabel(Rating.Again)}`,
+        text: `${ratingLabel(Rating.Again)}`,
         callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Again}:${mode}`,
+        style: "danger",
       },
       {
-        text: `🟠 ${ratingLabel(Rating.Hard)}`,
+        text: `${ratingLabel(Rating.Hard)}`,
         callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Hard}:${mode}`,
+        style: "primary",
       },
     ];
   }
