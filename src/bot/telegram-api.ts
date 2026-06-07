@@ -93,6 +93,25 @@ export async function editMessageText(
   await fetchWithRetry(url, body);
 }
 
+export async function editMessageReplyMarkup(
+  env: Env,
+  chatId: number,
+  messageId: number,
+  replyMarkup?: Record<string, unknown>
+): Promise<void> {
+  const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup`;
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    message_id: messageId,
+  };
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
+  } else {
+    body.reply_markup = { inline_keyboard: [] };
+  }
+  await fetchWithRetry(url, body);
+}}
+
 async function fetchWithRetry(url: string, body: any, retries = 3): Promise<any> {
   for (let i = 0; i < retries; i++) {
     try {

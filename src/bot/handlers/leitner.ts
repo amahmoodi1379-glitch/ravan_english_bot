@@ -1,6 +1,6 @@
 import { Env } from "../../types";
 import { TelegramCallbackQuery } from "../router";
-import { sendMessage, answerCallbackQuery } from "../telegram-api";
+import { sendMessage, answerCallbackQuery, editMessageReplyMarkup } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import { queryOne, prepare } from "../../db/client";
 import {
@@ -24,6 +24,7 @@ import {
 import { getWordStylePrioritySql } from "../../db/question_priority";
 import { optionLetterToNumber } from "../../utils/options";
 import { Rating, ratingLabel, ratingEmoji } from "../../utils/fsrs";
+import { getTrainingMenuKeyboard } from "../keyboards";
 
 // --- Types ---
 
@@ -43,6 +44,16 @@ interface LeitnerQuestionRow {
 }
 
 type ReviewMode = "review" | "new";
+
+// --- Mode-aware text helpers ---
+
+function exitButtonText(mode: ReviewMode): string {
+  return mode === "review" ? "🚪 پایان مرور" : "🚪 پایان یادگیری";
+}
+
+function nextButtonText(): string {
+  return "➡️ سوال بعدی";
+}
 
 // --- Stage/Question Type Logic ---
 
@@ -74,7 +85,8 @@ function getStylesForType(testType: LeitnerTestType): string[] {
 // --- Entry Point ---
 
 /**
- * Start the leitner review menu for a user (shows review/new word options).
+ * Start the leitner review menu for a user.
+ * Hides the reply keyboard to prevent accidental taps during review.
  */
 export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number): Promise<void> {
   const dueCount = await countDueWords(env, user.id);
@@ -108,8 +120,17 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
     keyboard.push([{ text: "🆕 واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }]);
   }
 
+  // Hide the reply keyboard when entering leitner mode
   await sendMessage(env, chatId, text, {
-    reply_markup: { inline_keyboard: keyboard },
+    reply_markup: {
+      inline_keyboard: keyboard,
+      // This removes the reply keyboard
+    },
+  });
+
+  // Send a separate message that removes the reply keyboard
+  await sendMessage(env, chatId, "⬇️ از دکمه‌های بالا استفاده کن:", {
+    reply_markup: { remove_keyboard: true },
   });
 }
 
@@ -117,7 +138,8 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
 
 /**
  * Send the next question to the user.
- * Uses a loop instead of recursion to avoid stack overflow when words have no questions.
+ * Uses a bounded loop to avoid stack overflow when words have no questions.
+ * Also avoids showing the same English word consecutively in "new" mode.
  */
 async function sendLeitnerQuestion(
   env: Env,
@@ -125,8 +147,21 @@ async function sendLeitnerQuestion(
   chatId: number,
   mode: ReviewMode
 ): Promise<void> {
-  // Loop with a max attempt guard to prevent infinite loops
-  const MAX_ATTEMPTS = 10;
+  const MAX_ATTEMPTS = 15;
+  let lastSeenEnglish: string | null = null;
+
+  // For "new" mode, check what the last word the user saw was to avoid repeats
+  if (mode === "new") {
+    const lastWord = await queryOne<{ english: string }>(
+      env,
+      `SELECT w.english FROM user_word_question_history h
+       JOIN words w ON w.id = h.word_id
+       WHERE h.user_id = ? AND h.context = 'leitner'
+       ORDER BY h.shown_at DESC LIMIT 1`,
+      [user.id]
+    );
+    lastSeenEnglish = lastWord?.english?.toLowerCase() ?? null;
+  }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const word = mode === "review"
@@ -134,29 +169,18 @@ async function sendLeitnerQuestion(
       : await pickNextNewWord(env, user.id);
 
     if (!word) {
-      // No more words available
-      if (mode === "review") {
-        const newCount = await countNewWords(env, user.id);
-        if (newCount > 0) {
-          await sendMessage(
-            env,
-            chatId,
-            `🎉 تبریک! همه مرورهای امروز رو تموم کردی! 👏\n\n🆕 ${newCount} واژه جدید آماده یادگیری.`,
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }],
-                ],
-              },
-            }
-          );
-        } else {
-          await sendMessage(env, chatId, "🎉 تبریک! همه مرورهای امروز رو تموم کردی! 👏");
-        }
-      } else {
-        await sendMessage(env, chatId, "📚 همه واژه‌های موجود رو شروع کردی! آفرین! 🌟");
-      }
+      await sendCompletionMessage(env, user, chatId, mode);
       return;
+    }
+
+    // In "new" mode, skip words with same English as the one just reviewed
+    if (mode === "new" && lastSeenEnglish && word.english.toLowerCase() === lastSeenEnglish) {
+      // Mark this word state so it's not "new" anymore, then skip to next
+      await getOrCreateUserWordState(env, user.id, word.id);
+      // Update lastSeenEnglish so we don't skip infinite words with same english
+      // Actually we only skip once — let the next iteration pick it or a different one
+      lastSeenEnglish = null;
+      continue;
     }
 
     const state = await getOrCreateUserWordState(env, user.id, word.id);
@@ -181,8 +205,7 @@ async function sendLeitnerQuestion(
     }
 
     if (!question) {
-      // This word has no questions at all — skip and try next word
-      // Mark it so we don't get stuck (create state so it's not "new" anymore)
+      // Word has no questions — skip
       continue;
     }
 
@@ -214,7 +237,7 @@ async function sendLeitnerQuestion(
           { text: "❌ نمیدونم", callback_data: `${CB_PREFIX.LEITNER_DUNNO}:${question.id}:${mode}` },
         ],
         [
-          { text: "🚪 خروج از مرور", callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` },
+          { text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` },
         ],
       ],
     };
@@ -223,8 +246,36 @@ async function sendLeitnerQuestion(
     return;
   }
 
-  // If we exhausted all attempts (all words lack questions)
+  // Exhausted all attempts
   await sendMessage(env, chatId, "❗️ متأسفانه برای واژه‌های فعلی سوالی ثبت نشده. لطفاً بعداً دوباره تلاش کن.");
+}
+
+/**
+ * Send the completion/congratulations message based on mode.
+ */
+async function sendCompletionMessage(
+  env: Env,
+  user: DbUser,
+  chatId: number,
+  mode: ReviewMode
+): Promise<void> {
+  if (mode === "review") {
+    const newCount = await countNewWords(env, user.id);
+    let text = "🎉 تبریک! همه مرورهای امروز رو تموم کردی! 👏";
+
+    const keyboard: any[][] = [];
+    if (newCount > 0) {
+      text += `\n\n🆕 ${newCount} واژه جدید آماده یادگیری. میخوای ادامه بدی؟`;
+      keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }]);
+    }
+    keyboard.push([{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]);
+
+    await sendMessage(env, chatId, text, { reply_markup: { inline_keyboard: keyboard } });
+  } else {
+    await sendMessage(env, chatId, "📚 همه واژه‌های موجود رو شروع کردی! آفرین! 🌟", {
+      reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
+    });
+  }
 }
 
 // --- Question Picking Helpers ---
@@ -317,7 +368,7 @@ async function pickRandomQuestionAny(
   );
 }
 
-// --- Helper: get correct option text ---
+// --- Helper ---
 function getCorrectOptionText(q: LeitnerQuestionRow): string {
   switch (q.correct_option) {
     case "A": return q.option_a;
@@ -325,6 +376,18 @@ function getCorrectOptionText(q: LeitnerQuestionRow): string {
     case "C": return q.option_c;
     case "D": return q.option_d;
     default: return "";
+  }
+}
+
+/**
+ * Remove inline keyboard from a previous message (preserves text).
+ * Fails silently if the message can't be edited (e.g., too old).
+ */
+async function removeInlineKeyboard(env: Env, chatId: number, messageId: number): Promise<void> {
+  try {
+    await editMessageReplyMarkup(env, chatId, messageId);
+  } catch {
+    // Silently ignore — message may be too old or already edited
   }
 }
 
@@ -341,61 +404,56 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
     return;
   }
   const chatId = message.chat.id;
+  const messageId = message.message_id;
   const user = await getOrCreateUser(env, callbackQuery.from);
 
   try {
-    // --- "نمیدونم" button ---
     if (prefix === CB_PREFIX.LEITNER_DUNNO) {
-      await handleDunno(env, callbackQuery, user, chatId, parts);
+      await handleDunno(env, callbackQuery, user, chatId, messageId, parts);
       return;
     }
 
-    // --- "خروج از مرور" button ---
     if (prefix === CB_PREFIX.LEITNER_EXIT) {
-      await handleExitRequest(env, callbackQuery, chatId, parts);
+      await handleExitRequest(env, callbackQuery, chatId, messageId, parts);
       return;
     }
 
-    // --- Exit confirmed ---
     if (prefix === CB_PREFIX.LEITNER_EXIT_CONFIRM) {
-      await handleExitConfirm(env, callbackQuery, user, chatId, parts);
+      await handleExitConfirm(env, callbackQuery, user, chatId, messageId, parts);
       return;
     }
 
-    // --- "سوال بعدی" or start mode ---
     if (prefix === CB_PREFIX.LEITNER_NEXT) {
       const mode = (parts[1] || "review") as ReviewMode;
       await answerCallbackQuery(env, callbackQuery.id);
+      // Remove buttons from the message that had "سوال بعدی"
+      await removeInlineKeyboard(env, chatId, messageId);
       await sendLeitnerQuestion(env, user, chatId, mode);
       return;
     }
 
-    // --- FSRS Rating after answer ---
     if (prefix === CB_PREFIX.LEITNER_RATE) {
-      await handleRating(env, callbackQuery, user, chatId, parts);
+      await handleRating(env, callbackQuery, user, chatId, messageId, parts);
       return;
     }
 
-    // --- Ignore word (بلدم) ---
     if (prefix === CB_PREFIX.LEITNER_IGNORE) {
-      await handleIgnoreWord(env, callbackQuery, user, chatId, parts);
+      await handleIgnoreWord(env, callbackQuery, user, chatId, messageId, parts);
       return;
     }
 
-    // --- Answer to a question ---
     if (prefix === CB_PREFIX.LEITNER) {
-      await handleAnswer(env, callbackQuery, user, chatId, parts);
+      await handleAnswer(env, callbackQuery, user, chatId, messageId, parts);
       return;
     }
 
-    // Unrecognized — acknowledge silently
     await answerCallbackQuery(env, callbackQuery.id);
   } catch (error) {
     console.error("Error in handleLeitnerCallback:", error);
     try {
       await answerCallbackQuery(env, callbackQuery.id, "خطایی رخ داد. لطفاً دوباره تلاش کن.");
     } catch {
-      // If answerCallbackQuery also fails, nothing we can do
+      // nothing
     }
   }
 }
@@ -407,6 +465,7 @@ async function handleDunno(
   callbackQuery: TelegramCallbackQuery,
   user: DbUser,
   chatId: number,
+  messageId: number,
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
@@ -444,6 +503,9 @@ async function handleDunno(
 
   await answerCallbackQuery(env, callbackQuery.id);
 
+  // Remove buttons from the question message
+  await removeInlineKeyboard(env, chatId, messageId);
+
   const now = new Date().toISOString();
 
   // Mark as answered (incorrect) + apply FSRS Again
@@ -473,8 +535,8 @@ async function handleDunno(
   await sendMessage(env, chatId, replyText, {
     reply_markup: {
       inline_keyboard: [
-        [{ text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-        [{ text: "🚪 پایان مرور", callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
+        [{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
+        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
       ],
     },
   });
@@ -484,12 +546,20 @@ async function handleExitRequest(
   env: Env,
   callbackQuery: TelegramCallbackQuery,
   chatId: number,
+  messageId: number,
   parts: string[]
 ): Promise<void> {
   const mode = (parts[1] || "review") as ReviewMode;
   await answerCallbackQuery(env, callbackQuery.id);
 
-  await sendMessage(env, chatId, "مطمئنی میخوای از مرور خارج بشی؟", {
+  // Remove buttons from the previous message
+  await removeInlineKeyboard(env, chatId, messageId);
+
+  const confirmText = mode === "review"
+    ? "مطمئنی میخوای از مرور خارج بشی؟"
+    : "مطمئنی میخوای از یادگیری واژه‌های جدید خارج بشی؟";
+
+  await sendMessage(env, chatId, confirmText, {
     reply_markup: {
       inline_keyboard: [
         [
@@ -506,13 +576,17 @@ async function handleExitConfirm(
   callbackQuery: TelegramCallbackQuery,
   user: DbUser,
   chatId: number,
+  messageId: number,
   parts: string[]
 ): Promise<void> {
   await answerCallbackQuery(env, callbackQuery.id);
 
+  // Remove confirmation buttons
+  await removeInlineKeyboard(env, chatId, messageId);
+
   const stats = await getReviewStats(env, user.id, 24);
 
-  let summaryText = "📊 <b>خلاصه مرور امروز:</b>\n\n";
+  let summaryText = "📊 <b>خلاصه امروز:</b>\n\n";
   if (stats.total > 0) {
     const accuracy = Math.round((stats.correct / stats.total) * 100);
     summaryText += `✅ درست: ${stats.correct}\n`;
@@ -523,8 +597,12 @@ async function handleExitConfirm(
     summaryText += `هنوز سوالی جواب نداده‌ای.\n`;
   }
 
-  summaryText += `\nخسته نباشی! از منوی پایین ادامه بده 😊`;
-  await sendMessage(env, chatId, summaryText);
+  summaryText += `\nخسته نباشی! 😊`;
+
+  // Restore the reply keyboard
+  await sendMessage(env, chatId, summaryText, {
+    reply_markup: getTrainingMenuKeyboard(),
+  });
 }
 
 async function handleRating(
@@ -532,6 +610,7 @@ async function handleRating(
   callbackQuery: TelegramCallbackQuery,
   user: DbUser,
   chatId: number,
+  messageId: number,
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
@@ -548,9 +627,7 @@ async function handleRating(
     return;
   }
 
-  // Prevent double-rating: check if FSRS was already applied for this question
-  // We use the answered_at + a heuristic: if the word was reviewed in the last 30 seconds,
-  // the rating was already applied.
+  // Prevent double-rating: check if word was reviewed in last 30 seconds
   const recentReview = await queryOne<{ id: number }>(
     env,
     `SELECT s.id FROM user_words_sm2 s
@@ -562,19 +639,13 @@ async function handleRating(
   );
   if (recentReview) {
     await answerCallbackQuery(env, callbackQuery.id, "امتیاز قبلاً ثبت شده 👍");
-    // Still show next button so user isn't stuck
-    await sendMessage(env, chatId, "👍 قبلاً ثبت شده بود.", {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-          [{ text: "🚪 پایان مرور", callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
-        ],
-      },
-    });
     return;
   }
 
   await answerCallbackQuery(env, callbackQuery.id);
+
+  // Remove rating buttons from the answer message
+  await removeInlineKeyboard(env, chatId, messageId);
 
   // Get the question to find the word
   const question = await queryOne<{ word_id: number; level: number }>(
@@ -586,9 +657,7 @@ async function handleRating(
   if (!question) {
     await sendMessage(env, chatId, "❗️ خطا: سوال پیدا نشد.", {
       reply_markup: {
-        inline_keyboard: [
-          [{ text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-        ],
+        inline_keyboard: [[{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }]],
       },
     });
     return;
@@ -599,7 +668,7 @@ async function handleRating(
   const fsrsStmts = await prepareUpdateFsrs(env, user.id, question.word_id, ratingValue);
   batchStatements.push(...fsrsStmts);
 
-  // Award XP only for Good/Easy ratings
+  // Award XP only for Good/Easy
   if (ratingValue >= Rating.Good) {
     const xpStmts = prepareXpForLeitner(env, user.id, question.word_id, question.level, true);
     batchStatements.push(...xpStmts);
@@ -607,7 +676,7 @@ async function handleRating(
 
   await env.DB.batch(batchStatements);
 
-  // Check streak for Good/Easy
+  // Check streak
   if (ratingValue >= Rating.Good) {
     const streakMsg = await checkAndUpdateStreak(env, user.id);
     if (streakMsg) {
@@ -620,8 +689,8 @@ async function handleRating(
   await sendMessage(env, chatId, `${emoji} ثبت شد!`, {
     reply_markup: {
       inline_keyboard: [
-        [{ text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-        [{ text: "🚪 پایان مرور", callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
+        [{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
+        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
       ],
     },
   });
@@ -632,6 +701,7 @@ async function handleIgnoreWord(
   callbackQuery: TelegramCallbackQuery,
   user: DbUser,
   chatId: number,
+  messageId: number,
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
@@ -656,11 +726,14 @@ async function handleIgnoreWord(
   await markWordAsIgnored(env, user.id, question.word_id);
   await answerCallbackQuery(env, callbackQuery.id, "واژه حذف شد 👌");
 
+  // Remove buttons from question message
+  await removeInlineKeyboard(env, chatId, messageId);
+
   await sendMessage(env, chatId, `واژه‌ی <b>${question.english}</b> از چرخه مرور حذف شد ✅`, {
     reply_markup: {
       inline_keyboard: [
-        [{ text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
-        [{ text: "🚪 پایان مرور", callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
+        [{ text: nextButtonText(), callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` }],
+        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
       ],
     },
   });
@@ -671,6 +744,7 @@ async function handleAnswer(
   callbackQuery: TelegramCallbackQuery,
   user: DbUser,
   chatId: number,
+  messageId: number,
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
@@ -720,6 +794,9 @@ async function handleAnswer(
   const now = new Date().toISOString();
 
   await answerCallbackQuery(env, callbackQuery.id);
+
+  // Remove answer buttons from the question message
+  await removeInlineKeyboard(env, chatId, messageId);
 
   // Record answer in history
   await env.DB.prepare(
@@ -779,7 +856,7 @@ async function handleAnswer(
     reply_markup: {
       inline_keyboard: [
         ratingButtons,
-        [{ text: "🚪 خروج از مرور", callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
+        [{ text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}` }],
       ],
     },
   });
