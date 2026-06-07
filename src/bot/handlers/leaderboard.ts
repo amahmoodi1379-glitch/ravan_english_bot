@@ -56,8 +56,8 @@ export async function showLeaderboardHome(env: Env, chatId: number): Promise<voi
   const text = `🏆 <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu` }],
-      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu` }],
+      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success" }],
+      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu`, style: "primary" }],
     ],
   };
 
@@ -69,10 +69,10 @@ async function showXpMenu(env: Env, chatId: number): Promise<void> {
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "📅 هفتگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:weekly` },
-        { text: "📆 ماهانه", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:monthly` },
+        { text: "📅 هفتگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:weekly`, style: "success" },
+        { text: "📆 ماهانه", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:monthly`, style: "success" },
       ],
-      [{ text: "♾ همیشگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:all` }],
+      [{ text: "♾ همیشگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:all`, style: "primary" }],
       [{ text: LB_BTN_BACK, callback_data: `${CB_PREFIX.LEADERBOARD}:home` }],
     ],
   };
@@ -85,8 +85,8 @@ async function showStreakMenu(env: Env, chatId: number): Promise<void> {
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "🔥 استریک فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live` },
-        { text: "🏅 رکورد تاریخی", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record` },
+        { text: "🔥 استریک فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live`, style: "primary" },
+        { text: "🏅 رکورد تاریخی", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record`, style: "success" },
       ],
       [{ text: LB_BTN_BACK, callback_data: `${CB_PREFIX.LEADERBOARD}:home` }],
     ],
@@ -115,11 +115,11 @@ async function showXpLeaderboard(
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "📅 هفتگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:weekly` },
-        { text: "📆 ماهانه", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:monthly` },
+        { text: "📅 هفتگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:weekly`, style: "success" },
+        { text: "📆 ماهانه", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:monthly`, style: "success" },
       ],
       [
-        { text: "♾ همیشگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:all` },
+        { text: "♾ همیشگی", callback_data: `${CB_PREFIX.LEADERBOARD}:xp:all`, style: "primary" },
         { text: LB_BTN_BACK, callback_data: `${CB_PREFIX.LEADERBOARD}:home` },
       ],
     ],
@@ -147,8 +147,8 @@ async function showStreakLeaderboard(
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "🔥 فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live` },
-        { text: "🏅 رکورد", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record` },
+        { text: "🔥 فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live`, style: "primary" },
+        { text: "🏅 رکورد", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record`, style: "success" },
       ],
       [{ text: LB_BTN_BACK, callback_data: `${CB_PREFIX.LEADERBOARD}:home` }],
     ],

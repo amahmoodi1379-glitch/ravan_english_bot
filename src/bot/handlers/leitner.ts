@@ -6,11 +6,14 @@ import { queryOne, prepare } from "../../db/client";
 import {
   pickNextReviewWord,
   pickNextNewWord,
-  getOrCreateUserWordState,
+  pickNextLeechWord,
+  getWordStage,
   prepareUpdateFsrs,
   markWordAsIgnored,
+  clearLeech,
   countDueWords,
   countNewWords,
+  countLeechWords,
   getReviewStats,
   DbWord,
 } from "../../db/leitner";
@@ -43,35 +46,50 @@ interface LeitnerQuestionRow {
   level: number;
 }
 
-type ReviewMode = "review" | "new";
+type ReviewMode = "review" | "new" | "leech";
 
-// --- Mode-aware button builders (single source of truth for buttons) ---
-
-function exitButtonText(mode: ReviewMode): string {
-  return mode === "review" ? "🚪 پایان مرور" : "🚪 پایان یادگیری";
+function isReviewMode(m: string): m is ReviewMode {
+  return m === "review" || m === "new" || m === "leech";
 }
 
-/** "Next question" button (blue). */
+function parseMode(raw: string | undefined): ReviewMode {
+  return raw && isReviewMode(raw) ? raw : "review";
+}
+
+// --- Button builders (single source of truth) ---
+
+function exitButtonText(mode: ReviewMode): string {
+  if (mode === "new") return "🚪 پایان یادگیری";
+  if (mode === "leech") return "🚪 پایان تمرین";
+  return "🚪 پایان مرور";
+}
+
 function nextButton(mode: ReviewMode) {
   return { text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}`, style: "primary" };
 }
 
-/** "Exit review" button (red). */
 function exitButton(mode: ReviewMode) {
   return { text: exitButtonText(mode), callback_data: `${CB_PREFIX.LEITNER_EXIT}:${mode}`, style: "danger" };
 }
 
-/** "Remove this word from review forever" button. */
 function ignoreButton(questionId: number, mode: ReviewMode) {
   return { text: "🗑 دیگه این واژه رو نشونم نده", callback_data: `${CB_PREFIX.LEITNER_IGNORE}:${questionId}:${mode}` };
 }
 
-/** Standard footer shown after an answer/feedback: next + exit. */
+function unleechButton(questionId: number, mode: ReviewMode) {
+  return { text: "🎓 یادش گرفتم (حذف از سخت‌ها)", callback_data: `${CB_PREFIX.LEITNER_UNLEECH}:${questionId}:${mode}`, style: "success" };
+}
+
+function homeButton() {
+  return { text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_HOME}:1` };
+}
+
+/** Footer rows shown after the word has been processed (next + exit). */
 function nextAndExitRows(mode: ReviewMode) {
   return [[nextButton(mode)], [exitButton(mode)]];
 }
 
-// --- Stage/Question Type Logic ---
+// --- Stage / Question Type Logic ---
 
 const TEST_TYPE_STAGE: Record<LeitnerTestType, number> = {
   [LEITNER_TEST_TYPES.EN_TO_FA]: 1,
@@ -101,50 +119,43 @@ function getStylesForType(testType: LeitnerTestType): string[] {
 // --- Entry Point ---
 
 /**
- * Start the leitner review menu for a user.
- * Hides the reply keyboard to prevent accidental taps during review.
+ * Show the leitner home menu (review / new / hard-words), and hide the
+ * reply keyboard so the flow is purely inline-button driven.
  */
 export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number): Promise<void> {
   const dueCount = await countDueWords(env, user.id);
   const newCount = await countNewWords(env, user.id);
+  const leechCount = await countLeechWords(env, user.id);
 
-  if (dueCount === 0 && newCount === 0) {
-    await sendMessage(env, chatId, "🎉 عالی! هیچ واژه‌ای برای مرور یا یادگیری نداری. بعداً سر بزن!");
+  if (dueCount === 0 && newCount === 0 && leechCount === 0) {
+    await sendMessage(env, chatId, "🎉 عالی! فعلاً هیچ واژه‌ای برای مرور، یادگیری یا تمرین نداری. بعداً سر بزن!", {
+      reply_markup: getTrainingMenuKeyboard(),
+    });
     return;
   }
 
   let text = "🧠 <b>سیستم مرور واژگان (FSRS)</b>\n\n";
-
-  if (dueCount > 0) {
-    text += `📋 <b>${dueCount}</b> واژه برای مرور امروز داری\n`;
-  } else {
-    text += `✅ مرورهای امروز تکمیل شده!\n`;
-  }
-
-  if (newCount > 0) {
-    text += `🆕 <b>${newCount}</b> واژه جدید آماده یادگیری\n`;
-  } else {
-    text += `📚 همه واژه‌ها رو شروع کردی!\n`;
+  text += dueCount > 0 ? `📋 <b>${dueCount}</b> واژه برای مرور امروز داری\n` : `✅ مرورهای امروز تکمیل شده!\n`;
+  text += newCount > 0 ? `🆕 <b>${newCount}</b> واژه جدید آماده یادگیری\n` : `📚 همه واژه‌ها رو شروع کردی!\n`;
+  if (leechCount > 0) {
+    text += `🔁 <b>${leechCount}</b> واژه‌ی سخت داری که نیاز به تمرین بیشتر دارن\n`;
   }
 
   const keyboard: any[][] = [];
-
   if (dueCount > 0) {
-    keyboard.push([{ text: "📋 شروع مرور", callback_data: `${CB_PREFIX.LEITNER_NEXT}:review`, style: "success" }]);
+    keyboard.push([{ text: `📋 شروع مرور (${dueCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:review`, style: "success" }]);
   }
   if (newCount > 0) {
-    keyboard.push([{ text: "🆕 واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "primary" }]);
+    keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "primary" }]);
   }
+  if (leechCount > 0) {
+    keyboard.push([{ text: `🔁 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger" }]);
+  }
+  keyboard.push([homeButton()]);
 
-  // Hide the reply keyboard when entering leitner mode
-  await sendMessage(env, chatId, text, {
-    reply_markup: {
-      inline_keyboard: keyboard,
-      // This removes the reply keyboard
-    },
-  });
+  await sendMessage(env, chatId, text, { reply_markup: { inline_keyboard: keyboard } });
 
-  // Send a separate message that removes the reply keyboard
+  // Remove the reply keyboard while in leitner; navigation is fully inline.
   await sendMessage(env, chatId, "⬇️ از دکمه‌های بالا استفاده کن:", {
     reply_markup: { remove_keyboard: true },
   });
@@ -152,9 +163,15 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
 
 // --- Question Sending ---
 
+async function pickWordForMode(env: Env, userId: number, mode: ReviewMode): Promise<DbWord | null> {
+  if (mode === "review") return pickNextReviewWord(env, userId);
+  if (mode === "new") return pickNextNewWord(env, userId);
+  return pickNextLeechWord(env, userId);
+}
+
 /**
- * Send the next question to the user.
- * Uses a bounded loop to avoid stack overflow when words have no questions.
+ * Send the next question. Uses a bounded loop (not recursion) to skip words
+ * that have no questions, avoiding any chance of a stack overflow / infinite loop.
  */
 async function sendLeitnerQuestion(
   env: Env,
@@ -163,44 +180,42 @@ async function sendLeitnerQuestion(
   mode: ReviewMode
 ): Promise<void> {
   const MAX_ATTEMPTS = 15;
+  const seenWordIds = new Set<number>();
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const word = mode === "review"
-      ? await pickNextReviewWord(env, user.id)
-      : await pickNextNewWord(env, user.id);
+    const word = await pickWordForMode(env, user.id, mode);
 
     if (!word) {
       await sendCompletionMessage(env, user, chatId, mode);
       return;
     }
 
-    const state = await getOrCreateUserWordState(env, user.id, word.id);
-    const stage = state.question_stage || 1;
+    // If we already tried this exact word in this loop (e.g. leech rotation
+    // keeps returning it because it has no usable question), stop to avoid spinning.
+    if (seenWordIds.has(word.id)) {
+      break;
+    }
+    seenWordIds.add(word.id);
+
+    const stage = await getWordStage(env, user.id, word.id);
     const prioritizedTypes = getQuestionStyleForStage(stage);
 
     let question: LeitnerQuestionRow | null = null;
-
     for (const testType of prioritizedTypes) {
       const styles = getStylesForType(testType);
       if (styles.length === 0) continue;
       question = await pickQuestionForUserWord(env, user, word, styles);
       if (question) break;
     }
+    if (!question) question = await pickRandomUnseenQuestion(env, user, word);
+    if (!question) question = await pickRandomQuestionAny(env, user, word);
 
     if (!question) {
-      question = await pickRandomUnseenQuestion(env, user, word);
-    }
-
-    if (!question) {
-      question = await pickRandomQuestionAny(env, user, word);
-    }
-
-    if (!question) {
-      // Word has no questions — skip
+      // Word has no questions at all — skip to the next candidate.
       continue;
     }
 
-    // Record that user has seen this question
+    // Record that the user has seen this question.
     const now = new Date().toISOString();
     await env.DB.prepare(
       `INSERT OR IGNORE INTO user_word_question_history
@@ -208,7 +223,6 @@ async function sendLeitnerQuestion(
        VALUES (?, ?, ?, 'leitner', ?)`
     ).bind(user.id, question.word_id, question.id, now).run();
 
-    // Build question message
     const messageText =
       `❓ <b>${question.question_text}</b>\n\n` +
       `1️⃣ ${question.option_a}\n` +
@@ -224,12 +238,8 @@ async function sendLeitnerQuestion(
           { text: "3", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:C:${mode}` },
           { text: "4", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:D:${mode}` },
         ],
-        [
-          { text: "🤔 نمیدونم", callback_data: `${CB_PREFIX.LEITNER_DUNNO}:${question.id}:${mode}` },
-        ],
-        [
-          exitButton(mode),
-        ],
+        [{ text: "🤔 نمیدونم", callback_data: `${CB_PREFIX.LEITNER_DUNNO}:${question.id}:${mode}` }],
+        [exitButton(mode)],
       ],
     };
 
@@ -237,12 +247,14 @@ async function sendLeitnerQuestion(
     return;
   }
 
-  // Exhausted all attempts
-  await sendMessage(env, chatId, "❗️ متأسفانه برای واژه‌های فعلی سوالی ثبت نشده. لطفاً بعداً دوباره تلاش کن.");
+  // No usable question found — never leave the user stuck; offer a way back.
+  await sendMessage(env, chatId, "❗️ فعلاً سوالی برای نمایش پیدا نشد. لطفاً بعداً دوباره تلاش کن.", {
+    reply_markup: { inline_keyboard: [[homeButton()]] },
+  });
 }
 
 /**
- * Send the completion/congratulations message based on mode.
+ * Completion / congratulations message based on the mode.
  */
 async function sendCompletionMessage(
   env: Env,
@@ -253,20 +265,27 @@ async function sendCompletionMessage(
   if (mode === "review") {
     const newCount = await countNewWords(env, user.id);
     let text = "🎉 تبریک! همه مرورهای امروز رو تموم کردی! 👏";
-
     const keyboard: any[][] = [];
     if (newCount > 0) {
       text += `\n\n🆕 ${newCount} واژه جدید آماده یادگیری. میخوای ادامه بدی؟`;
       keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "primary" }]);
     }
     keyboard.push([{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]);
-
     await sendMessage(env, chatId, text, { reply_markup: { inline_keyboard: keyboard } });
-  } else {
-    await sendMessage(env, chatId, "📚 همه واژه‌های موجود رو شروع کردی! آفرین! 🌟", {
+    return;
+  }
+
+  if (mode === "leech") {
+    await sendMessage(env, chatId, "🎉 تمرین واژه‌های سخت تموم شد! آفرین 👏", {
       reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
     });
+    return;
   }
+
+  // new
+  await sendMessage(env, chatId, "📚 همه واژه‌های موجود رو شروع کردی! آفرین! 🌟", {
+    reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
+  });
 }
 
 // --- Question Picking Helpers ---
@@ -278,7 +297,6 @@ async function pickQuestionForUserWord(
   styles: string[]
 ): Promise<LeitnerQuestionRow | null> {
   if (styles.length === 0) return null;
-
   const placeholders = styles.map(() => "?").join(", ");
   const priorityOrderSql = getWordStylePrioritySql("q.question_style");
 
@@ -308,7 +326,6 @@ async function pickRandomUnseenQuestion(
   word: DbWord
 ): Promise<LeitnerQuestionRow | null> {
   const priorityOrderSql = getWordStylePrioritySql("q.question_style");
-
   return await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -334,7 +351,6 @@ async function pickRandomQuestionAny(
   word: DbWord
 ): Promise<LeitnerQuestionRow | null> {
   const priorityOrderSql = getWordStylePrioritySql("q.question_style");
-
   return await queryOne<LeitnerQuestionRow>(
     env,
     `
@@ -359,7 +375,8 @@ async function pickRandomQuestionAny(
   );
 }
 
-// --- Helper ---
+// --- Small helpers ---
+
 function getCorrectOptionText(q: LeitnerQuestionRow): string {
   switch (q.correct_option) {
     case "A": return q.option_a;
@@ -370,19 +387,16 @@ function getCorrectOptionText(q: LeitnerQuestionRow): string {
   }
 }
 
-/**
- * Remove inline keyboard from a previous message (preserves text).
- * Fails silently if the message can't be edited (e.g., too old).
- */
+/** Remove an inline keyboard from a previous message (preserves its text). */
 async function removeInlineKeyboard(env: Env, chatId: number, messageId: number): Promise<void> {
   try {
     await editMessageReplyMarkup(env, chatId, messageId);
   } catch {
-    // Silently ignore — message may be too old or already edited
+    // Ignore — message may be too old or already edited.
   }
 }
 
-// --- Callback Handler ---
+// --- Callback Dispatcher ---
 
 export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
@@ -399,57 +413,66 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
   const user = await getOrCreateUser(env, callbackQuery.from);
 
   try {
-    if (prefix === CB_PREFIX.LEITNER_DUNNO) {
-      await handleDunno(env, callbackQuery, user, chatId, messageId, parts);
-      return;
+    switch (prefix) {
+      case CB_PREFIX.LEITNER_HOME:
+        await handleHome(env, callbackQuery, chatId, messageId);
+        return;
+      case CB_PREFIX.LEITNER_DUNNO:
+        await handleDunno(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_EXIT:
+        await handleExitRequest(env, callbackQuery, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_EXIT_CONFIRM:
+        await handleExitConfirm(env, callbackQuery, user, chatId, messageId);
+        return;
+      case CB_PREFIX.LEITNER_NEXT: {
+        const mode = parseMode(parts[1]);
+        await answerCallbackQuery(env, callbackQuery.id);
+        await removeInlineKeyboard(env, chatId, messageId);
+        await sendLeitnerQuestion(env, user, chatId, mode);
+        return;
+      }
+      case CB_PREFIX.LEITNER_RATE:
+        await handleRating(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_IGNORE:
+        await handleIgnoreWord(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_UNLEECH:
+        await handleUnleech(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER:
+        await handleAnswer(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      default:
+        await answerCallbackQuery(env, callbackQuery.id);
+        return;
     }
-
-    if (prefix === CB_PREFIX.LEITNER_EXIT) {
-      await handleExitRequest(env, callbackQuery, chatId, messageId, parts);
-      return;
-    }
-
-    if (prefix === CB_PREFIX.LEITNER_EXIT_CONFIRM) {
-      await handleExitConfirm(env, callbackQuery, user, chatId, messageId, parts);
-      return;
-    }
-
-    if (prefix === CB_PREFIX.LEITNER_NEXT) {
-      const mode = (parts[1] || "review") as ReviewMode;
-      await answerCallbackQuery(env, callbackQuery.id);
-      // Remove buttons from the message that had "سوال بعدی"
-      await removeInlineKeyboard(env, chatId, messageId);
-      await sendLeitnerQuestion(env, user, chatId, mode);
-      return;
-    }
-
-    if (prefix === CB_PREFIX.LEITNER_RATE) {
-      await handleRating(env, callbackQuery, user, chatId, messageId, parts);
-      return;
-    }
-
-    if (prefix === CB_PREFIX.LEITNER_IGNORE) {
-      await handleIgnoreWord(env, callbackQuery, user, chatId, messageId, parts);
-      return;
-    }
-
-    if (prefix === CB_PREFIX.LEITNER) {
-      await handleAnswer(env, callbackQuery, user, chatId, messageId, parts);
-      return;
-    }
-
-    await answerCallbackQuery(env, callbackQuery.id);
   } catch (error) {
     console.error("Error in handleLeitnerCallback:", error);
     try {
       await answerCallbackQuery(env, callbackQuery.id, "خطایی رخ داد. لطفاً دوباره تلاش کن.");
     } catch {
-      // nothing
+      // nothing more we can do
     }
   }
 }
 
 // --- Sub-handlers ---
+
+async function handleHome(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  chatId: number,
+  messageId: number
+): Promise<void> {
+  await answerCallbackQuery(env, callbackQuery.id);
+  await removeInlineKeyboard(env, chatId, messageId);
+  await sendMessage(env, chatId, "به منوی تمرین‌ها برگشتی 👇", {
+    reply_markup: getTrainingMenuKeyboard(),
+  });
+}
 
 async function handleDunno(
   env: Env,
@@ -460,14 +483,13 @@ async function handleDunno(
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
-  const mode = (parts[2] || "review") as ReviewMode;
+  const mode = parseMode(parts[2]);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
 
-  // Prevent double-submission
   const alreadyAnswered = await queryOne<{ id: number }>(
     env,
     `SELECT id FROM user_word_question_history
@@ -486,52 +508,41 @@ async function handleDunno(
      FROM word_questions q JOIN words w ON q.word_id = w.id WHERE q.id = ?`,
     [questionId]
   );
-
   if (!question) {
     await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد");
     return;
   }
 
   await answerCallbackQuery(env, callbackQuery.id);
-
-  // Remove buttons from the question message
   await removeInlineKeyboard(env, chatId, messageId);
 
   const now = new Date().toISOString();
-
-  // Mark as answered (incorrect) + apply FSRS Again
-  const batchStatements: any[] = [];
-  batchStatements.push(prepare(
+  const batch: any[] = [];
+  batch.push(prepare(
     env,
     `UPDATE user_word_question_history
      SET is_correct = 0, answered_at = ?
      WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`,
     [now, user.id, question.id]
   ));
-
   const fsrsStmts = await prepareUpdateFsrs(env, user.id, question.word_id, Rating.Again);
-  batchStatements.push(...fsrsStmts);
+  batch.push(...fsrsStmts);
+  await env.DB.batch(batch);
 
-  await env.DB.batch(batchStatements);
-
-  // Show the correct answer
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
-
   const replyText =
     `🔴 جواب صحیح: گزینه <b>${correctNum}</b> (${correctText})\n` +
     `کلمه: <b>${question.english}</b>\n` +
     `معنی: <b>${question.persian}</b>`;
 
-  await sendMessage(env, chatId, replyText, {
-    reply_markup: {
-      inline_keyboard: [
-        [ignoreButton(question.id, mode)],
-        [nextButton(mode)],
-        [exitButton(mode)],
-      ],
-    },
-  });
+  const rows: any[][] = [];
+  if (mode === "leech") rows.push([unleechButton(question.id, mode)]);
+  rows.push([ignoreButton(question.id, mode)]);
+  rows.push([nextButton(mode)]);
+  rows.push([exitButton(mode)]);
+
+  await sendMessage(env, chatId, replyText, { reply_markup: { inline_keyboard: rows } });
 }
 
 async function handleExitRequest(
@@ -541,15 +552,13 @@ async function handleExitRequest(
   messageId: number,
   parts: string[]
 ): Promise<void> {
-  const mode = (parts[1] || "review") as ReviewMode;
+  const mode = parseMode(parts[1]);
   await answerCallbackQuery(env, callbackQuery.id);
-
-  // Remove buttons from the previous message
   await removeInlineKeyboard(env, chatId, messageId);
 
-  const confirmText = mode === "review"
-    ? "مطمئنی میخوای از مرور خارج بشی؟"
-    : "مطمئنی میخوای از یادگیری واژه‌های جدید خارج بشی؟";
+  let confirmText = "مطمئنی میخوای از مرور خارج بشی؟";
+  if (mode === "new") confirmText = "مطمئنی میخوای از یادگیری واژه‌های جدید خارج بشی؟";
+  else if (mode === "leech") confirmText = "مطمئنی میخوای از تمرین واژه‌های سخت خارج بشی؟";
 
   await sendMessage(env, chatId, confirmText, {
     reply_markup: {
@@ -568,12 +577,9 @@ async function handleExitConfirm(
   callbackQuery: TelegramCallbackQuery,
   user: DbUser,
   chatId: number,
-  messageId: number,
-  parts: string[]
+  messageId: number
 ): Promise<void> {
   await answerCallbackQuery(env, callbackQuery.id);
-
-  // Remove confirmation buttons
   await removeInlineKeyboard(env, chatId, messageId);
 
   const stats = await getReviewStats(env, user.id, 24);
@@ -588,13 +594,10 @@ async function handleExitConfirm(
   } else {
     summaryText += `هنوز سوالی جواب نداده‌ای.\n`;
   }
-
   summaryText += `\nخسته نباشی! 😊`;
 
-  // Restore the reply keyboard
-  await sendMessage(env, chatId, summaryText, {
-    reply_markup: getTrainingMenuKeyboard(),
-  });
+  // Restore the reply keyboard so the user can navigate again.
+  await sendMessage(env, chatId, summaryText, { reply_markup: getTrainingMenuKeyboard() });
 }
 
 async function handleRating(
@@ -607,81 +610,73 @@ async function handleRating(
 ): Promise<void> {
   const questionId = Number(parts[1]);
   const ratingValue = Number(parts[2]) as Rating;
-  const mode = (parts[3] || "review") as ReviewMode;
+  const mode = parseMode(parts[3]);
 
   if (!Number.isFinite(questionId) || !Number.isFinite(ratingValue)) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
-
   if (![Rating.Again, Rating.Hard, Rating.Good, Rating.Easy].includes(ratingValue)) {
     await answerCallbackQuery(env, callbackQuery.id, "نامعتبر");
     return;
   }
 
-  // Prevent double-rating: check if word was reviewed in last 30 seconds
-  const recentReview = await queryOne<{ id: number }>(
+  // Idempotency guard: a rating is "already applied" if the word has been
+  // reviewed at/after the moment this question was answered. This is robust
+  // (not time-based) and still allows legitimate same-day relearning, because
+  // each relearning attempt is a fresh answer with a newer answered_at.
+  const alreadyRated = await queryOne<{ id: number }>(
     env,
-    `SELECT s.id FROM user_words_sm2 s
+    `SELECT s.id
+     FROM user_words_sm2 s
      JOIN word_questions q ON q.word_id = s.word_id
+     JOIN user_word_question_history h
+          ON h.user_id = s.user_id AND h.word_id = s.word_id
+         AND h.question_id = q.id AND h.context = 'leitner'
      WHERE s.user_id = ? AND q.id = ?
        AND s.last_reviewed_at IS NOT NULL
-       AND (julianday('now') - julianday(s.last_reviewed_at)) * 86400 < 30`,
+       AND h.answered_at IS NOT NULL
+       AND s.last_reviewed_at >= h.answered_at`,
     [user.id, questionId]
   );
-  if (recentReview) {
+  if (alreadyRated) {
     await answerCallbackQuery(env, callbackQuery.id, "امتیاز قبلاً ثبت شده 👍");
     return;
   }
 
   await answerCallbackQuery(env, callbackQuery.id);
-
-  // Remove rating buttons from the answer message
   await removeInlineKeyboard(env, chatId, messageId);
 
-  // Get the question to find the word
   const question = await queryOne<{ word_id: number; level: number }>(
     env,
     `SELECT q.word_id, w.level FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
     [questionId]
   );
-
   if (!question) {
     await sendMessage(env, chatId, "❗️ خطا: سوال پیدا نشد.", {
-      reply_markup: {
-        inline_keyboard: [[nextButton(mode)]],
-      },
+      reply_markup: { inline_keyboard: [[nextButton(mode)], [homeButton()]] },
     });
     return;
   }
 
-  // Apply FSRS rating
-  const batchStatements: any[] = [];
+  const batch: any[] = [];
   const fsrsStmts = await prepareUpdateFsrs(env, user.id, question.word_id, ratingValue);
-  batchStatements.push(...fsrsStmts);
+  batch.push(...fsrsStmts);
 
-  // Award XP only for Good/Easy
   if (ratingValue >= Rating.Good) {
     const xpStmts = prepareXpForLeitner(env, user.id, question.word_id, question.level, true);
-    batchStatements.push(...xpStmts);
+    batch.push(...xpStmts);
   }
+  await env.DB.batch(batch);
 
-  await env.DB.batch(batchStatements);
-
-  // Check streak
   if (ratingValue >= Rating.Good) {
     const streakMsg = await checkAndUpdateStreak(env, user.id);
-    if (streakMsg) {
-      await sendMessage(env, chatId, streakMsg);
-    }
+    if (streakMsg) await sendMessage(env, chatId, streakMsg);
   }
 
-  // Show next button
   const emoji = ratingEmoji(ratingValue);
   await sendMessage(env, chatId, `${emoji} ثبت شد!`, {
-    reply_markup: {
-      inline_keyboard: nextAndExitRows(mode),
-    },
+    reply_markup: { inline_keyboard: nextAndExitRows(mode) },
   });
 }
 
@@ -694,7 +689,7 @@ async function handleIgnoreWord(
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
-  const mode = (parts[2] || "review") as ReviewMode;
+  const mode = parseMode(parts[2]);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -706,7 +701,6 @@ async function handleIgnoreWord(
     `SELECT q.word_id, w.english FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
     [questionId]
   );
-
   if (!question) {
     await answerCallbackQuery(env, callbackQuery.id, "خطا در یافتن واژه");
     return;
@@ -714,15 +708,49 @@ async function handleIgnoreWord(
 
   await markWordAsIgnored(env, user.id, question.word_id);
   await answerCallbackQuery(env, callbackQuery.id, "واژه حذف شد 👌");
-
-  // Remove buttons from question message
   await removeInlineKeyboard(env, chatId, messageId);
 
   await sendMessage(env, chatId, `واژه‌ی <b>${question.english}</b> از چرخه مرور حذف شد ✅`, {
-    reply_markup: {
-      inline_keyboard: nextAndExitRows(mode),
-    },
+    reply_markup: { inline_keyboard: nextAndExitRows(mode) },
   });
+}
+
+async function handleUnleech(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  user: DbUser,
+  chatId: number,
+  messageId: number,
+  parts: string[]
+): Promise<void> {
+  const questionId = Number(parts[1]);
+  const mode = parseMode(parts[2]);
+
+  if (!Number.isFinite(questionId)) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const question = await queryOne<{ word_id: number; english: string }>(
+    env,
+    `SELECT q.word_id, w.english FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
+    [questionId]
+  );
+  if (!question) {
+    await answerCallbackQuery(env, callbackQuery.id, "خطا در یافتن واژه");
+    return;
+  }
+
+  await clearLeech(env, user.id, question.word_id);
+  await answerCallbackQuery(env, callbackQuery.id, "از واژه‌های سخت حذف شد 🎓");
+  await removeInlineKeyboard(env, chatId, messageId);
+
+  await sendMessage(
+    env,
+    chatId,
+    `واژه‌ی <b>${question.english}</b> از فهرست واژه‌های سخت حذف شد 🎓\n(همچنان در مرور عادی باقی می‌ماند)`,
+    { reply_markup: { inline_keyboard: nextAndExitRows(mode) } }
+  );
 }
 
 async function handleAnswer(
@@ -735,19 +763,17 @@ async function handleAnswer(
 ): Promise<void> {
   const questionId = Number(parts[1]);
   const chosenOption = parts[2];
-  const mode = (parts[3] || "review") as ReviewMode;
+  const mode = parseMode(parts[3]);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
-
   if (!chosenOption || !["A", "B", "C", "D"].includes(chosenOption)) {
     await answerCallbackQuery(env, callbackQuery.id, "گزینه نامعتبر");
     return;
   }
 
-  // Prevent double-submission
   const alreadyAnswered = await queryOne<{ id: number }>(
     env,
     `SELECT id FROM user_word_question_history
@@ -770,7 +796,6 @@ async function handleAnswer(
     `,
     [questionId]
   );
-
   if (!question) {
     await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد ❗️");
     return;
@@ -780,18 +805,14 @@ async function handleAnswer(
   const now = new Date().toISOString();
 
   await answerCallbackQuery(env, callbackQuery.id);
-
-  // Remove answer buttons from the question message
   await removeInlineKeyboard(env, chatId, messageId);
 
-  // Record answer in history
   await env.DB.prepare(
     `UPDATE user_word_question_history
      SET is_correct = ?, answered_at = ?
      WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
   ).bind(isCorrect ? 1 : 0, now, user.id, question.id).run();
 
-  // Build feedback message
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
 
@@ -809,46 +830,25 @@ async function handleAnswer(
       `معنی: <b>${question.persian}</b>`;
   }
 
-  // Show FSRS self-assessment buttons
   let ratingButtons: any[];
-
   if (isCorrect) {
     ratingButtons = [
-      {
-        text: `${ratingLabel(Rating.Good)}`,
-        callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Good}:${mode}`,
-        style: "success",
-      },
-      {
-        text: `${ratingLabel(Rating.Easy)}`,
-        callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Easy}:${mode}`,
-        style: "primary",
-      },
+      { text: ratingLabel(Rating.Good), callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Good}:${mode}`, style: "success" },
+      { text: ratingLabel(Rating.Easy), callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Easy}:${mode}`, style: "primary" },
     ];
   } else {
     ratingButtons = [
-      {
-        text: `${ratingLabel(Rating.Again)}`,
-        callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Again}:${mode}`,
-        style: "danger",
-      },
-      {
-        text: `${ratingLabel(Rating.Hard)}`,
-        callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Hard}:${mode}`,
-        style: "primary",
-      },
+      { text: ratingLabel(Rating.Again), callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Again}:${mode}`, style: "danger" },
+      { text: ratingLabel(Rating.Hard), callback_data: `${CB_PREFIX.LEITNER_RATE}:${question.id}:${Rating.Hard}:${mode}`, style: "primary" },
     ];
   }
 
   replyText += `\n\n💡 <i>چقدر این واژه رو بلد بودی؟</i>`;
 
-  await sendMessage(env, chatId, replyText, {
-    reply_markup: {
-      inline_keyboard: [
-        ratingButtons,
-        [ignoreButton(question.id, mode)],
-        [exitButton(mode)],
-      ],
-    },
-  });
+  const rows: any[][] = [ratingButtons];
+  if (mode === "leech") rows.push([unleechButton(question.id, mode)]);
+  rows.push([ignoreButton(question.id, mode)]);
+  rows.push([exitButton(mode)]);
+
+  await sendMessage(env, chatId, replyText, { reply_markup: { inline_keyboard: rows } });
 }
