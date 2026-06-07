@@ -110,7 +110,7 @@ export async function editMessageReplyMarkup(
     body.reply_markup = { inline_keyboard: [] };
   }
   await fetchWithRetry(url, body);
-}}
+}
 
 async function fetchWithRetry(url: string, body: any, retries = 3): Promise<any> {
   for (let i = 0; i < retries; i++) {
