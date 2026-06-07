@@ -104,7 +104,15 @@ export async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Pr
 async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
 
-  if (data.startsWith(`${CB_PREFIX.LEITNER}:`) || data.startsWith(`${CB_PREFIX.LEITNER_IGNORE}:`)) {
+  if (
+    data.startsWith(`${CB_PREFIX.LEITNER}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_IGNORE}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_RATE}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_NEXT}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_EXIT}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_EXIT_CONFIRM}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_DUNNO}:`)
+  ) {
     await handleLeitnerCallback(env, callbackQuery);
     return;
   }
