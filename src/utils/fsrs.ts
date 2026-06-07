@@ -256,7 +256,7 @@ export function ratingLabel(rating: Rating): string {
   switch (rating) {
     case Rating.Again: return "اصلاً یادم نبود";
     case Rating.Hard: return "سخت بود";
-    case Rating.Good: return "خوب بود";
+    case Rating.Good: return "بد نبود";
     case Rating.Easy: return "کاملاً بلد بودم";
   }
 }

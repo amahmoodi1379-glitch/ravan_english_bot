@@ -107,8 +107,45 @@ export async function pickNextReviewWord(env: Env, userId: number): Promise<DbWo
 
 /**
  * Pick the next new word for the user to learn.
+ * Skips words with the same English spelling as the most recently reviewed word
+ * to avoid boring repetition of homographs.
  */
 export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord | null> {
+  // Get the last word this user interacted with
+  const lastWord = await queryOne<{ english: string }>(
+    env,
+    `SELECT w.english FROM user_words_sm2 s
+     JOIN words w ON w.id = s.word_id
+     WHERE s.user_id = ?
+     ORDER BY s.created_at DESC LIMIT 1`,
+    [userId]
+  );
+
+  const lastEnglish = lastWord?.english ?? null;
+
+  // If we have a last word, exclude words with same english text
+  if (lastEnglish) {
+    const row = await queryOne<DbWord>(
+      env,
+      `
+      SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+      FROM words w
+      WHERE w.is_active = 1
+        AND LOWER(w.english) != LOWER(?)
+        AND NOT EXISTS (
+          SELECT 1 FROM user_words_sm2 s
+          WHERE s.user_id = ? AND s.word_id = w.id
+        )
+      ORDER BY w.order_index ASC, w.id ASC
+      LIMIT 1
+      `,
+      [lastEnglish, userId]
+    );
+
+    if (row) return row;
+  }
+
+  // Fallback: just pick the next one in order (even if same english)
   const row = await queryOne<DbWord>(
     env,
     `
