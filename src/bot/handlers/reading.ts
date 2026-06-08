@@ -53,7 +53,7 @@ function buildReadingInlineKeyboard(
   // Navigation row
   const navRow: any[] = [];
   if (currentPage > 1) {
-    navRow.push({ text: "▶️ صفحه قبل", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage - 1}` });
+    navRow.push({ text: "صفحه قبل ▶️", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage - 1}` });
   }
   if (currentPage < totalPages) {
     navRow.push({ text: "◀️ صفحه بعد", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage + 1}` });

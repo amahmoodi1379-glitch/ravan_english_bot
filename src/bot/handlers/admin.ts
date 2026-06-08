@@ -227,6 +227,8 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
 
     case 'await_announcement_confirm':
       if (text === ADMIN_SUBMENU_BUTTON_CONFIRM) {
+        // Immediately transition state to prevent double-send
+        await setAdminState(env, telegramId, 'admin', { action: 'menu' });
         await sendAnnouncement(env, chatId, telegramId, admin, state.announcement);
         return true;
       }
@@ -502,14 +504,12 @@ async function sendAnnouncement(
 
   await sendMessage(env, adminChatId,
     `📤 <b>شروع ارسال اطلاعیه</b>\n\nتعداد کاربران: ${total}\n\nارسال شروع شد...`,
-    { parse_mode: "HTML" }
+    { parse_mode: "HTML", reply_markup: getAdminMenuKeyboard() }
   );
 
   let sent = 0;
   let failed = 0;
   const errors: string[] = [];
-  const milestones = [0.25, 0.5, 0.75, 1.0];
-  let nextMilestoneIndex = 0;
 
   for (let i = 0; i < users.length; i++) {
     const user = users[i];
@@ -522,18 +522,9 @@ async function sendAnnouncement(
       if (errors.length < 5) errors.push(`${user.telegram_id}: ${errMsg}`);
     }
 
-    const progress = (i + 1) / total;
-    if (nextMilestoneIndex < milestones.length && progress >= milestones[nextMilestoneIndex]) {
-      const pct = Math.round(milestones[nextMilestoneIndex] * 100);
-      await sendMessage(env, adminChatId,
-        `📊 <b>گزارش پیشرفت ${pct}%</b>\n✅ ارسال شده: ${sent}\n❌ ناموفق: ${failed}\n📤 کل: ${i + 1}/${total}`,
-        { parse_mode: "HTML" }
-      );
-      nextMilestoneIndex++;
-    }
-
-    if (i < users.length - 1) {
-      await sleep(1000);
+    // Minimal delay to avoid Telegram rate limits (free plan has 30s CPU timeout)
+    if (i < users.length - 1 && (i + 1) % 25 === 0) {
+      await sleep(100);
     }
   }
 
