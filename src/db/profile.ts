@@ -17,7 +17,12 @@ export interface ActivityStats {
   period: ActivityPeriod;
   xp: number;
   leitner_questions: number;
+  leitner_correct: number;
+  leitner_incorrect: number;
+  new_words_learned: number;
   reading_sets: number;
+  reading_questions_correct: number;
+  reading_questions_total: number;
 }
 
 export interface NameChangeResult {
@@ -119,9 +124,15 @@ export async function getUserActivityStats(
 
   let xp = 0;
   let leitnerQuestions = 0;
+  let leitnerCorrect = 0;
+  let leitnerIncorrect = 0;
+  let newWordsLearned = 0;
   let readingSets = 0;
+  let readingQuestionsCorrect = 0;
+  let readingQuestionsTotal = 0;
 
   if (!sinceExpr) {
+    // "all time" period
     const xpRow = await queryOne<{ xp: number | null }>(
       env,
       `SELECT xp_total AS xp FROM users WHERE id = ?`,
@@ -129,12 +140,24 @@ export async function getUserActivityStats(
     );
     xp = xpRow?.xp ?? 0;
 
-    const lRow = await queryOne<{ cnt: number }>(
+    const lRow = await queryOne<{ cnt: number; correct: number; incorrect: number }>(
       env,
-      `SELECT COUNT(*) AS cnt FROM user_word_question_history WHERE user_id = ? AND context = 'leitner'`,
+      `SELECT COUNT(*) AS cnt,
+              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
+              COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect
+       FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL`,
       [userId]
     );
     leitnerQuestions = lRow?.cnt ?? 0;
+    leitnerCorrect = lRow?.correct ?? 0;
+    leitnerIncorrect = lRow?.incorrect ?? 0;
+
+    const newRow = await queryOne<{ cnt: number }>(
+      env,
+      `SELECT COUNT(*) AS cnt FROM user_words_sm2 WHERE user_id = ? AND ignored = 0`,
+      [userId]
+    );
+    newWordsLearned = newRow?.cnt ?? 0;
 
     const rRow = await queryOne<{ cnt: number }>(
       env,
@@ -142,7 +165,18 @@ export async function getUserActivityStats(
       [userId]
     );
     readingSets = rRow?.cnt ?? 0;
+
+    const rqRow = await queryOne<{ total: number; correct: number }>(
+      env,
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct
+       FROM user_text_question_history WHERE user_id = ? AND answered_at IS NOT NULL`,
+      [userId]
+    );
+    readingQuestionsTotal = rqRow?.total ?? 0;
+    readingQuestionsCorrect = rqRow?.correct ?? 0;
   } else {
+    // Time-bounded period
     const xpRow = await queryOne<{ xp: number | null }>(
       env,
       `SELECT COALESCE(SUM(xp_delta), 0) AS xp FROM activity_log WHERE user_id = ? AND created_at >= ${sinceExpr}`,
@@ -150,12 +184,24 @@ export async function getUserActivityStats(
     );
     xp = xpRow?.xp ?? 0;
 
-    const lRow = await queryOne<{ cnt: number }>(
+    const lRow = await queryOne<{ cnt: number; correct: number; incorrect: number }>(
       env,
-      `SELECT COUNT(*) AS cnt FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at >= ${sinceExpr}`,
+      `SELECT COUNT(*) AS cnt,
+              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
+              COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect
+       FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL AND answered_at >= ${sinceExpr}`,
       [userId]
     );
     leitnerQuestions = lRow?.cnt ?? 0;
+    leitnerCorrect = lRow?.correct ?? 0;
+    leitnerIncorrect = lRow?.incorrect ?? 0;
+
+    const newRow = await queryOne<{ cnt: number }>(
+      env,
+      `SELECT COUNT(*) AS cnt FROM user_words_sm2 WHERE user_id = ? AND ignored = 0 AND created_at >= ${sinceExpr}`,
+      [userId]
+    );
+    newWordsLearned = newRow?.cnt ?? 0;
 
     const rRow = await queryOne<{ cnt: number }>(
       env,
@@ -163,12 +209,27 @@ export async function getUserActivityStats(
       [userId]
     );
     readingSets = rRow?.cnt ?? 0;
+
+    const rqRow = await queryOne<{ total: number; correct: number }>(
+      env,
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct
+       FROM user_text_question_history WHERE user_id = ? AND answered_at IS NOT NULL AND answered_at >= ${sinceExpr}`,
+      [userId]
+    );
+    readingQuestionsTotal = rqRow?.total ?? 0;
+    readingQuestionsCorrect = rqRow?.correct ?? 0;
   }
 
   return {
     period,
     xp,
     leitner_questions: leitnerQuestions,
-    reading_sets: readingSets
+    leitner_correct: leitnerCorrect,
+    leitner_incorrect: leitnerIncorrect,
+    new_words_learned: newWordsLearned,
+    reading_sets: readingSets,
+    reading_questions_correct: readingQuestionsCorrect,
+    reading_questions_total: readingQuestionsTotal,
   };
 }

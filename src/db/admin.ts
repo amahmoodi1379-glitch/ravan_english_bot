@@ -113,7 +113,7 @@ export async function banUser(env: Env, userId: number, banReason?: string, bann
   const result = await execute(
     env,
     "UPDATE users SET is_banned = 1, banned_until = ?, banned_by_admin_id = ?, ban_reason = ?, updated_at = datetime('now') WHERE id = ?",
-    [bannedUntil, bannedByAdminId, banReason, userId]
+    [bannedUntil, bannedByAdminId ?? null, banReason ?? null, userId]
   );
 
   return result.meta.changes > 0;

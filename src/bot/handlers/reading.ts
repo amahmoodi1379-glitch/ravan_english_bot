@@ -1,11 +1,10 @@
 import { Env } from "../../types";
 import { TelegramCallbackQuery } from "../router";
-import { sendMessage, answerCallbackQuery } from "../telegram-api";
+import { sendMessage, answerCallbackQuery, editMessageText } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import {
   getReadingTextsCount,
   getPaginatedReadingTexts,
-  getReadingTextByTitle
 } from "../../db/texts";
 import {
   createReadingSession,
@@ -21,7 +20,7 @@ import {
 import { queryAll, queryOne, prepare } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
-import { getPaginatedReadingKeyboard, getMainMenuKeyboard } from "../keyboards";
+import { getMainMenuKeyboard, getTrainingMenuKeyboard } from "../keyboards";
 import { optionLetterToNumber } from "../../utils/options";
 
 interface SummaryQuestionRow {
@@ -34,12 +33,47 @@ interface SummaryQuestionRow {
   is_correct: number | null;
 }
 
-const ITEMS_PER_PAGE = 6;
+const ITEMS_PER_PAGE = 20;
+
+/**
+ * Build inline keyboard for reading text list with pagination.
+ */
+function buildReadingInlineKeyboard(
+  texts: { id: number; title: string }[],
+  currentPage: number,
+  totalPages: number
+): any {
+  const keyboard: any[][] = [];
+
+  // Each text gets its own row as an inline button
+  for (const t of texts) {
+    keyboard.push([{ text: `📄 ${t.title}`, callback_data: `${CB_PREFIX.READING_TEXT}:${t.id}` }]);
+  }
+
+  // Navigation row
+  const navRow: any[] = [];
+  if (currentPage > 1) {
+    navRow.push({ text: "▶️ صفحه قبل", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage - 1}` });
+  }
+  if (currentPage < totalPages) {
+    navRow.push({ text: "◀️ صفحه بعد", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage + 1}` });
+  }
+  if (navRow.length > 0) {
+    keyboard.push(navRow);
+  }
+
+  // Back button
+  keyboard.push([{ text: "⬅️ بازگشت به منوی تمرین", callback_data: `${CB_PREFIX.READING_TEXT}:back` }]);
+
+  return { inline_keyboard: keyboard };
+}
 
 export async function startReadingMenuForUser(env: Env, chatId: number, page: number = 1): Promise<void> {
   const totalCount = await getReadingTextsCount(env);
   if (totalCount === 0) {
-    await sendMessage(env, chatId, "فعلاً هیچ متنی برای تست درک مطلب ثبت نشده ❗️");
+    await sendMessage(env, chatId, "فعلاً هیچ متنی برای تست درک مطلب ثبت نشده ❗️", {
+      reply_markup: getTrainingMenuKeyboard()
+    });
     return;
   }
 
@@ -51,45 +85,23 @@ export async function startReadingMenuForUser(env: Env, chatId: number, page: nu
   const offset = (page - 1) * ITEMS_PER_PAGE;
 
   const texts = await getPaginatedReadingTexts(env, ITEMS_PER_PAGE, offset);
-  const titles = texts.map(t => t.title);
+  const textItems = texts.map(t => ({ id: t.id, title: t.title }));
 
   await sendMessage(
     env,
     chatId,
-    `📚 لیست متون درک مطلب (صفحه ${page} از ${totalPages})\n\nیکی از متن‌های زیر را انتخاب کن:`,
+    `📚 <b>متون درک مطلب</b> (صفحه ${page} از ${totalPages})\n\nیکی از متن‌ها رو انتخاب کن:`,
     {
-      reply_markup: getPaginatedReadingKeyboard(titles, page, totalPages)
+      reply_markup: buildReadingInlineKeyboard(textItems, page, totalPages)
     }
   );
 }
 
-export async function handleReadingTitleSelection(env: Env, user: DbUser, chatId: number, title: string): Promise<boolean> {
-  const textRow = await getReadingTextByTitle(env, title);
-  if (!textRow) {
-    return false;
-  }
-
-  const activeSession = await queryOne<ReadingSession>(
-    env,
-    `SELECT * FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
-    [user.id]
-  );
-  if (activeSession) {
-    await env.DB.prepare(`UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`).bind(activeSession.id).run();
-  }
-
-  const session = await createReadingSession(env, user.id, textRow.id, GAME_CONFIG.READING_QUESTION_COUNT);
-
-  await sendMessage(env, chatId, `متن "<b>${textRow.title}</b>" انتخاب شد ✅\nتست شروع شد... 👇`, {
-    reply_markup: { remove_keyboard: true }
-  });
-
-  const sent = await sendNextReadingQuestion(env, user, session, chatId);
-
-  if (!sent) {
-    await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
-  }
-  return true;
+/**
+ * @deprecated No longer used — reading uses inline keyboard now.
+ */
+export async function handleReadingTitleSelection(_env: Env, _user: DbUser, _chatId: number, _title: string): Promise<boolean> {
+  return false;
 }
 
 export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
@@ -100,29 +112,87 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
     return;
   }
 
-  const textId = Number(parts[1]);
-  if (!Number.isFinite(textId)) {
-    await answerCallbackQuery(env, callbackQuery.id);
-    return;
-  }
-
+  const value = parts[1];
   const message = callbackQuery.message;
   if (!message) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
   const chatId = message.chat.id;
+  const messageId = message.message_id;
+
+  // Handle "back to training menu"
+  if (value === "back") {
+    await answerCallbackQuery(env, callbackQuery.id);
+    await editMessageText(env, chatId, messageId, "به منوی تمرین‌ها برگشتی 👇");
+    await sendMessage(env, chatId, "یکی از گزینه‌ها رو انتخاب کن:", {
+      reply_markup: getTrainingMenuKeyboard()
+    });
+    return;
+  }
+
+  // Handle pagination: page_N
+  if (value.startsWith("page_")) {
+    const page = parseInt(value.replace("page_", ""), 10);
+    if (!isNaN(page) && page >= 1) {
+      await answerCallbackQuery(env, callbackQuery.id);
+
+      // Re-render the text list on the same message
+      const totalCount = await getReadingTextsCount(env);
+      if (totalCount === 0) {
+        await editMessageText(env, chatId, messageId, "فعلاً هیچ متنی برای تست درک مطلب ثبت نشده ❗️");
+        return;
+      }
+      const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
+      const safePage = Math.min(Math.max(page, 1), totalPages);
+      const offset = (safePage - 1) * ITEMS_PER_PAGE;
+      const texts = await getPaginatedReadingTexts(env, ITEMS_PER_PAGE, offset);
+      const textItems = texts.map(t => ({ id: t.id, title: t.title }));
+
+      await editMessageText(
+        env,
+        chatId,
+        messageId,
+        `📚 <b>متون درک مطلب</b> (صفحه ${safePage} از ${totalPages})\n\nیکی از متن‌ها رو انتخاب کن:`,
+        { reply_markup: buildReadingInlineKeyboard(textItems, safePage, totalPages) }
+      );
+      return;
+    }
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  // Handle text selection: numeric text ID
+  const textId = Number(value);
+  if (!Number.isFinite(textId)) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
 
   const user = await getOrCreateUser(env, callbackQuery.from);
+
+  // Cancel any existing active reading session for this user
+  const activeSession = await queryOne<ReadingSession>(
+    env,
+    `SELECT * FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
+    [user.id]
+  );
+  if (activeSession) {
+    await env.DB.prepare(`UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`).bind(activeSession.id).run();
+  }
 
   const session = await createReadingSession(env, user.id, textId, GAME_CONFIG.READING_QUESTION_COUNT);
 
   await answerCallbackQuery(env, callbackQuery.id);
-  await sendMessage(env, chatId, "تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
+
+  // Update the text list message to indicate selection
+  await editMessageText(env, chatId, messageId, "📖 تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   if (!sent) {
-    await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
+    await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️\nبه منوی تمرین‌ها برمی‌گردی 👇", {
+      reply_markup: getTrainingMenuKeyboard()
+    });
   }
 }
 
@@ -155,8 +225,8 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
     await env.DB.prepare("UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?").bind(sessionId).run();
 
-    await sendMessage(env, chatId, "تست متوقف شد. به منوی اصلی برگشتی 👇", {
-      reply_markup: getMainMenuKeyboard()
+    await sendMessage(env, chatId, "تست متوقف شد. به منوی تمرین‌ها برگشتی 👇", {
+      reply_markup: getTrainingMenuKeyboard()
     });
     return;
   }
@@ -373,7 +443,7 @@ async function sendReadingSummary(
   await sendMessage(env, chatId, text);
 
   await sendMessage(env, chatId, "خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟", {
-    reply_markup: getMainMenuKeyboard()
+    reply_markup: getTrainingMenuKeyboard()
   });
 }
 

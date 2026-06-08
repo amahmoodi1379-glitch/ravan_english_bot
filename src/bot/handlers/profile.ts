@@ -13,6 +13,7 @@ import {
 } from "../../db/profile";
 import { CB_PREFIX, TIME_ZONE_OFFSET } from "../../config/constants";
 import { AVATARS, getAvatarEmoji, getAvatarLabel } from "../avatars";
+import { toJalaliString } from "../../utils/jalali";
 
 async function getStreakInfo(env: Env, userId: number): Promise<number> {
   const row = await env.DB.prepare(`SELECT streak_count, last_streak_date FROM users WHERE id = ?`).bind(userId).first();
@@ -225,12 +226,30 @@ function periodLabel(period: ActivityPeriod): string {
 function buildStatsText(stats: ActivityStats): string {
   const label = periodLabel(stats.period);
 
-  return (
-    `📈 <b>گزارش عملکرد (${label})</b>\n\n` +
-    `🧠 سوال‌های لایتنر: <b>${stats.leitner_questions}</b>\n` +
-    `📖 درک مطلب (Reading): <b>${stats.reading_sets}</b>\n` +
-    `\n⭐️ <b>XP کسب شده: ${stats.xp}</b>`
-  );
+  let text = `📈 <b>گزارش عملکرد (${label})</b>\n\n`;
+
+  // Leitner vocabulary section
+  text += `🧠 <b>واژگان (لایتنر):</b>\n`;
+  text += `  • سوالات پاسخ‌داده: <b>${stats.leitner_questions}</b>\n`;
+  if (stats.leitner_questions > 0) {
+    const accuracy = Math.round((stats.leitner_correct / stats.leitner_questions) * 100);
+    text += `  • ✅ درست: <b>${stats.leitner_correct}</b> | ❌ غلط: <b>${stats.leitner_incorrect}</b>\n`;
+    text += `  • 📊 دقت: <b>${accuracy}%</b>\n`;
+  }
+  text += `  • 🆕 واژه‌های یادگرفته: <b>${stats.new_words_learned}</b>\n`;
+
+  // Reading section
+  text += `\n📖 <b>درک مطلب:</b>\n`;
+  text += `  • تست‌های انجام‌شده: <b>${stats.reading_sets}</b>\n`;
+  if (stats.reading_questions_total > 0) {
+    const rAccuracy = Math.round((stats.reading_questions_correct / stats.reading_questions_total) * 100);
+    text += `  • سوالات: <b>${stats.reading_questions_correct}</b> درست از <b>${stats.reading_questions_total}</b> (${rAccuracy}%)\n`;
+  }
+
+  // Total XP
+  text += `\n⭐️ <b>XP کسب شده: ${stats.xp}</b>`;
+
+  return text;
 }
 
 export async function handleStatsCallback(
@@ -281,17 +300,14 @@ export async function showProfileSummary(env: Env, user: DbUser, chatId: number)
   const xpTotal = profile?.xp_total ?? 0;
 
   const createdAt = profile?.created_at ?? "";
-  const createdDate = createdAt ? createdAt.substring(0, 10) : "-";
-  const lastSeen = profile?.last_seen_at ?? "";
-  const lastSeenDate = lastSeen ? lastSeen.substring(0, 10) : "-";
+  const createdDateJalali = createdAt ? toJalaliString(createdAt) : "-";
 
   const text =
     `🪪 <b>کارت شناسایی زبان‌آموز</b>\n\n` +
     `👤 نام: <b>${displayName}</b>\n` +
     `⭐️ امتیاز کل: <b>${xpTotal}</b>\n` +
     `🎭 آواتار: ${avatarEmoji}\n` +
-    `📅 تاریخ عضویت: <b>${createdDate}</b>\n` +
-    `⏰ آخرین بازدید: <b>${lastSeenDate}</b>`;
+    `📅 تاریخ عضویت: <b>${createdDateJalali}</b>`;
 
   await sendMessage(env, chatId, text, {
     reply_markup: getProfileMenuKeyboard()
