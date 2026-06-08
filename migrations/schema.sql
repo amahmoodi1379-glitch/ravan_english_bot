@@ -108,8 +108,6 @@ CREATE INDEX IF NOT EXISTS idx_user_words_next_review
   ON user_words_sm2(user_id, next_review_date);
 CREATE INDEX IF NOT EXISTS idx_leitner_compound
   ON user_words_sm2(user_id, ignored, next_review_date);
-CREATE INDEX IF NOT EXISTS idx_sm2_user_ignored_active_review
-  ON user_words_sm2(user_id, ignored, next_review_date);
 CREATE INDEX IF NOT EXISTS idx_user_words_fsrs_schedule
   ON user_words_sm2(user_id, ignored, card_state, next_review_date);
 
@@ -152,8 +150,6 @@ CREATE TABLE IF NOT EXISTS user_word_question_history (
 
 CREATE INDEX IF NOT EXISTS idx_uwqh_user_word
   ON user_word_question_history(user_id, word_id);
-CREATE INDEX IF NOT EXISTS idx_history_check
-  ON user_word_question_history(user_id, question_id, context);
 CREATE INDEX IF NOT EXISTS idx_uwqh_user_question_context_answered
   ON user_word_question_history(user_id, question_id, context, answered_at);
 
@@ -171,7 +167,6 @@ CREATE TABLE IF NOT EXISTS activity_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_log(user_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_activity_created_at ON activity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_activity_created_xp ON activity_log(created_at, xp_delta);
 CREATE INDEX IF NOT EXISTS idx_activity_user_created_xp
   ON activity_log(created_at, user_id, xp_delta);
@@ -206,7 +201,6 @@ CREATE TABLE IF NOT EXISTS text_questions (
   FOREIGN KEY (text_id) REFERENCES reading_texts(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_text_questions_text ON text_questions(text_id);
 CREATE INDEX IF NOT EXISTS idx_text_questions_text_type ON text_questions(text_id, question_type);
 
 CREATE TABLE IF NOT EXISTS reading_sessions (
@@ -297,7 +291,6 @@ CREATE TABLE IF NOT EXISTS duel_questions (
   FOREIGN KEY (word_question_id) REFERENCES word_questions(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_duel_questions_duel ON duel_questions(duel_id, question_index);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_duel_questions
   ON duel_questions(duel_id, question_index);
 
@@ -340,7 +333,6 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
   expires_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token);
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
 
 
@@ -383,8 +375,6 @@ CREATE TABLE IF NOT EXISTS admins (
   created_by_admin_id INTEGER,
   FOREIGN KEY (created_by_admin_id) REFERENCES admins(id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_admins_telegram_id ON admins(telegram_id);
 
 CREATE TABLE IF NOT EXISTS announcements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -432,7 +422,6 @@ CREATE TABLE IF NOT EXISTS user_analytics (
   UNIQUE(date, period_type)
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_analytics_date_period ON user_analytics(date, period_type);
 CREATE INDEX IF NOT EXISTS idx_user_analytics_period_type ON user_analytics(period_type);
 
 
@@ -495,8 +484,6 @@ CREATE TABLE IF NOT EXISTS custom_quiz_answers (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cq_questions_quiz_index ON custom_quiz_questions(quiz_id, question_index);
-CREATE INDEX IF NOT EXISTS idx_cq_questions_quiz ON custom_quiz_questions(quiz_id);
-CREATE INDEX IF NOT EXISTS idx_cq_links_token ON custom_quiz_links(link_token);
 CREATE INDEX IF NOT EXISTS idx_cq_attempts_quiz_user ON custom_quiz_attempts(quiz_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_cq_attempts_user ON custom_quiz_attempts(user_id);
 CREATE INDEX IF NOT EXISTS idx_cq_answers_attempt ON custom_quiz_answers(attempt_id);
