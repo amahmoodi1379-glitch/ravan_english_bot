@@ -40,7 +40,8 @@ export async function copyMessage(
 export async function answerCallbackQuery(
   env: Env,
   callbackQueryId: string,
-  text?: string
+  text?: string,
+  showAlert: boolean = true
 ): Promise<void> {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`;
 
@@ -50,7 +51,7 @@ export async function answerCallbackQuery(
 
   if (text) {
     body.text = text;
-    body.show_alert = true;
+    body.show_alert = showAlert;
   }
 
   await fetchWithRetry(url, body);
@@ -81,7 +82,7 @@ export async function editMessageText(
   messageId: number,
   text: string,
   extra?: Record<string, unknown>
-): Promise<void> {
+): Promise<any> {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/editMessageText`;
   const body: Record<string, unknown> = {
     chat_id: chatId,
@@ -90,7 +91,7 @@ export async function editMessageText(
     parse_mode: "HTML",
     ...extra
   };
-  await fetchWithRetry(url, body);
+  return await fetchWithRetry(url, body);
 }
 
 export async function editMessageReplyMarkup(

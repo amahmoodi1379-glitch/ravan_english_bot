@@ -103,16 +103,24 @@ async function sendQuizQuestion(
   quizId: number,
   attemptId: number,
   questionIndex: number,
-  messageId?: number
+  messageId?: number,
+  opts?: { questions?: any[]; chosenOverride?: string | null }
 ): Promise<void> {
-  const questions = await getQuizQuestions(env, quizId);
+  const questions = opts?.questions ?? await getQuizQuestions(env, quizId);
   if (!questions.length) return;
 
   const q = questions[questionIndex - 1];
   if (!q) return;
 
-  const ans = await getAnswerForQuestion(env, attemptId, q.id);
-  const chosen = ans?.chosen_option;
+  // Use explicit chosen override when provided (avoids D1 read-after-write lag);
+  // otherwise read the saved answer from DB.
+  let chosen: string | null | undefined;
+  if (opts && 'chosenOverride' in opts) {
+    chosen = opts.chosenOverride;
+  } else {
+    const ans = await getAnswerForQuestion(env, attemptId, q.id);
+    chosen = ans?.chosen_option;
+  }
 
   const text =
     `❓ <b>سوال ${questionIndex} از ${questions.length}</b>\n\n` +
@@ -126,11 +134,11 @@ async function sendQuizQuestion(
   const rows: any[][] = [];
 
   // Option buttons
-  const opts = ['1', '2', '3', '4'].map(opt => ({
+  const optButtons = ['1', '2', '3', '4'].map(opt => ({
     text: chosen === opt ? `✅ ${opt}` : opt,
     callback_data: `${CB_PREFIX.QUIZ}:ans:${attemptId}:${q.id}:${opt}`
   }));
-  rows.push(opts);
+  rows.push(optButtons);
 
   // Navigation
   const navRow: any[] = [];
@@ -153,11 +161,14 @@ async function sendQuizQuestion(
   const markup = { inline_keyboard: rows };
 
   if (messageId) {
-    try {
-      await editMessageText(env, chatId, messageId, text, { reply_markup: markup });
-    } catch {
-      // If edit fails (message unchanged or too old), send new message
-      await sendMessage(env, chatId, text, { reply_markup: markup });
+    const result = await editMessageText(env, chatId, messageId, text, { reply_markup: markup });
+    // If the edit failed for any reason OTHER than "not modified", send a fresh
+    // message so the user is never left without an updated question.
+    if (result && result.ok === false) {
+      const desc: string = result.description || "";
+      if (!desc.includes("message is not modified")) {
+        await sendMessage(env, chatId, text, { reply_markup: markup });
+      }
     }
   } else {
     await sendMessage(env, chatId, text, { reply_markup: markup });
@@ -269,30 +280,37 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   // --- Handle quiz actions ---
 
   if (action === "ans") {
-    // Save answer and refresh the SAME question (showing the selection)
+    // Save answer, then re-render the SAME question with the selection shown.
+    // We pass chosenOverride explicitly to avoid D1 read-after-write lag making
+    // the re-render identical to the current message (which silently fails).
     await saveAnswer(env, attemptId, id, extra);
-    await answerCallbackQuery(env, callbackQuery.id, `✅ گزینه ${extra} ثبت شد`);
+    await answerCallbackQuery(env, callbackQuery.id, `گزینه ${extra} ثبت شد ✅`, false);
 
-    // Find which question index this is
     const questions = await getQuizQuestions(env, quiz.id);
     const qIndex = questions.findIndex(q => q.id === id);
     const currentIndex = qIndex >= 0 ? qIndex + 1 : (attempt.current_question_index || 1);
 
     await updateCurrentQuestionIndex(env, attemptId, currentIndex);
-    await sendQuizQuestion(env, chatId, quiz.id, attemptId, currentIndex, messageId);
+    await sendQuizQuestion(env, chatId, quiz.id, attemptId, currentIndex, messageId, {
+      questions,
+      chosenOverride: extra,
+    });
     return;
   }
 
   if (action === "unans") {
-    // Remove answer (set to null)
+    // Remove answer (set to null) and re-render with no selection.
     await saveAnswer(env, attemptId, id, null);
-    await answerCallbackQuery(env, callbackQuery.id, "❌ جواب حذف شد");
+    await answerCallbackQuery(env, callbackQuery.id, "جواب حذف شد ❌", false);
 
     const questions = await getQuizQuestions(env, quiz.id);
     const qIndex = questions.findIndex(q => q.id === id);
     const currentIndex = qIndex >= 0 ? qIndex + 1 : (attempt.current_question_index || 1);
 
-    await sendQuizQuestion(env, chatId, quiz.id, attemptId, currentIndex, messageId);
+    await sendQuizQuestion(env, chatId, quiz.id, attemptId, currentIndex, messageId, {
+      questions,
+      chosenOverride: null,
+    });
     return;
   }
 
