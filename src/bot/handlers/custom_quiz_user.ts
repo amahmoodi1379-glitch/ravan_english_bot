@@ -6,7 +6,7 @@ import {
   getQuizLinkByToken, getQuizById, getQuizQuestions,
   createAttempt, getAttemptByQuizAndUser,
   getAttempt, finishAttempt, saveAnswer, updateCurrentQuestionIndex,
-  getAnswerForQuestion, getInProgressAttemptsCount,
+  getAnswerForQuestion, getAnsweredCount,
   getLeaderboardWithNegative, getLeaderboardWithoutNegative,
   getUserRankWithNegative, getUserRankWithoutNegative,
   getFinishedAttemptsWithChatId,
@@ -31,11 +31,15 @@ export async function handleQuizStart(env: Env, user: any, chatId: number, token
     await sendMessage(env, chatId, "⚠️ این آزمون فعال نیست.");
     return;
   }
-  const questions = await getQuizQuestions(env, quiz.id);
+
+  // Parallel: fetch questions and existing attempt together
+  const [questions, existing] = await Promise.all([
+    getQuizQuestions(env, quiz.id),
+    getAttemptByQuizAndUser(env, quiz.id, user.id),
+  ]);
   if (!questions.length) { await sendMessage(env, chatId, "⚠️ آزمون هنوز سوالی ندارد."); return; }
 
   // Check for existing attempt
-  const existing = await getAttemptByQuizAndUser(env, quiz.id, user.id);
 
   if (existing && existing.status === 'in_progress') {
     // Check if time expired
@@ -185,15 +189,15 @@ async function autoFinish(env: Env, chatId: number, userId: number, attemptId: n
 
 async function pushResultsToAllFinished(env: Env, quizId: number, excludeUserId: number): Promise<void> {
   const finishedAttempts = await getFinishedAttemptsWithChatId(env, quizId);
-  for (const a of finishedAttempts) {
-    if (a.user_id === excludeUserId) continue;
-    if (!a.chat_id) continue;
-    try {
-      await sendMessage(env, a.chat_id,
+  const notifications = finishedAttempts
+    .filter(a => a.user_id !== excludeUserId && a.chat_id)
+    .map(a =>
+      sendMessage(env, a.chat_id,
         "📊 <b>نتایج نهایی آزمون آماده شد!</b>\n\nبرای مشاهده نتایج، لینک آزمون رو دوباره باز کن.",
-        { parse_mode: "HTML" });
-    } catch {}
-  }
+        { parse_mode: "HTML" }
+      ).catch(() => {})
+    );
+  await Promise.all(notifications);
 }
 
 export async function handleQuizUserCallback(env: Env, callbackQuery: any): Promise<void> {
@@ -303,13 +307,11 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   if (action === "finish") {
     await answerCallbackQuery(env, callbackQuery.id);
 
-    // Count answered and unanswered
-    const questions = await getQuizQuestions(env, quiz.id);
-    let answeredCount = 0;
-    for (const q of questions) {
-      const ans = await getAnswerForQuestion(env, attemptId, q.id);
-      if (ans && ans.chosen_option) answeredCount++;
-    }
+    // Single query to count answered questions
+    const [questions, answeredCount] = await Promise.all([
+      getQuizQuestions(env, quiz.id),
+      getAnsweredCount(env, attemptId),
+    ]);
     const unansweredCount = questions.length - answeredCount;
 
     let confirmText = "🏁 <b>آیا مطمئنی میخوای آزمون رو تموم کنی؟</b>\n\n";
@@ -362,11 +364,13 @@ async function handleExplain(env: Env, chatId: number, messageId: number, userId
   const attempt = await getAttempt(env, attemptId);
   if (!attempt || attempt.user_id !== userId) return;
 
-  const questions = await getQuizQuestions(env, attempt.quiz_id);
+  // Parallel: fetch questions and user's answer together
+  const [questions, ans] = await Promise.all([
+    getQuizQuestions(env, attempt.quiz_id),
+    getAnswerForQuestion(env, attemptId, questionId),
+  ]);
   const question = questions.find(q => q.id === questionId);
   if (!question) return;
-
-  const ans = await getAnswerForQuestion(env, attemptId, questionId);
   const userAnswer = ans?.chosen_option || "نزده";
   const isCorrect = ans?.chosen_option === question.correct_option;
 
@@ -414,9 +418,14 @@ async function handleReturnResults(env: Env, chatId: number, messageId: number, 
 // --- Results ---
 
 async function sendResults(env: Env, chatId: number, userId: number, quizId: number, attemptId: number): Promise<void> {
-  // Leaderboard with negative scoring
-  const lbNeg = await getLeaderboardWithNegative(env, quizId, 50);
-  const userRankNeg = await getUserRankWithNegative(env, quizId, userId);
+  // Parallel: fetch all leaderboard data at once
+  const [lbNeg, userRankNeg, lbPos, userRankPos, questions] = await Promise.all([
+    getLeaderboardWithNegative(env, quizId, 50),
+    getUserRankWithNegative(env, quizId, userId),
+    getLeaderboardWithoutNegative(env, quizId, 50),
+    getUserRankWithoutNegative(env, quizId, userId),
+    getQuizQuestions(env, quizId),
+  ]);
 
   let negText = `📊 <b>رتبه‌بندی (با نمره منفی)</b>\n\n`;
   if (!lbNeg.length) {
@@ -436,10 +445,6 @@ async function sendResults(env: Env, chatId: number, userId: number, quizId: num
   }
   await sendMessage(env, chatId, negText, { parse_mode: "HTML" });
 
-  // Leaderboard without negative scoring
-  const lbPos = await getLeaderboardWithoutNegative(env, quizId, 50);
-  const userRankPos = await getUserRankWithoutNegative(env, quizId, userId);
-
   let posText = `📊 <b>رتبه‌بندی (بدون نمره منفی)</b>\n\n`;
   if (!lbPos.length) {
     posText += "🙈 هنوز کسی امتیازی ندارد.\n";
@@ -458,8 +463,7 @@ async function sendResults(env: Env, chatId: number, userId: number, quizId: num
   }
   await sendMessage(env, chatId, posText, { parse_mode: "HTML" });
 
-  // Answer key buttons
-  const questions = await getQuizQuestions(env, quizId);
+  // Answer key buttons (questions already fetched above)
   const rows: any[][] = [];
   for (let i = 0; i < questions.length; i += 5) {
     rows.push(questions.slice(i, i + 5).map(q => ({

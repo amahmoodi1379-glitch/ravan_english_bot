@@ -369,6 +369,18 @@ export async function getAnswerForQuestion(
   );
 }
 
+export async function getAnsweredCount(
+  env: Env,
+  attemptId: number
+): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `SELECT COUNT(*) as cnt FROM custom_quiz_answers WHERE attempt_id = ? AND chosen_option IS NOT NULL`,
+    [attemptId]
+  );
+  return row?.cnt ?? 0;
+}
+
 export async function getLeaderboardWithNegative(
   env: Env,
   quizId: number,
