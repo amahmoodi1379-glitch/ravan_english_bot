@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, execute, prepare } from "./client";
+import { queryOne, queryAll, execute, prepare } from "./client";
 import { schedule, Rating, CardState, FsrsCard } from "../utils/fsrs";
 import { TIME_ZONE_OFFSET, LEITNER_LEECH_THRESHOLD } from "../config/constants";
 
@@ -66,11 +66,34 @@ export async function countDueWords(env: Env, userId: number): Promise<number> {
 /**
  * Count new words available (never seen by user) that have at least one question.
  */
-export async function countNewWords(env: Env, userId: number): Promise<number> {
+export async function countNewWords(env: Env, userId: number, level?: number): Promise<number> {
+  const levelFilter = level ? ` AND w.level = ?` : '';
+  const params: any[] = level ? [level, userId] : [userId];
   const row = await queryOne<{ cnt: number }>(
     env,
     `
     SELECT COUNT(*) as cnt
+    FROM words w
+    WHERE w.is_active = 1${levelFilter}
+      AND NOT EXISTS (
+        SELECT 1 FROM user_words_sm2 s
+        WHERE s.user_id = ? AND s.word_id = w.id
+      )
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    `,
+    params
+  );
+  return row?.cnt ?? 0;
+}
+
+/**
+ * Count new words by each level (for level selection menu).
+ */
+export async function countNewWordsByLevel(env: Env, userId: number): Promise<{ level: number; count: number }[]> {
+  const rows = await queryAll<{ level: number; cnt: number }>(
+    env,
+    `
+    SELECT w.level, COUNT(*) as cnt
     FROM words w
     WHERE w.is_active = 1
       AND NOT EXISTS (
@@ -78,10 +101,12 @@ export async function countNewWords(env: Env, userId: number): Promise<number> {
         WHERE s.user_id = ? AND s.word_id = w.id
       )
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    GROUP BY w.level
+    ORDER BY w.level ASC
     `,
     [userId]
   );
-  return row?.cnt ?? 0;
+  return rows.map(r => ({ level: r.level, count: r.cnt }));
 }
 
 /**
@@ -113,8 +138,11 @@ export async function pickNextReviewWord(env: Env, userId: number): Promise<DbWo
  * Pick the next new word for the user to learn.
  * Skips words with the same English spelling as the most recently shown word
  * to avoid boring repetition of homographs.
+ * Optionally filters by level.
  */
-export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord | null> {
+export async function pickNextNewWord(env: Env, userId: number, level?: number): Promise<DbWord | null> {
+  const levelFilter = level ? ` AND w.level = ?` : '';
+
   // Get the last word this user was shown in leitner context
   const lastWord = await queryOne<{ english: string }>(
     env,
@@ -129,12 +157,13 @@ export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord 
 
   // If we have a last word, try to exclude words with same english text
   if (lastEnglish) {
+    const params: any[] = level ? [level, lastEnglish, userId] : [lastEnglish, userId];
     const row = await queryOne<DbWord>(
       env,
       `
       SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
       FROM words w
-      WHERE w.is_active = 1
+      WHERE w.is_active = 1${levelFilter}
         AND LOWER(w.english) != LOWER(?)
         AND NOT EXISTS (
           SELECT 1 FROM user_words_sm2 s
@@ -144,19 +173,20 @@ export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord 
       ORDER BY w.order_index ASC, w.id ASC
       LIMIT 1
       `,
-      [lastEnglish, userId]
+      params
     );
 
     if (row) return row;
   }
 
   // Fallback: just pick the next one in order (even if same english)
+  const params2: any[] = level ? [level, userId] : [userId];
   const row = await queryOne<DbWord>(
     env,
     `
     SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
     FROM words w
-    WHERE w.is_active = 1
+    WHERE w.is_active = 1${levelFilter}
       AND NOT EXISTS (
         SELECT 1 FROM user_words_sm2 s
         WHERE s.user_id = ? AND s.word_id = w.id
@@ -165,7 +195,7 @@ export async function pickNextNewWord(env: Env, userId: number): Promise<DbWord 
     ORDER BY w.order_index ASC, w.id ASC
     LIMIT 1
     `,
-    [userId]
+    params2
   );
   return row ?? null;
 }

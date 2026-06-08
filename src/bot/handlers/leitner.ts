@@ -13,6 +13,7 @@ import {
   clearLeech,
   countDueWords,
   countNewWords,
+  countNewWordsByLevel,
   countLeechWords,
   getReviewStats,
   DbWord,
@@ -46,20 +47,32 @@ interface LeitnerQuestionRow {
   level: number;
 }
 
-type ReviewMode = "review" | "new" | "leech";
+type ReviewMode = "review" | "new" | "leech" | "new1" | "new2" | "new3" | "new4";
 
 function isReviewMode(m: string): m is ReviewMode {
-  return m === "review" || m === "new" || m === "leech";
+  return m === "review" || m === "new" || m === "leech" || m === "new1" || m === "new2" || m === "new3" || m === "new4";
 }
 
 function parseMode(raw: string | undefined): ReviewMode {
   return raw && isReviewMode(raw) ? raw : "review";
 }
 
+function getLevelFromMode(mode: ReviewMode): number | undefined {
+  if (mode === "new1") return 1;
+  if (mode === "new2") return 2;
+  if (mode === "new3") return 3;
+  if (mode === "new4") return 4;
+  return undefined;
+}
+
+function isNewMode(mode: ReviewMode): boolean {
+  return mode === "new" || mode === "new1" || mode === "new2" || mode === "new3" || mode === "new4";
+}
+
 // --- Button builders (single source of truth) ---
 
 function exitButtonText(mode: ReviewMode): string {
-  if (mode === "new") return "🚪 پایان یادگیری";
+  if (isNewMode(mode)) return "🚪 پایان یادگیری";
   if (mode === "leech") return "🚪 پایان تمرین";
   return "🚪 پایان مرور";
 }
@@ -146,7 +159,7 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
     keyboard.push([{ text: `📋 شروع مرور (${dueCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:review`, style: "success" }]);
   }
   if (newCount > 0) {
-    keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "primary" }]);
+    keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary" }]);
   }
   if (leechCount > 0) {
     keyboard.push([{ text: `🔁 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger" }]);
@@ -165,8 +178,10 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
 
 async function pickWordForMode(env: Env, userId: number, mode: ReviewMode): Promise<DbWord | null> {
   if (mode === "review") return pickNextReviewWord(env, userId);
-  if (mode === "new") return pickNextNewWord(env, userId);
-  return pickNextLeechWord(env, userId);
+  if (mode === "leech") return pickNextLeechWord(env, userId);
+  // All "new" modes (new, new1, new2, new3, new4)
+  const level = getLevelFromMode(mode);
+  return pickNextNewWord(env, userId, level);
 }
 
 /**
@@ -268,7 +283,7 @@ async function sendCompletionMessage(
     const keyboard: any[][] = [];
     if (newCount > 0) {
       text += `\n\n🆕 ${newCount} واژه جدید آماده یادگیری. میخوای ادامه بدی؟`;
-      keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "primary" }]);
+      keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary" }]);
     }
     keyboard.push([{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]);
     await sendMessage(env, chatId, text, { reply_markup: { inline_keyboard: keyboard } });
@@ -282,7 +297,7 @@ async function sendCompletionMessage(
     return;
   }
 
-  // new
+  // new / new1-4
   await sendMessage(env, chatId, "📚 همه واژه‌های موجود رو شروع کردی! آفرین! 🌟", {
     reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
   });
@@ -439,8 +454,14 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
       case CB_PREFIX.LEITNER_IGNORE:
         await handleIgnoreWord(env, callbackQuery, user, chatId, messageId, parts);
         return;
+      case CB_PREFIX.LEITNER_IGNORE_CONFIRM:
+        await handleIgnoreWordConfirm(env, callbackQuery, user, chatId, messageId, parts);
+        return;
       case CB_PREFIX.LEITNER_UNLEECH:
         await handleUnleech(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_NEW_LEVEL:
+        await handleNewLevel(env, callbackQuery, user, chatId, messageId, parts);
         return;
       case CB_PREFIX.LEITNER:
         await handleAnswer(env, callbackQuery, user, chatId, messageId, parts);
@@ -531,10 +552,25 @@ async function handleDunno(
 
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
-  const replyText =
+
+  // Fetch explanation
+  const explanationRow = await queryOne<{ explanation_text: string | null }>(
+    env,
+    `SELECT explanation_text FROM word_questions WHERE id = ?`,
+    [question.id]
+  );
+  const explanation = explanationRow?.explanation_text;
+  const levelLabel = `سطح ${question.level}`;
+
+  let replyText =
     `🔴 جواب صحیح: گزینه <b>${correctNum}</b> (${correctText})\n` +
     `کلمه: <b>${question.english}</b>\n` +
-    `معنی: <b>${question.persian}</b>`;
+    `معنی: <b>${question.persian}</b>\n` +
+    `📊 ${levelLabel}`;
+
+  if (explanation) {
+    replyText += `\n\n${explanation}`;
+  }
 
   const rows: any[][] = [];
   if (mode === "leech") rows.push([unleechButton(question.id, mode)]);
@@ -557,7 +593,7 @@ async function handleExitRequest(
   await removeInlineKeyboard(env, chatId, messageId);
 
   let confirmText = "مطمئنی میخوای از مرور خارج بشی؟";
-  if (mode === "new") confirmText = "مطمئنی میخوای از یادگیری واژه‌های جدید خارج بشی؟";
+  if (isNewMode(mode)) confirmText = "مطمئنی میخوای از یادگیری واژه‌های جدید خارج بشی؟";
   else if (mode === "leech") confirmText = "مطمئنی میخوای از تمرین واژه‌های سخت خارج بشی؟";
 
   await sendMessage(env, chatId, confirmText, {
@@ -675,12 +711,58 @@ async function handleRating(
   }
 
   const emoji = ratingEmoji(ratingValue);
-  await sendMessage(env, chatId, `${emoji} ثبت شد!`, {
-    reply_markup: { inline_keyboard: nextAndExitRows(mode) },
-  });
+  await sendMessage(env, chatId, `${emoji} ثبت شد!`);
+
+  // Auto-advance: go directly to next question
+  await sendLeitnerQuestion(env, user, chatId, mode);
 }
 
 async function handleIgnoreWord(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  user: DbUser,
+  chatId: number,
+  messageId: number,
+  parts: string[]
+): Promise<void> {
+  const questionId = Number(parts[1]);
+  const mode = parseMode(parts[2]);
+
+  if (!Number.isFinite(questionId)) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const question = await queryOne<{ word_id: number; english: string }>(
+    env,
+    `SELECT q.word_id, w.english FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
+    [questionId]
+  );
+  if (!question) {
+    await answerCallbackQuery(env, callbackQuery.id, "خطا در یافتن واژه");
+    return;
+  }
+
+  await answerCallbackQuery(env, callbackQuery.id);
+  await removeInlineKeyboard(env, chatId, messageId);
+
+  // Ask for confirmation
+  await sendMessage(env, chatId,
+    `⚠️ مطمئنی واژه‌ی <b>${question.english}</b> رو از چرخه مرور حذف کنی؟\n\nاین واژه دیگه نشون داده نمیشه.`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ بله، حذف کن", callback_data: `${CB_PREFIX.LEITNER_IGNORE_CONFIRM}:${questionId}:${mode}` },
+            { text: "❌ نه، برگرد", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}` },
+          ],
+        ],
+      },
+    }
+  );
+}
+
+async function handleIgnoreWordConfirm(
   env: Env,
   callbackQuery: TelegramCallbackQuery,
   user: DbUser,
@@ -710,9 +792,10 @@ async function handleIgnoreWord(
   await answerCallbackQuery(env, callbackQuery.id, "واژه حذف شد 👌");
   await removeInlineKeyboard(env, chatId, messageId);
 
-  await sendMessage(env, chatId, `واژه‌ی <b>${question.english}</b> از چرخه مرور حذف شد ✅`, {
-    reply_markup: { inline_keyboard: nextAndExitRows(mode) },
-  });
+  await sendMessage(env, chatId, `واژه‌ی <b>${question.english}</b> از چرخه مرور حذف شد ✅`);
+
+  // Auto-advance to next question
+  await sendLeitnerQuestion(env, user, chatId, mode);
 }
 
 async function handleUnleech(
@@ -751,6 +834,63 @@ async function handleUnleech(
     `واژه‌ی <b>${question.english}</b> از فهرست واژه‌های سخت حذف شد 🎓\n(همچنان در مرور عادی باقی می‌ماند)`,
     { reply_markup: { inline_keyboard: nextAndExitRows(mode) } }
   );
+}
+
+async function handleNewLevel(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  user: DbUser,
+  chatId: number,
+  messageId: number,
+  parts: string[]
+): Promise<void> {
+  const action = parts[1]; // "pick" to show menu, or a level number
+
+  await answerCallbackQuery(env, callbackQuery.id);
+  await removeInlineKeyboard(env, chatId, messageId);
+
+  if (action === "pick") {
+    // Show level selection menu with counts
+    const levelCounts = await countNewWordsByLevel(env, user.id);
+    const total = levelCounts.reduce((sum, l) => sum + l.count, 0);
+
+    if (total === 0) {
+      await sendMessage(env, chatId, "📚 همه واژه‌ها رو شروع کردی! واژه جدیدی باقی نمونده 🌟", {
+        reply_markup: { inline_keyboard: [[homeButton()]] },
+      });
+      return;
+    }
+
+    let text = "🆕 <b>واژه‌های جدید</b>\n\nکدوم سطح رو میخوای شروع کنی؟\n\n";
+    const keyboard: any[][] = [];
+
+    for (const { level, count } of levelCounts) {
+      if (count > 0) {
+        text += `📗 سطح ${level}: <b>${count}</b> واژه\n`;
+        keyboard.push([{
+          text: `📗 سطح ${level} (${count} واژه)`,
+          callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:${level}`
+        }]);
+      }
+    }
+
+    text += `\n🎲 درهم: <b>${total}</b> واژه`;
+    keyboard.push([{ text: `🎲 درهم (${total} واژه)`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }]);
+    keyboard.push([homeButton()]);
+
+    await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: keyboard } });
+    return;
+  }
+
+  // A specific level was chosen (1-4)
+  const level = parseInt(action, 10);
+  if (isNaN(level) || level < 1 || level > 4) {
+    await sendMessage(env, chatId, "⚠️ سطح نامعتبر.", { reply_markup: { inline_keyboard: [[homeButton()]] } });
+    return;
+  }
+
+  const mode: ReviewMode = `new${level}` as ReviewMode;
+  await sendLeitnerQuestion(env, user, chatId, mode);
 }
 
 async function handleAnswer(
@@ -815,19 +955,34 @@ async function handleAnswer(
 
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
+  const levelLabel = `سطح ${question.level}`;
+
+  // Fetch explanation
+  const explanationRow = await queryOne<{ explanation_text: string | null }>(
+    env,
+    `SELECT explanation_text FROM word_questions WHERE id = ?`,
+    [question.id]
+  );
+  const explanation = explanationRow?.explanation_text;
 
   let replyText: string;
   if (isCorrect) {
     replyText =
       `✅ آفرین! جواب درسته.\n\n` +
       `کلمه: <b>${question.english}</b>\n` +
-      `معنی: <b>${question.persian}</b>`;
+      `معنی: <b>${question.persian}</b>\n` +
+      `📊 ${levelLabel}`;
   } else {
     replyText =
       `❌ جوابت درست نبود.\n\n` +
       `جواب صحیح: گزینه <b>${correctNum}</b> (${correctText})\n` +
       `کلمه: <b>${question.english}</b>\n` +
-      `معنی: <b>${question.persian}</b>`;
+      `معنی: <b>${question.persian}</b>\n` +
+      `📊 ${levelLabel}`;
+  }
+
+  if (explanation) {
+    replyText += `\n\n${explanation}`;
   }
 
   let ratingButtons: any[];
