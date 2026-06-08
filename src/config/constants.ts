@@ -16,6 +16,7 @@ export const GAME_CONFIG = {
 export const CB_PREFIX = {
   LEITNER: "l",
   LEITNER_IGNORE: "lig",
+  LEITNER_IGNORE_CONFIRM: "ligc",
   LEITNER_RATE: "lr",
   LEITNER_NEXT: "lnx",
   LEITNER_EXIT: "lex",
@@ -23,6 +24,8 @@ export const CB_PREFIX = {
   LEITNER_DUNNO: "ldn",
   LEITNER_HOME: "lhm",
   LEITNER_UNLEECH: "lul",
+  LEITNER_NEW_LEVEL: "lnl",
+  LEITNER_REVIEW_LEVEL: "lrl",
   READING_TEXT: "rt",
   READING_ANSWER: "ra",
   AVATAR: "av",

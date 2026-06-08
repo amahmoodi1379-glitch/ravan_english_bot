@@ -106,13 +106,16 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   if (
     data.startsWith(`${CB_PREFIX.LEITNER}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_IGNORE}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_IGNORE_CONFIRM}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_RATE}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_NEXT}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_EXIT}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_EXIT_CONFIRM}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_DUNNO}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_HOME}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_UNLEECH}:`)
+    data.startsWith(`${CB_PREFIX.LEITNER_UNLEECH}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_NEW_LEVEL}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_REVIEW_LEVEL}:`)
   ) {
     await handleLeitnerCallback(env, callbackQuery);
     return;
