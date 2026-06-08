@@ -43,8 +43,11 @@ export interface ReviewStats {
 /**
  * Count words due for review today (FSRS scheduling).
  * Only counts words that actually have at least one question.
+ * Optionally filters by word level.
  */
-export async function countDueWords(env: Env, userId: number): Promise<number> {
+export async function countDueWords(env: Env, userId: number, level?: number): Promise<number> {
+  const levelFilter = level ? ` AND w.level = ?` : '';
+  const params: any[] = level ? [userId, level] : [userId];
   const row = await queryOne<{ cnt: number }>(
     env,
     `
@@ -53,14 +56,39 @@ export async function countDueWords(env: Env, userId: number): Promise<number> {
     JOIN words w ON w.id = s.word_id
     WHERE s.user_id = ?
       AND s.ignored = 0
-      AND w.is_active = 1
+      AND w.is_active = 1${levelFilter}
       AND s.card_state != 0
       AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     `,
-    [userId]
+    params
   );
   return row?.cnt ?? 0;
+}
+
+/**
+ * Count due words grouped by level (for level selection menu).
+ */
+export async function countDueWordsByLevel(env: Env, userId: number): Promise<{ level: number; count: number }[]> {
+  const rows = await queryAll<{ level: number; cnt: number }>(
+    env,
+    `
+    SELECT w.level, COUNT(*) as cnt
+    FROM user_words_sm2 s
+    JOIN words w ON w.id = s.word_id
+    WHERE s.user_id = ?
+      AND s.ignored = 0
+      AND w.is_active = 1
+      AND w.level BETWEEN 1 AND 4
+      AND s.card_state != 0
+      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    GROUP BY w.level
+    ORDER BY w.level ASC
+    `,
+    [userId]
+  );
+  return rows.map(r => ({ level: r.level, count: r.cnt }));
 }
 
 /**
@@ -96,6 +124,7 @@ export async function countNewWordsByLevel(env: Env, userId: number): Promise<{ 
     SELECT w.level, COUNT(*) as cnt
     FROM words w
     WHERE w.is_active = 1
+      AND w.level BETWEEN 1 AND 4
       AND NOT EXISTS (
         SELECT 1 FROM user_words_sm2 s
         WHERE s.user_id = ? AND s.word_id = w.id
@@ -112,8 +141,11 @@ export async function countNewWordsByLevel(env: Env, userId: number): Promise<{ 
 /**
  * Pick the next word due for review (only words the user has already seen).
  * Priority: most overdue first. Only words with at least one question.
+ * Optionally filters by word level.
  */
-export async function pickNextReviewWord(env: Env, userId: number): Promise<DbWord | null> {
+export async function pickNextReviewWord(env: Env, userId: number, level?: number): Promise<DbWord | null> {
+  const levelFilter = level ? ` AND w.level = ?` : '';
+  const params: any[] = level ? [userId, level] : [userId];
   const row = await queryOne<DbWord>(
     env,
     `
@@ -122,14 +154,14 @@ export async function pickNextReviewWord(env: Env, userId: number): Promise<DbWo
     JOIN words w ON w.id = s.word_id
     WHERE s.user_id = ?
       AND s.ignored = 0
-      AND w.is_active = 1
+      AND w.is_active = 1${levelFilter}
       AND s.card_state != 0
       AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     ORDER BY date(s.next_review_date) ASC, w.order_index ASC
     LIMIT 1
     `,
-    [userId]
+    params
   );
   return row ?? null;
 }

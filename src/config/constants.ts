@@ -25,6 +25,7 @@ export const CB_PREFIX = {
   LEITNER_HOME: "lhm",
   LEITNER_UNLEECH: "lul",
   LEITNER_NEW_LEVEL: "lnl",
+  LEITNER_REVIEW_LEVEL: "lrl",
   READING_TEXT: "rt",
   READING_ANSWER: "ra",
   AVATAR: "av",
