@@ -133,12 +133,16 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 
   // Handle pagination: page_N
   if (value.startsWith("page_")) {
-    const page = parseInt(value.replace("page_", ""));
+    const page = parseInt(value.replace("page_", ""), 10);
     if (!isNaN(page) && page >= 1) {
       await answerCallbackQuery(env, callbackQuery.id);
 
       // Re-render the text list on the same message
       const totalCount = await getReadingTextsCount(env);
+      if (totalCount === 0) {
+        await editMessageText(env, chatId, messageId, "فعلاً هیچ متنی برای تست درک مطلب ثبت نشده ❗️");
+        return;
+      }
       const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
       const safePage = Math.min(Math.max(page, 1), totalPages);
       const offset = (safePage - 1) * ITEMS_PER_PAGE;
