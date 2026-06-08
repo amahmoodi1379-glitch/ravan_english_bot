@@ -13,9 +13,12 @@ import {
 } from "../../db/custom_quizzes";
 
 function formatTime(d: Date): string {
-  const hh = d.getUTCHours().toString().padStart(2, '0');
-  const mm = d.getUTCMinutes().toString().padStart(2, '0');
-  return `${hh}:${mm} UTC`;
+  // Iran is UTC+3:30
+  const iranMs = d.getTime() + (3.5 * 60 * 60 * 1000);
+  const iranDate = new Date(iranMs);
+  const hh = iranDate.getUTCHours().toString().padStart(2, '0');
+  const mm = iranDate.getUTCMinutes().toString().padStart(2, '0');
+  return `${hh}:${mm}`;
 }
 
 export async function handleQuizStart(env: Env, user: any, chatId: number, token: string): Promise<void> {
@@ -162,10 +165,11 @@ async function sendQuizQuestion(
 
   if (messageId) {
     const result = await editMessageText(env, chatId, messageId, text, { reply_markup: markup });
-    // If the edit failed for any reason OTHER than "not modified", send a fresh
-    // message so the user is never left without an updated question.
-    if (result && result.ok === false) {
-      const desc: string = result.description || "";
+    // If edit didn't succeed for any reason, send a new message as fallback.
+    // "message is not modified" means UI is already correct, so skip fallback.
+    const ok = result?.ok === true;
+    if (!ok) {
+      const desc: string = result?.description || "";
       if (!desc.includes("message is not modified")) {
         await sendMessage(env, chatId, text, { reply_markup: markup });
       }
@@ -280,13 +284,13 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   // --- Handle quiz actions ---
 
   if (action === "ans") {
-    // Save answer, then re-render the SAME question with the selection shown.
-    // We pass chosenOverride explicitly to avoid D1 read-after-write lag making
-    // the re-render identical to the current message (which silently fails).
-    await saveAnswer(env, attemptId, id, extra);
-    await answerCallbackQuery(env, callbackQuery.id, `گزینه ${extra} ثبت شد ✅`, false);
+    // Save answer, acknowledge callback, and fetch questions — all in parallel
+    const [, , questions] = await Promise.all([
+      saveAnswer(env, attemptId, id, extra),
+      answerCallbackQuery(env, callbackQuery.id, `گزینه ${extra} ثبت شد ✅`, false),
+      getQuizQuestions(env, quiz.id),
+    ]);
 
-    const questions = await getQuizQuestions(env, quiz.id);
     const qIndex = questions.findIndex(q => q.id === id);
     const currentIndex = qIndex >= 0 ? qIndex + 1 : (attempt.current_question_index || 1);
 
@@ -299,11 +303,13 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   }
 
   if (action === "unans") {
-    // Remove answer (set to null) and re-render with no selection.
-    await saveAnswer(env, attemptId, id, null);
-    await answerCallbackQuery(env, callbackQuery.id, "جواب حذف شد ❌", false);
+    // Remove answer, acknowledge callback, and fetch questions — all in parallel
+    const [, , questions] = await Promise.all([
+      saveAnswer(env, attemptId, id, null),
+      answerCallbackQuery(env, callbackQuery.id, "جواب حذف شد ❌", false),
+      getQuizQuestions(env, quiz.id),
+    ]);
 
-    const questions = await getQuizQuestions(env, quiz.id);
     const qIndex = questions.findIndex(q => q.id === id);
     const currentIndex = qIndex >= 0 ? qIndex + 1 : (attempt.current_question_index || 1);
 
@@ -315,9 +321,11 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: any): Prom
   }
 
   if (action === "nav") {
-    const navIndex = id; // id here is the target question index
-    await answerCallbackQuery(env, callbackQuery.id);
-    await updateCurrentQuestionIndex(env, attemptId, navIndex);
+    const navIndex = id;
+    await Promise.all([
+      answerCallbackQuery(env, callbackQuery.id),
+      updateCurrentQuestionIndex(env, attemptId, navIndex),
+    ]);
     await sendQuizQuestion(env, chatId, quiz.id, attemptId, navIndex, messageId);
     return;
   }
