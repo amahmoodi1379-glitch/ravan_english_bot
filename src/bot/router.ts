@@ -21,8 +21,7 @@ import {
 import {
   startReadingMenuForUser,
   handleReadingTextChosen,
-  handleReadingAnswerCallback,
-  handleReadingTitleSelection
+  handleReadingAnswerCallback
 } from "./handlers/reading";
 import {
   showLeaderboardHome,
@@ -310,22 +309,6 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  if (text.includes("صفحه") && (text.includes("◀️") || text.includes("▶️"))) {
-    const numMatch = text.match(/\d+/);
-    if (numMatch) {
-      const page = parseInt(numMatch[0]);
-      if (!isNaN(page)) {
-        await startReadingMenuForUser(env, chatId, page);
-        return;
-      }
-    }
-  }
-
-  const isReadingTitle = await handleReadingTitleSelection(env, user, chatId, text);
-  if (isReadingTitle) {
-    return;
-  }
-
   if (text === TRAINING_MENU_BUTTON_BACK) {
     await sendMessage(
       env,
@@ -357,7 +340,8 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   if (activeReadingSession) {
     const sessionAgeHours = (Date.now() - new Date(activeReadingSession.started_at).getTime()) / (1000 * 60 * 60);
 
-    if (sessionAgeHours > 24) {
+    if (sessionAgeHours > 2) {
+      // Auto-cancel stale sessions (2 hours is generous)
       await execute(
         env,
         `UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`,
@@ -367,7 +351,7 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
       await sendMessage(
         env,
         chatId,
-        "📖 تو الان در حال تست درک مطلب هستی! لطفاً روی دکمه‌های شیشه‌ای سوالات کلیک کن.\nاگر می‌خوای تست رو لغو کنی، دکمه «❌ انصراف و خروج» رو بزن 👇",
+        "📖 یک تست درک مطلب فعال داری! روی دکمه‌های سوالات کلیک کن.\nاگه می‌خوای لغوش کنی، دکمه «❌ انصراف و خروج» رو بزن.",
         { reply_markup: getMainMenuKeyboard() }
       );
       return;
