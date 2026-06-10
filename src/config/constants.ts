@@ -32,7 +32,12 @@ export const CB_PREFIX = {
   STATS: "st",
   LEADERBOARD: "lb",
   QUIZ: "qz",
+  LEITNER_LESSON_PICK: "llp",
+  LEITNER_LESSON_CONT: "llc",
+  LEITNER_LESSON_STOP: "lls",
 };
+
+export const LESSON_PICKER_PAGE_SIZE = 20;
 
 export const LEITNER_LEECH_THRESHOLD = 4;
 
