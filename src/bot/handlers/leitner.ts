@@ -21,6 +21,7 @@ import {
   getUnlearnedLessons,
   countNewWordsByLesson,
   peekNextNewWord,
+  getLessonNameById,
   DbWord,
 } from "../../db/leitner";
 import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
@@ -78,16 +79,16 @@ function isNewMode(mode: ReviewMode): boolean {
   return mode === "new" || mode.startsWith("new");
 }
 
-/** Returns true if the mode is a lesson-filtered new-word mode (e.g., "newL:5"). */
+/** Returns true if the mode is a lesson-filtered new-word mode (e.g., "newL:123"). */
 function isLessonMode(mode: ReviewMode): boolean {
   return mode.startsWith("newL:");
 }
 
-/** Extract lesson offset from a lesson-filtered mode like "newL:5". Returns undefined if not a lesson mode. */
-function getLessonOffsetFromMode(mode: ReviewMode): number | undefined {
+/** Extract lesson_id from a lesson-filtered mode like "newL:123". Returns undefined if not a lesson mode. */
+function getLessonIdFromMode(mode: ReviewMode): number | undefined {
   if (!mode.startsWith("newL:")) return undefined;
-  const offset = parseInt(mode.slice(5), 10);
-  return isNaN(offset) ? undefined : offset;
+  const id = parseInt(mode.slice(5), 10);
+  return isNaN(id) ? undefined : id;
 }
 
 function isReviewModeType(mode: ReviewMode): boolean {
@@ -210,14 +211,13 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
 async function pickWordForMode(env: Env, userId: number, mode: ReviewMode): Promise<DbWord | null> {
   if (mode === "leech") return pickNextLeechWord(env, userId);
   if (isLessonMode(mode)) {
-    const offset = getLessonOffsetFromMode(mode);
-    if (offset !== undefined) {
-      const lessons = await getUnlearnedLessons(env, userId);
-      if (offset < lessons.length) {
-        return pickNextNewWordByLesson(env, userId, lessons[offset].lesson_name);
-      }
+    const lessonId = getLessonIdFromMode(mode);
+    if (lessonId !== undefined) {
+      const rawName = await getLessonNameById(env, lessonId);
+      const lessonName = trimLessonName(rawName);
+      return pickNextNewWordByLesson(env, userId, lessonName);
     }
-    // Fallback: if offset is invalid, treat as regular new word mode
+    // Fallback: if lesson_id is invalid, treat as regular new word mode
     return pickNextNewWord(env, userId);
   }
   const level = getLevelFromMode(mode);
@@ -470,18 +470,18 @@ async function handleLessonPicker(
   // Determine mode: selection ("s") or page display
   if (parts[1] === "s") {
     // --- Lesson Selection Mode ---
-    const offset = parseInt(parts[2], 10);
-    const lessons = await getUnlearnedLessons(env, user.id);
+    const lessonId = parseInt(parts[2], 10);
 
-    if (isNaN(offset) || offset < 0 || offset >= lessons.length) {
+    if (isNaN(lessonId)) {
       await sendMessage(env, chatId, "⚠️ درس نامعتبر. لطفاً دوباره انتخاب کن.", {
         reply_markup: { inline_keyboard: [[{ text: "📖 بازگشت به لیست درس‌ها", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:0` }], [homeButton()]] },
       });
       return;
     }
 
-    const lesson = lessons[offset];
-    const lessonName = lesson.lesson_name;
+    // Resolve lesson name from the stable lesson_id (fast PK lookup)
+    const rawName = await getLessonNameById(env, lessonId);
+    const lessonName = trimLessonName(rawName);
 
     // Validate lesson still has words
     const wordCount = await countNewWordsByLesson(env, user.id, lessonName);
@@ -492,8 +492,8 @@ async function handleLessonPicker(
       return;
     }
 
-    // Start lesson-filtered learning
-    const mode: ReviewMode = `newL:${offset}`;
+    // Start lesson-filtered learning (lesson_id is stable across sessions)
+    const mode: ReviewMode = `newL:${lessonId}`;
     await sendLeitnerQuestion(env, user, chatId, mode);
   } else {
     // --- Page Display Mode ---
@@ -516,10 +516,9 @@ async function handleLessonPicker(
     for (let i = 0; i < pageItems.length; i++) {
       const lesson = pageItems[i];
       const displayName = trimLessonName(lesson.lesson_name) ?? "بدون درس";
-      const globalOffset = startIdx + i;
       keyboard.push([{
         text: `${displayName} (${lesson.word_count})`,
-        callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:s:${globalOffset}`,
+        callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:s:${lesson.lesson_id}`,
       }]);
     }
 
@@ -841,12 +840,10 @@ async function checkLessonTransitionAndSend(
 
   if (isLessonMode(mode)) {
     // For lesson-filtered mode, peek within the same lesson
-    const offset = getLessonOffsetFromMode(mode);
-    if (offset !== undefined) {
-      const lessons = await getUnlearnedLessons(env, user.id);
-      if (offset < lessons.length) {
-        peekLessonName = lessons[offset].lesson_name;
-      }
+    const lessonId = getLessonIdFromMode(mode);
+    if (lessonId !== undefined) {
+      const rawName = await getLessonNameById(env, lessonId);
+      peekLessonName = trimLessonName(rawName);
     }
   } else {
     // For newN modes, peek with level filter

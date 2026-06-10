@@ -510,22 +510,25 @@ export async function clearLeech(env: Env, userId: number, wordId: number): Prom
 
 /**
  * Get distinct lessons that still have unlearned words for a user.
- * Returns lesson name (trimmed), word count, and min order_index for sorting.
+ * Returns lesson_id (MIN word id, stable identifier), lesson name (trimmed),
+ * word count, and min order_index for sorting.
  * Words must have at least one question (same pattern as pickNextNewWord).
  * Null/empty lessons are sorted last per requirement 4.10.
+ * Uses NULLIF(TRIM(...), '') to unify NULL and empty/whitespace-only into a single group.
  */
 export async function getUnlearnedLessons(
   env: Env,
   userId: number,
   level?: number
-): Promise<{ lesson_name: string | null; word_count: number; min_order: number }[]> {
+): Promise<{ lesson_id: number; lesson_name: string | null; word_count: number; min_order: number }[]> {
   const levelFilter = level ? ` AND w.level = ?` : '';
   const params: any[] = level ? [level, userId] : [userId];
 
-  const rows = await queryAll<{ lesson_name: string | null; word_count: number; min_order: number }>(
+  const rows = await queryAll<{ lesson_id: number; lesson_name: string | null; word_count: number; min_order: number }>(
     env,
     `
-    SELECT TRIM(w.lesson_name) AS lesson_name,
+    SELECT MIN(w.id) AS lesson_id,
+           NULLIF(TRIM(w.lesson_name), '') AS lesson_name,
            COUNT(*) AS word_count,
            MIN(w.order_index) AS min_order
     FROM words w
@@ -534,15 +537,32 @@ export async function getUnlearnedLessons(
         SELECT 1 FROM user_words_sm2 s WHERE s.user_id = ? AND s.word_id = w.id
       )
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
-    GROUP BY TRIM(w.lesson_name)
+    GROUP BY NULLIF(TRIM(w.lesson_name), '')
     ORDER BY
-      CASE WHEN TRIM(w.lesson_name) IS NULL OR TRIM(w.lesson_name) = '' THEN 1 ELSE 0 END,
+      CASE WHEN NULLIF(TRIM(w.lesson_name), '') IS NULL THEN 1 ELSE 0 END,
       min_order ASC
     `,
     params
   );
 
   return rows;
+}
+
+/**
+ * Resolve a lesson name from a stable lesson_id (MIN word id for that lesson group).
+ * This is a fast primary-key lookup — no aggregation needed.
+ * Returns the raw lesson_name (caller should trimLessonName for display/comparison).
+ */
+export async function getLessonNameById(
+  env: Env,
+  lessonId: number
+): Promise<string | null> {
+  const row = await queryOne<{ lesson_name: string | null }>(
+    env,
+    `SELECT lesson_name FROM words WHERE id = ?`,
+    [lessonId]
+  );
+  return row?.lesson_name ?? null;
 }
 
 /**
