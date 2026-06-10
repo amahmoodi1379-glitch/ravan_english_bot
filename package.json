@@ -6,13 +6,11 @@
     "dev": "wrangler dev --local",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "npx vitest run"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260605.1",
-    "fast-check": "^4.8.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.9",
     "wrangler": "^4.50.0"
   }
 }
