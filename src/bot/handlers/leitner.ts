@@ -6,6 +6,7 @@ import { queryOne, prepare } from "../../db/client";
 import {
   pickNextReviewWord,
   pickNextNewWord,
+  pickNextNewWordByLesson,
   pickNextLeechWord,
   getWordStage,
   prepareUpdateFsrs,
@@ -17,6 +18,9 @@ import {
   countNewWordsByLevel,
   countLeechWords,
   getReviewStats,
+  getUnlearnedLessons,
+  countNewWordsByLesson,
+  peekNextNewWord,
   DbWord,
 } from "../../db/leitner";
 import { prepareXpForLeitner, checkAndUpdateStreak } from "../../db/xp";
@@ -25,10 +29,12 @@ import {
   LEITNER_TEST_TYPE_ORDER,
   LEITNER_TEST_TYPES,
   LeitnerTestType,
+  LESSON_PICKER_PAGE_SIZE,
 } from "../../config/constants";
 import { getWordStylePrioritySql } from "../../db/question_priority";
 import { optionLetterToNumber } from "../../utils/options";
 import { Rating, ratingLabel, ratingEmoji } from "../../utils/fsrs";
+import { trimLessonName, lessonNamesEqual } from "../../utils/lesson";
 import { getTrainingMenuKeyboard } from "../keyboards";
 
 // --- Types ---
@@ -47,16 +53,20 @@ interface LeitnerQuestionRow {
   english: string;
   persian: string;
   level: number;
+  lesson_name: string | null;
 }
 
-type ReviewMode = "review" | "new" | "leech" | "new1" | "new2" | "new3" | "new4" | "review1" | "review2" | "review3" | "review4";
+type ReviewMode = "review" | "new" | "leech" | "new1" | "new2" | "new3" | "new4" | "review1" | "review2" | "review3" | "review4" | `newL:${number}`;
 
 function isReviewMode(m: string): m is ReviewMode {
-  return ["review", "new", "leech", "new1", "new2", "new3", "new4", "review1", "review2", "review3", "review4"].includes(m);
+  return ["review", "new", "leech", "new1", "new2", "new3", "new4", "review1", "review2", "review3", "review4"].includes(m)
+    || m.startsWith("newL:");
 }
 
 function parseMode(raw: string | undefined): ReviewMode {
-  return raw && isReviewMode(raw) ? raw : "review";
+  if (!raw) return "review";
+  if (isReviewMode(raw)) return raw as ReviewMode;
+  return "review";
 }
 
 function getLevelFromMode(mode: ReviewMode): number | undefined {
@@ -66,6 +76,18 @@ function getLevelFromMode(mode: ReviewMode): number | undefined {
 
 function isNewMode(mode: ReviewMode): boolean {
   return mode === "new" || mode.startsWith("new");
+}
+
+/** Returns true if the mode is a lesson-filtered new-word mode (e.g., "newL:5"). */
+function isLessonMode(mode: ReviewMode): boolean {
+  return mode.startsWith("newL:");
+}
+
+/** Extract lesson offset from a lesson-filtered mode like "newL:5". Returns undefined if not a lesson mode. */
+function getLessonOffsetFromMode(mode: ReviewMode): number | undefined {
+  if (!mode.startsWith("newL:")) return undefined;
+  const offset = parseInt(mode.slice(5), 10);
+  return isNaN(offset) ? undefined : offset;
 }
 
 function isReviewModeType(mode: ReviewMode): boolean {
@@ -187,6 +209,17 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
 
 async function pickWordForMode(env: Env, userId: number, mode: ReviewMode): Promise<DbWord | null> {
   if (mode === "leech") return pickNextLeechWord(env, userId);
+  if (isLessonMode(mode)) {
+    const offset = getLessonOffsetFromMode(mode);
+    if (offset !== undefined) {
+      const lessons = await getUnlearnedLessons(env, userId);
+      if (offset < lessons.length) {
+        return pickNextNewWordByLesson(env, userId, lessons[offset].lesson_name);
+      }
+    }
+    // Fallback: if offset is invalid, treat as regular new word mode
+    return pickNextNewWord(env, userId);
+  }
   const level = getLevelFromMode(mode);
   if (isReviewModeType(mode)) return pickNextReviewWord(env, userId, level);
   return pickNextNewWord(env, userId, level);
@@ -421,6 +454,96 @@ async function removeInlineKeyboard(env: Env, chatId: number, messageId: number)
   }
 }
 
+// --- Lesson Picker Handler ---
+
+async function handleLessonPicker(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  user: DbUser,
+  chatId: number,
+  messageId: number,
+  parts: string[]
+): Promise<void> {
+  await answerCallbackQuery(env, callbackQuery.id);
+  await removeInlineKeyboard(env, chatId, messageId);
+
+  // Determine mode: selection ("s") or page display
+  if (parts[1] === "s") {
+    // --- Lesson Selection Mode ---
+    const offset = parseInt(parts[2], 10);
+    const lessons = await getUnlearnedLessons(env, user.id);
+
+    if (isNaN(offset) || offset < 0 || offset >= lessons.length) {
+      await sendMessage(env, chatId, "⚠️ درس نامعتبر. لطفاً دوباره انتخاب کن.", {
+        reply_markup: { inline_keyboard: [[{ text: "📖 بازگشت به لیست درس‌ها", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:0` }], [homeButton()]] },
+      });
+      return;
+    }
+
+    const lesson = lessons[offset];
+    const lessonName = lesson.lesson_name;
+
+    // Validate lesson still has words
+    const wordCount = await countNewWordsByLesson(env, user.id, lessonName);
+    if (wordCount === 0) {
+      await sendMessage(env, chatId, "واژه‌ای برای یادگیری در این درس باقی نمانده", {
+        reply_markup: { inline_keyboard: [[{ text: "📖 بازگشت به لیست درس‌ها", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:0` }], [homeButton()]] },
+      });
+      return;
+    }
+
+    // Start lesson-filtered learning
+    const mode: ReviewMode = `newL:${offset}`;
+    await sendLeitnerQuestion(env, user, chatId, mode);
+  } else {
+    // --- Page Display Mode ---
+    const page = Math.max(0, parseInt(parts[1], 10) || 0);
+    const lessons = await getUnlearnedLessons(env, user.id);
+
+    if (lessons.length === 0) {
+      await sendMessage(env, chatId, "📚 واژه جدیدی برای یادگیری باقی نمونده! 🌟", {
+        reply_markup: { inline_keyboard: [[homeButton()]] },
+      });
+      return;
+    }
+
+    const totalPages = Math.ceil(lessons.length / LESSON_PICKER_PAGE_SIZE);
+    const startIdx = page * LESSON_PICKER_PAGE_SIZE;
+    const pageItems = lessons.slice(startIdx, startIdx + LESSON_PICKER_PAGE_SIZE);
+
+    // Build keyboard: one button per lesson per row
+    const keyboard: any[][] = [];
+    for (let i = 0; i < pageItems.length; i++) {
+      const lesson = pageItems[i];
+      const displayName = trimLessonName(lesson.lesson_name) ?? "بدون درس";
+      const globalOffset = startIdx + i;
+      keyboard.push([{
+        text: `${displayName} (${lesson.word_count})`,
+        callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:s:${globalOffset}`,
+      }]);
+    }
+
+    // Pagination buttons
+    const navRow: any[] = [];
+    if (page > 0) {
+      navRow.push({ text: "⬅️ صفحه قبل", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:${page - 1}` });
+    }
+    if (page < totalPages - 1) {
+      navRow.push({ text: "➡️ صفحه بعد", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:${page + 1}` });
+    }
+    if (navRow.length > 0) {
+      keyboard.push(navRow);
+    }
+
+    // Home button as last row
+    keyboard.push([homeButton()]);
+
+    await sendMessage(env, chatId, "📖 انتخاب درس", {
+      reply_markup: { inline_keyboard: keyboard },
+    });
+  }
+}
+
 // --- Callback Dispatcher ---
 
 export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
@@ -472,6 +595,15 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
         return;
       case CB_PREFIX.LEITNER_NEW_LEVEL:
         await handleNewLevel(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_LESSON_PICK:
+        await handleLessonPicker(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_LESSON_CONT:
+        await handleLessonTransition(env, callbackQuery, user, chatId, messageId, parts, "continue");
+        return;
+      case CB_PREFIX.LEITNER_LESSON_STOP:
+        await handleLessonTransition(env, callbackQuery, user, chatId, messageId, parts, "stop");
         return;
       case CB_PREFIX.LEITNER_REVIEW_LEVEL:
         await handleReviewLevel(env, callbackQuery, user, chatId, messageId, parts);
@@ -538,7 +670,8 @@ async function handleDunno(
   const question = await queryOne<LeitnerQuestionRow>(
     env,
     `SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
-            q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level
+            q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level,
+            w.lesson_name
      FROM word_questions q JOIN words w ON q.word_id = w.id WHERE q.id = ?`,
     [questionId]
   );
@@ -573,6 +706,11 @@ async function handleDunno(
     `کلمه: <b>${question.english}</b>\n` +
     `معنی: <b>${question.persian}</b>\n` +
     `📊 ${levelLabel}`;
+
+  const lessonDisplayDunno = trimLessonName(question.lesson_name);
+  if (lessonDisplayDunno) {
+    replyText += `\n📖 درس: ${lessonDisplayDunno}`;
+  }
 
   if (explanation) {
     replyText += `\n\n${explanation}`;
@@ -640,6 +778,118 @@ async function handleExitConfirm(
   await sendMessage(env, chatId, summaryText, { reply_markup: getTrainingMenuKeyboard() });
 }
 
+async function handleLessonTransition(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  user: DbUser,
+  chatId: number,
+  messageId: number,
+  parts: string[],
+  action: "continue" | "stop"
+): Promise<void> {
+  if (action === "continue") {
+    // parts = ["llc", mode] e.g. ["llc", "newL", "5"] — rejoin mode from index 1
+    const mode = parseMode(parts.slice(1).join(":"));
+    await answerCallbackQuery(env, callbackQuery.id);
+    await removeInlineKeyboard(env, chatId, messageId);
+    await sendLeitnerQuestion(env, user, chatId, mode);
+  } else {
+    // stop — show session summary stats (same as handleExitConfirm)
+    await answerCallbackQuery(env, callbackQuery.id);
+    await removeInlineKeyboard(env, chatId, messageId);
+
+    const stats = await getReviewStats(env, user.id, 24);
+
+    let summaryText = "📊 <b>خلاصه امروز:</b>\n\n";
+    if (stats.total > 0) {
+      const accuracy = Math.round((stats.correct / stats.total) * 100);
+      summaryText += `✅ درست: ${stats.correct}\n`;
+      summaryText += `❌ غلط: ${stats.incorrect}\n`;
+      summaryText += `📈 دقت: ${accuracy}%\n`;
+      summaryText += `📝 کل: ${stats.total} سوال\n`;
+    } else {
+      summaryText += `هنوز سوالی جواب نداده‌ای.\n`;
+    }
+    summaryText += `\nخسته نباشی! 😊`;
+
+    await sendMessage(env, chatId, summaryText, { reply_markup: getTrainingMenuKeyboard() });
+  }
+}
+
+/**
+ * Check for a lesson transition before sending the next question in new-word mode.
+ * If the next word is from a different lesson than the current word, show a
+ * transition notification with continue/stop buttons.
+ * If not in new-word mode, or same lesson, go directly to sendLeitnerQuestion.
+ */
+async function checkLessonTransitionAndSend(
+  env: Env,
+  user: DbUser,
+  chatId: number,
+  mode: ReviewMode,
+  currentLessonName: string | null
+): Promise<void> {
+  // Only check transitions for new-word modes
+  if (!isNewMode(mode)) {
+    await sendLeitnerQuestion(env, user, chatId, mode);
+    return;
+  }
+
+  // Determine peek parameters based on mode
+  let peekLevel: number | undefined;
+  let peekLessonName: string | null | undefined;
+
+  if (isLessonMode(mode)) {
+    // For lesson-filtered mode, peek within the same lesson
+    const offset = getLessonOffsetFromMode(mode);
+    if (offset !== undefined) {
+      const lessons = await getUnlearnedLessons(env, user.id);
+      if (offset < lessons.length) {
+        peekLessonName = lessons[offset].lesson_name;
+      }
+    }
+  } else {
+    // For newN modes, peek with level filter
+    peekLevel = getLevelFromMode(mode);
+  }
+
+  // Peek at the next word
+  const nextWord = await peekNextNewWord(env, user.id, peekLevel, peekLessonName);
+
+  if (!nextWord) {
+    // No next word — sendLeitnerQuestion will show the completion message
+    await sendLeitnerQuestion(env, user, chatId, mode);
+    return;
+  }
+
+  // Compare current word's lesson with next word's lesson
+  if (lessonNamesEqual(currentLessonName, nextWord.lesson_name)) {
+    // Same lesson — show next question directly
+    await sendLeitnerQuestion(env, user, chatId, mode);
+    return;
+  }
+
+  // Different lesson — show transition notification
+  const nextTrimmed = trimLessonName(nextWord.lesson_name);
+  let notificationText: string;
+  if (nextTrimmed !== null) {
+    notificationText = `📖 واژه بعدی از درس «${nextTrimmed}» است. ادامه می‌دهی؟`;
+  } else {
+    notificationText = `📖 واژه بعدی بدون درس مشخص است. ادامه می‌دهی؟`;
+  }
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: "✅ ادامه", callback_data: `${CB_PREFIX.LEITNER_LESSON_CONT}:${mode}` },
+        { text: "🛑 توقف", callback_data: `${CB_PREFIX.LEITNER_LESSON_STOP}:${mode}` },
+      ],
+    ],
+  };
+
+  await sendMessage(env, chatId, notificationText, { reply_markup: keyboard });
+}
+
 async function handleRating(
   env: Env,
   callbackQuery: TelegramCallbackQuery,
@@ -687,9 +937,9 @@ async function handleRating(
   await answerCallbackQuery(env, callbackQuery.id);
   await removeInlineKeyboard(env, chatId, messageId);
 
-  const question = await queryOne<{ word_id: number; level: number }>(
+  const question = await queryOne<{ word_id: number; level: number; lesson_name: string | null }>(
     env,
-    `SELECT q.word_id, w.level FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
+    `SELECT q.word_id, w.level, w.lesson_name FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
     [questionId]
   );
   if (!question) {
@@ -717,8 +967,8 @@ async function handleRating(
   const emoji = ratingEmoji(ratingValue);
   await sendMessage(env, chatId, `${emoji} ثبت شد!`);
 
-  // Auto-advance: go directly to next question
-  await sendLeitnerQuestion(env, user, chatId, mode);
+  // Auto-advance: check for lesson transition before showing next question
+  await checkLessonTransitionAndSend(env, user, chatId, mode, question.lesson_name);
 }
 
 async function handleIgnoreWord(
@@ -880,6 +1130,7 @@ async function handleNewLevel(
 
     text += `\n🎲 درهم: <b>${total}</b> واژه`;
     keyboard.push([{ text: `🎲 درهم (${total} واژه)`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }]);
+    keyboard.push([{ text: "📖 انتخاب بر اساس درس", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:0` }]);
     keyboard.push([homeButton()]);
 
     await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: keyboard } });
@@ -988,7 +1239,8 @@ async function handleAnswer(
     env,
     `
     SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
-           q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level
+           q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level,
+           w.lesson_name
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     WHERE q.id = ?
@@ -1031,6 +1283,11 @@ async function handleAnswer(
       `کلمه: <b>${question.english}</b>\n` +
       `معنی: <b>${question.persian}</b>\n` +
       `📊 ${levelLabel}`;
+  }
+
+  const lessonDisplay = trimLessonName(question.lesson_name);
+  if (lessonDisplay) {
+    replyText += `\n📖 درس: ${lessonDisplay}`;
   }
 
   if (explanation) {

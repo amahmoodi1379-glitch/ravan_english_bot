@@ -507,3 +507,215 @@ export async function clearLeech(env: Env, userId: number, wordId: number): Prom
     [now, userId, wordId]
   );
 }
+
+/**
+ * Get distinct lessons that still have unlearned words for a user.
+ * Returns lesson name (trimmed), word count, and min order_index for sorting.
+ * Words must have at least one question (same pattern as pickNextNewWord).
+ * Null/empty lessons are sorted last per requirement 4.10.
+ */
+export async function getUnlearnedLessons(
+  env: Env,
+  userId: number,
+  level?: number
+): Promise<{ lesson_name: string | null; word_count: number; min_order: number }[]> {
+  const levelFilter = level ? ` AND w.level = ?` : '';
+  const params: any[] = level ? [level, userId] : [userId];
+
+  const rows = await queryAll<{ lesson_name: string | null; word_count: number; min_order: number }>(
+    env,
+    `
+    SELECT TRIM(w.lesson_name) AS lesson_name,
+           COUNT(*) AS word_count,
+           MIN(w.order_index) AS min_order
+    FROM words w
+    WHERE w.is_active = 1${levelFilter}
+      AND NOT EXISTS (
+        SELECT 1 FROM user_words_sm2 s WHERE s.user_id = ? AND s.word_id = w.id
+      )
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    GROUP BY TRIM(w.lesson_name)
+    ORDER BY
+      CASE WHEN TRIM(w.lesson_name) IS NULL OR TRIM(w.lesson_name) = '' THEN 1 ELSE 0 END,
+      min_order ASC
+    `,
+    params
+  );
+
+  return rows;
+}
+
+/**
+ * Count new words (never seen by user) filtered by lesson name (trimmed comparison).
+ * Used to validate a lesson has words before starting lesson-filtered learning.
+ * If lessonName is null, matches words where TRIM(lesson_name) IS NULL or empty.
+ */
+export async function countNewWordsByLesson(
+  env: Env,
+  userId: number,
+  lessonName: string | null
+): Promise<number> {
+  if (lessonName === null) {
+    const row = await queryOne<{ cnt: number }>(
+      env,
+      `
+      SELECT COUNT(*) as cnt
+      FROM words w
+      WHERE w.is_active = 1
+        AND (TRIM(w.lesson_name) IS NULL OR TRIM(w.lesson_name) = '')
+        AND NOT EXISTS (
+          SELECT 1 FROM user_words_sm2 s
+          WHERE s.user_id = ? AND s.word_id = w.id
+        )
+        AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+      `,
+      [userId]
+    );
+    return row?.cnt ?? 0;
+  }
+
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `
+    SELECT COUNT(*) as cnt
+    FROM words w
+    WHERE w.is_active = 1
+      AND TRIM(w.lesson_name) = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM user_words_sm2 s
+        WHERE s.user_id = ? AND s.word_id = w.id
+      )
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    `,
+    [lessonName.trim(), userId]
+  );
+  return row?.cnt ?? 0;
+}
+
+
+
+/**
+ * Pick next new word filtered by lesson name (trimmed comparison).
+ * Mirrors pickNextNewWord but adds a lesson filter.
+ * If lessonName is null, picks words where TRIM(lesson_name) IS NULL or empty.
+ */
+export async function pickNextNewWordByLesson(
+  env: Env,
+  userId: number,
+  lessonName: string | null
+): Promise<DbWord | null> {
+  let lessonFilter: string;
+  const baseParams: any[] = [];
+
+  if (lessonName === null) {
+    lessonFilter = ' AND (TRIM(w.lesson_name) IS NULL OR TRIM(w.lesson_name) = \'\')';
+  } else {
+    lessonFilter = ' AND TRIM(w.lesson_name) = ?';
+    baseParams.push(lessonName.trim());
+  }
+
+  // Get the last word this user was shown in leitner context
+  const lastWord = await queryOne<{ english: string }>(
+    env,
+    `SELECT w.english FROM user_word_question_history h
+     JOIN words w ON w.id = h.word_id
+     WHERE h.user_id = ? AND h.context = 'leitner'
+     ORDER BY h.shown_at DESC LIMIT 1`,
+    [userId]
+  );
+
+  const lastEnglish = lastWord?.english ?? null;
+
+  // If we have a last word, try to exclude words with same english text
+  if (lastEnglish) {
+    const params: any[] = [...baseParams, lastEnglish, userId];
+    const row = await queryOne<DbWord>(
+      env,
+      `
+      SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+      FROM words w
+      WHERE w.is_active = 1${lessonFilter}
+        AND LOWER(w.english) != LOWER(?)
+        AND NOT EXISTS (
+          SELECT 1 FROM user_words_sm2 s
+          WHERE s.user_id = ? AND s.word_id = w.id
+        )
+        AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+      ORDER BY w.order_index ASC, w.id ASC
+      LIMIT 1
+      `,
+      params
+    );
+
+    if (row) return row;
+  }
+
+  // Fallback: just pick the next one in order (even if same english)
+  const params2: any[] = [...baseParams, userId];
+  const row = await queryOne<DbWord>(
+    env,
+    `
+    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+    FROM words w
+    WHERE w.is_active = 1${lessonFilter}
+      AND NOT EXISTS (
+        SELECT 1 FROM user_words_sm2 s
+        WHERE s.user_id = ? AND s.word_id = w.id
+      )
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    ORDER BY w.order_index ASC, w.id ASC
+    LIMIT 1
+    `,
+    params2
+  );
+  return row ?? null;
+}
+
+/**
+ * Peek at the next new word without side effects (no homograph-skipping, no history lookup).
+ * Used for lesson transition detection.
+ * 
+ * @param level - optional: filter by word level
+ * @param lessonName - undefined = no filter; null = words with no lesson; string = specific lesson
+ */
+export async function peekNextNewWord(
+  env: Env,
+  userId: number,
+  level?: number,
+  lessonName?: string | null
+): Promise<DbWord | null> {
+  let levelFilter = '';
+  let lessonFilter = '';
+  const params: any[] = [];
+
+  if (level !== undefined) {
+    levelFilter = ' AND w.level = ?';
+    params.push(level);
+  }
+
+  if (lessonName === null) {
+    lessonFilter = ' AND (TRIM(w.lesson_name) IS NULL OR TRIM(w.lesson_name) = \'\')';
+  } else if (lessonName !== undefined) {
+    lessonFilter = ' AND TRIM(w.lesson_name) = ?';
+    params.push(lessonName.trim());
+  }
+
+  params.push(userId);
+
+  const row = await queryOne<DbWord>(
+    env,
+    `
+    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+    FROM words w
+    WHERE w.is_active = 1${levelFilter}${lessonFilter}
+      AND NOT EXISTS (
+        SELECT 1 FROM user_words_sm2 s WHERE s.user_id = ? AND s.word_id = w.id
+      )
+      AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
+    ORDER BY w.order_index ASC, w.id ASC
+    LIMIT 1
+    `,
+    params
+  );
+  return row ?? null;
+}
