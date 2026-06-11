@@ -58,7 +58,7 @@ export async function countDueWords(env: Env, userId: number, level?: number): P
       AND s.ignored = 0
       AND w.is_active = 1${levelFilter}
       AND s.card_state != 0
-      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+      AND s.next_review_date <= datetime('now', '${TIME_ZONE_OFFSET}')
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     `,
     params
@@ -81,7 +81,7 @@ export async function countDueWordsByLevel(env: Env, userId: number): Promise<{ 
       AND w.is_active = 1
       AND w.level BETWEEN 1 AND 4
       AND s.card_state != 0
-      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+      AND s.next_review_date <= datetime('now', '${TIME_ZONE_OFFSET}')
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     GROUP BY w.level
     ORDER BY w.level ASC
@@ -156,9 +156,9 @@ export async function pickNextReviewWord(env: Env, userId: number, level?: numbe
       AND s.ignored = 0
       AND w.is_active = 1${levelFilter}
       AND s.card_state != 0
-      AND date(s.next_review_date) <= date('now', '${TIME_ZONE_OFFSET}')
+      AND s.next_review_date <= datetime('now', '${TIME_ZONE_OFFSET}')
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
-    ORDER BY date(s.next_review_date) ASC, w.order_index ASC
+    ORDER BY s.next_review_date ASC, w.order_index ASC
     LIMIT 1
     `,
     params

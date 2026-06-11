@@ -1263,11 +1263,17 @@ async function handleAnswer(
   await answerCallbackQuery(env, callbackQuery.id);
   await removeInlineKeyboard(env, chatId, messageId);
 
-  await env.DB.prepare(
+  // Atomically mark as answered — if another request already answered, changes=0
+  const answerResult = await env.DB.prepare(
     `UPDATE user_word_question_history
      SET is_correct = ?, answered_at = ?
      WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
   ).bind(isCorrect ? 1 : 0, now, user.id, question.id).run();
+
+  if (answerResult.meta.changes === 0) {
+    // Already answered by a concurrent request — silently stop
+    return;
+  }
 
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
