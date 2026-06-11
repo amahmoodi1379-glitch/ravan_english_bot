@@ -1,7 +1,8 @@
 import { Env } from "../../types";
+import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, editMessageText, answerCallbackQuery } from "../telegram-api";
 import { CB_PREFIX } from "../../config/constants";
-import { getOrCreateUser } from "../../db/users";
+import { getOrCreateUser, DbUser } from "../../db/users";
 import {
   getQuizLinkByToken, getQuizById, getQuizQuestions,
   createAttempt, getAttemptByQuizAndUser,
@@ -10,6 +11,7 @@ import {
   getLeaderboardWithNegative, getLeaderboardWithoutNegative,
   getUserRankWithNegative, getUserRankWithoutNegative,
   getFinishedAttemptsWithChatId,
+  CustomQuizQuestion,
 } from "../../db/custom_quizzes";
 
 function formatTime(d: Date): string {
@@ -21,7 +23,15 @@ function formatTime(d: Date): string {
   return `${hh}:${mm}`;
 }
 
-export async function handleQuizStart(env: Env, user: any, chatId: number, token: string): Promise<void> {
+/**
+ * Start a quiz attempt for a user from a deep-link token.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record starting the quiz
+ * @param chatId - The Telegram chat ID to send quiz messages to
+ * @param token - The quiz link token from the deep-link URL
+ * @returns void
+ */
+export async function handleQuizStart(env: Env, user: DbUser, chatId: number, token: string): Promise<void> {
   const link = await getQuizLinkByToken(env, token);
   if (!link) { await sendMessage(env, chatId, "❌ لینک آزمون نامعتبر است."); return; }
   if (link.expires_at && new Date(link.expires_at) < new Date()) {
@@ -86,7 +96,7 @@ export async function handleQuizStart(env: Env, user: any, chatId: number, token
   await sendQuizQuestion(env, chatId, quiz.id, attemptId, 1);
 }
 
-function isQuizExpired(attempt: any, quiz: any): boolean {
+function isQuizExpired(attempt: { started_at: string }, quiz: { total_time_minutes: number }): boolean {
   const started = new Date(attempt.started_at).getTime();
   const limitMs = quiz.total_time_minutes * 60 * 1000;
   return Date.now() > started + limitMs;
@@ -107,13 +117,13 @@ async function sendQuizQuestion(
   attemptId: number,
   questionIndex: number,
   messageId?: number,
-  opts?: { questions?: any[]; chosenOverride?: string | null }
+  opts?: { questions?: CustomQuizQuestion[]; chosenOverride?: string | null }
 ): Promise<void> {
   const questions = opts?.questions ?? await getQuizQuestions(env, quizId);
   if (!questions.length) return;
 
-  const q = questions[questionIndex - 1];
-  if (!q) return;
+  const currentQuestion = questions[questionIndex - 1];
+  if (!currentQuestion) return;
 
   // Use explicit chosen override when provided (avoids D1 read-after-write lag);
   // otherwise read the saved answer from DB.
@@ -121,30 +131,30 @@ async function sendQuizQuestion(
   if (opts && 'chosenOverride' in opts) {
     chosen = opts.chosenOverride;
   } else {
-    const ans = await getAnswerForQuestion(env, attemptId, q.id);
+    const ans = await getAnswerForQuestion(env, attemptId, currentQuestion.id);
     chosen = ans?.chosen_option;
   }
 
   const text =
     `❓ <b>سوال ${questionIndex} از ${questions.length}</b>\n\n` +
-    `${q.question_text}\n\n` +
-    `1️⃣ ${q.option_a}\n` +
-    `2️⃣ ${q.option_b}\n` +
-    `3️⃣ ${q.option_c}\n` +
-    `4️⃣ ${q.option_d}` +
+    `${currentQuestion.question_text}\n\n` +
+    `1️⃣ ${currentQuestion.option_a}\n` +
+    `2️⃣ ${currentQuestion.option_b}\n` +
+    `3️⃣ ${currentQuestion.option_c}\n` +
+    `4️⃣ ${currentQuestion.option_d}` +
     (chosen ? `\n\n✅ انتخاب شما: گزینه ${chosen}` : ``);
 
-  const rows: any[][] = [];
+  const rows: InlineKeyboardButton[][] = [];
 
   // Option buttons
   const optButtons = ['1', '2', '3', '4'].map(opt => ({
     text: chosen === opt ? `✅ ${opt}` : opt,
-    callback_data: `${CB_PREFIX.QUIZ}:ans:${attemptId}:${q.id}:${opt}`
+    callback_data: `${CB_PREFIX.QUIZ}:ans:${attemptId}:${currentQuestion.id}:${opt}`
   }));
   rows.push(optButtons);
 
   // Navigation
-  const navRow: any[] = [];
+  const navRow: InlineKeyboardButton[] = [];
   if (questionIndex > 1) {
     navRow.push({ text: "سوال قبلی ▶️", callback_data: `${CB_PREFIX.QUIZ}:nav:${attemptId}:${questionIndex - 1}` });
   }
@@ -154,9 +164,9 @@ async function sendQuizQuestion(
   if (navRow.length) rows.push(navRow);
 
   // Unanswer + Finish
-  const actionRow: any[] = [];
+  const actionRow: InlineKeyboardButton[] = [];
   if (chosen) {
-    actionRow.push({ text: "❌ حذف جواب", callback_data: `${CB_PREFIX.QUIZ}:unans:${attemptId}:${q.id}` });
+    actionRow.push({ text: "❌ حذف جواب", callback_data: `${CB_PREFIX.QUIZ}:unans:${attemptId}:${currentQuestion.id}` });
   }
   actionRow.push({ text: "🏁 پایان آزمون", callback_data: `${CB_PREFIX.QUIZ}:finish:${attemptId}` });
   rows.push(actionRow);
@@ -167,9 +177,11 @@ async function sendQuizQuestion(
     const result = await editMessageText(env, chatId, messageId, text, { reply_markup: markup });
     // If edit didn't succeed for any reason, send a new message as fallback.
     // "message is not modified" means UI is already correct, so skip fallback.
-    const ok = result?.ok === true;
+    // result is unknown — Telegram API response shape accessed dynamically
+    const apiResult = result as { ok?: boolean; description?: string } | null;
+    const ok = apiResult?.ok === true;
     if (!ok) {
-      const desc: string = result?.description || "";
+      const desc: string = apiResult?.description || "";
       if (!desc.includes("message is not modified")) {
         await sendMessage(env, chatId, text, { reply_markup: markup });
       }
@@ -215,7 +227,13 @@ async function pushResultsToAllFinished(env: Env, quizId: number, excludeUserId:
   await Promise.all(notifications);
 }
 
-export async function handleQuizUserCallback(env: Env, callbackQuery: any): Promise<void> {
+/**
+ * Handle inline button callbacks for quiz user actions (answer, next, results, explain).
+ * @param env - The worker environment containing the D1 database binding
+ * @param callbackQuery - The Telegram callback query from the quiz inline button
+ * @returns void
+ */
+export async function handleQuizUserCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data || "";
   const parts = data.split(":");
   const action = parts[1] || "";
@@ -425,7 +443,7 @@ async function handleReturnResults(env: Env, chatId: number, messageId: number, 
   if (!attempt || attempt.user_id !== userId) return;
 
   const questions = await getQuizQuestions(env, attempt.quiz_id);
-  const rows: any[][] = [];
+  const rows: InlineKeyboardButton[][] = [];
   for (let i = 0; i < questions.length; i += 5) {
     rows.push(questions.slice(i, i + 5).map(q => ({
       text: String(q.question_index),
@@ -490,7 +508,7 @@ async function sendResults(env: Env, chatId: number, userId: number, quizId: num
   await sendMessage(env, chatId, posText, { parse_mode: "HTML" });
 
   // Answer key buttons (questions already fetched above)
-  const rows: any[][] = [];
+  const rows: InlineKeyboardButton[][] = [];
   for (let i = 0; i < questions.length; i += 5) {
     rows.push(questions.slice(i, i + 5).map(q => ({
       text: String(q.question_index),

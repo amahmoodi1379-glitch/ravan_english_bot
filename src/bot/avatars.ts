@@ -48,11 +48,21 @@ for (const avatar of AVATARS) {
   EMOJI_BY_CODE[avatar.code] = avatar.emoji;
 }
 
+/**
+ * Get the emoji character for a given avatar code.
+ * @param code - The avatar code string, or null/undefined for the default
+ * @returns The emoji associated with the avatar code, or the default "👤"
+ */
 export function getAvatarEmoji(code: string | null | undefined): string {
   if (!code) return "👤";
   return EMOJI_BY_CODE[code] || "👤";
 }
 
+/**
+ * Get the Persian display label for a given avatar code.
+ * @param code - The avatar code string, or null/undefined
+ * @returns The Persian label for the avatar, or "انتخاب نشده" / "نامشخص"
+ */
 export function getAvatarLabel(code: string | null | undefined): string {
   if (!code) return "انتخاب نشده";
   const found = AVATARS.find((a) => a.code === code);

@@ -1,5 +1,5 @@
 import { Env } from "../../types";
-import { TelegramUpdate } from "../router";
+import { TelegramUpdate } from "../types";
 import {
   sendMessage,
   copyMessage
@@ -30,6 +30,7 @@ import {
 import {
   isAdmin,
   getAdminByTelegramId,
+  DbAdmin,
   addAdmin,
   removeAdmin,
   getAllAdmins,
@@ -42,7 +43,6 @@ import {
 import {
   getAdminState,
   setAdminState,
-  deleteAdminState,
   clearAllAdminState
 } from "../../db/admin_state";
 
@@ -68,6 +68,12 @@ interface AdminState {
   adminAction?: 'add' | 'remove';
 }
 
+/**
+ * Handle admin-specific bot commands (admin panel, announcements, user management).
+ * @param env - The worker environment containing the D1 database binding
+ * @param update - The Telegram Update object containing the admin message
+ * @returns True if the message was handled as an admin command, false otherwise
+ */
 export async function handleAdminCommand(env: Env, update: TelegramUpdate): Promise<boolean> {
   const message = update.message;
   if (!message || !message.from) return false;
@@ -369,7 +375,7 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
   return false;
 }
 
-async function enterAdminPanel(env: Env, chatId: number, admin: any): Promise<void> {
+async function enterAdminPanel(env: Env, chatId: number, admin: DbAdmin): Promise<void> {
   await clearAllAdminState(env, admin.telegram_id);
   await setAdminState(env, admin.telegram_id, 'admin', { action: 'menu' });
   await sendMessage(env, chatId, "🛠️ در حال ورود به پنل مدیریت...", {
@@ -389,7 +395,7 @@ async function handleMenuSelection(
   env: Env,
   chatId: number,
   telegramId: number,
-  admin: any,
+  admin: DbAdmin,
   text: string
 ): Promise<boolean> {
   switch (text) {
@@ -465,7 +471,7 @@ async function handleMenuSelection(
 async function showAdminMgmtMenu(env: Env, chatId: number): Promise<void> {
   const allAdmins = await getAllAdmins(env);
   let msg = `👤 <b>مدیریت ادمین‌ها</b>\n\n`;
-  allAdmins.forEach((a: any, i: number) => {
+  allAdmins.forEach((a, i) => {
     const role = a.is_super_admin ? '👑 Super' : '👤';
     msg += `${i + 1}. ${role} ${a.first_name || 'نامشخص'} (<code>${a.telegram_id}</code>)\n`;
   });
@@ -483,7 +489,7 @@ async function sendAnnouncement(
   env: Env,
   adminChatId: number,
   adminTelegramId: number,
-  admin: any,
+  admin: DbAdmin,
   announcement?: { messageId: number; chatId: number }
 ): Promise<void> {
   if (!announcement) {
@@ -516,9 +522,9 @@ async function sendAnnouncement(
     try {
       await copyMessage(env, announcement.chatId, announcement.messageId, user.telegram_id);
       sent++;
-    } catch (err: any) {
+    } catch (err: unknown) {
       failed++;
-      const errMsg = err?.message || String(err);
+      const errMsg = err instanceof Error ? err.message : String(err);
       if (errors.length < 5) errors.push(`${user.telegram_id}: ${errMsg}`);
     }
 

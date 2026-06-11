@@ -165,6 +165,10 @@ function clampDifficulty(d: number): number {
 /**
  * Schedule the next review for a card given the user's rating.
  * This is the main entry point for the FSRS algorithm.
+ * @param card - The current FsrsCard state (stability, difficulty, etc.)
+ * @param rating - The user's recall rating (Again, Hard, Good, Easy)
+ * @param now - The current date/time (defaults to now)
+ * @returns A FsrsSchedulingResult with updated stability, difficulty, interval, state, reps, lapses
  */
 export function schedule(card: FsrsCard, rating: Rating, now: Date = new Date()): FsrsSchedulingResult {
   // First review (new card)
@@ -237,6 +241,8 @@ export function schedule(card: FsrsCard, rating: Rating, now: Date = new Date())
 
 /**
  * Convert a rating to its Persian label for display.
+ * @param rating - The Rating enum value
+ * @returns A Persian string describing the rating
  */
 export function ratingLabel(rating: Rating): string {
   switch (rating) {
@@ -249,6 +255,8 @@ export function ratingLabel(rating: Rating): string {
 
 /**
  * Get the emoji for a rating.
+ * @param rating - The Rating enum value
+ * @returns A colored circle or star emoji representing the rating
  */
 export function ratingEmoji(rating: Rating): string {
   switch (rating) {

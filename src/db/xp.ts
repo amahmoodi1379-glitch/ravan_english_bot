@@ -10,8 +10,8 @@ function prepareAddXp(
   xpDelta: number,
   activityType: ActivityType,
   refId?: number,
-  meta?: any
-): any[] {
+  meta?: Record<string, unknown>
+): D1PreparedStatement[] {
   if (xpDelta <= 0) return [];
 
   const metaJson = meta ? JSON.stringify(meta) : null;
@@ -38,13 +38,22 @@ function prepareAddXp(
   return [stmt1, stmt2];
 }
 
+/**
+ * Prepare DB statements to award XP for a correct leitner answer based on word level.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user receiving XP
+ * @param wordId - The word ID that was answered correctly
+ * @param wordLevel - The word's difficulty level (1–4)
+ * @param isCorrect - Whether the user's answer was correct
+ * @returns An array of D1PreparedStatements to execute in a batch (empty if incorrect)
+ */
 export function prepareXpForLeitner(
   env: Env,
   userId: number,
   wordId: number,
   wordLevel: number,
   isCorrect: boolean
-): any[] {
+): D1PreparedStatement[] {
   if (!isCorrect) return [];
 
   let xp = 0;
@@ -59,13 +68,22 @@ export function prepareXpForLeitner(
   return prepareAddXp(env, userId, xp, "leitner_question", wordId, { word_level: wordLevel });
 }
 
+/**
+ * Calculate reading session XP (including bonus) and prepare DB statements to award it.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user receiving XP
+ * @param sessionId - The reading session ID
+ * @param correct - Number of correct answers in the session
+ * @param total - Total number of questions in the session
+ * @returns An object with totalXp earned and prepared D1PreparedStatements
+ */
 export function calculateAndPrepareXpForReading(
   env: Env,
   userId: number,
   sessionId: number,
   correct: number,
   total: number
-): { totalXp: number; stmts: any[] } {
+): { totalXp: number; stmts: D1PreparedStatement[] } {
   const xpPerQuestion = XP_VALUES.READING_QUESTION;
   const baseXp = correct * xpPerQuestion;
 
@@ -88,6 +106,12 @@ export function calculateAndPrepareXpForReading(
   return { totalXp, stmts };
 }
 
+/**
+ * Check if the user has met today's daily test goal and update their streak accordingly.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to check streak for
+ * @returns A Persian streak message string if the streak was updated, or null otherwise
+ */
 export async function checkAndUpdateStreak(env: Env, userId: number): Promise<string | null> {
   const TARGET_DAILY_TESTS = 5;
   const TIME_MODIFIER = TIME_ZONE_OFFSET;

@@ -27,6 +27,14 @@ export interface ReadingSession {
   completed_at: string | null;
 }
 
+/**
+ * Create a new reading session for a user and text.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID starting the reading session
+ * @param textId - The text ID to create a session for
+ * @param numQuestions - Maximum number of questions in this session (defaults to 3)
+ * @returns The newly created ReadingSession record
+ */
 export async function createReadingSession(env: Env, userId: number, textId: number, numQuestions: number = 3): Promise<ReadingSession> {
   const now = new Date().toISOString();
   await execute(env, `INSERT INTO reading_sessions (user_id, text_id, status, num_correct, num_questions, xp_gained, started_at) VALUES (?, ?, 'in_progress', 0, ?, 0, ?)`, [userId, textId, numQuestions, now]);
@@ -35,10 +43,24 @@ export async function createReadingSession(env: Env, userId: number, textId: num
   return session;
 }
 
+/**
+ * Retrieve a reading session by its ID.
+ * @param env - The worker environment containing the D1 database binding
+ * @param id - The reading session ID
+ * @returns The ReadingSession record, or null if not found
+ */
 export async function getReadingSessionById(env: Env, id: number): Promise<ReadingSession | null> {
   return await queryOne<ReadingSession>(env, `SELECT * FROM reading_sessions WHERE id = ?`, [id]);
 }
 
+/**
+ * Pick the next unshown question for a reading session, respecting the question limit.
+ * @param env - The worker environment containing the D1 database binding
+ * @param session - The active reading session
+ * @param userId - The user ID (used for history-aware ordering)
+ * @param allowedSources - Optional filter for question sources (manual, ai, seed)
+ * @returns The next question to show, or null if the limit is reached or no questions remain
+ */
 export async function getNextQuestionForSession(
   env: Env,
   session: ReadingSession,
@@ -57,7 +79,7 @@ export async function getNextQuestionForSession(
 
   const typePrioritySql = getTextQuestionTypePrioritySql("COALESCE(q.question_type, 'reading')");
 
-  const q = await queryOne<DbTextQuestion>(
+  const question = await queryOne<DbTextQuestion>(
     env,
     `
     SELECT q.id, q.text_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.explanation_text, q.question_type
@@ -81,9 +103,17 @@ export async function getNextQuestionForSession(
     `,
     [session.text_id, ...sourceParams, session.id, userId, session.text_id]
   );
-  return q ?? null;
+  return question ?? null;
 }
 
+/**
+ * Record that a question was shown to the user in a reading session (idempotent).
+ * @param env - The worker environment containing the D1 database binding
+ * @param session - The active reading session
+ * @param userId - The user ID being shown the question
+ * @param questionId - The question ID being shown
+ * @returns True if the record was inserted, false if already recorded
+ */
 export async function recordQuestionShown(env: Env, session: ReadingSession, userId: number, questionId: number): Promise<boolean> {
   const now = new Date().toISOString();
 
@@ -99,12 +129,25 @@ export async function recordQuestionShown(env: Env, session: ReadingSession, use
   return result.meta.changes > 0;
 }
 
+/**
+ * Get answer statistics (total answered and correct count) for a reading session.
+ * @param env - The worker environment containing the D1 database binding
+ * @param sessionId - The reading session ID
+ * @returns An object with total and correct counts
+ */
 export async function getSessionStats(env: Env, sessionId: number): Promise<{ total: number; correct: number }> {
   const row = await queryOne<{ total: number; correct: number | null }>(env, `SELECT COUNT(*) AS total, SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct FROM user_text_question_history WHERE reading_session_id = ?`, [sessionId]);
   return { total: row?.total ?? 0, correct: row?.correct ?? 0 };
 }
 
-export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number): any {
+/**
+ * Prepare a statement to update the XP gained for a reading session.
+ * @param env - The worker environment containing the D1 database binding
+ * @param sessionId - The reading session ID to update
+ * @param xp - The XP amount to set
+ * @returns A D1PreparedStatement ready for batching
+ */
+export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number): D1PreparedStatement {
   return prepare(
     env,
     `UPDATE reading_sessions SET xp_gained = ? WHERE id = ?`,
@@ -112,6 +155,13 @@ export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number):
   );
 }
 
+/**
+ * Count newly correct answers in a session (correct for the first time across all sessions).
+ * @param env - The worker environment containing the D1 database binding
+ * @param sessionId - The reading session ID to check
+ * @param userId - The user ID
+ * @returns The count of questions answered correctly for the first time
+ */
 export async function getNewCorrectCount(env: Env, sessionId: number, userId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
     env,

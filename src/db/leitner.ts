@@ -58,7 +58,7 @@ export interface ReviewStats {
  */
 export async function countDueWords(env: Env, userId: number, level?: number): Promise<number> {
   const levelFilter = level ? ` AND w.level = ?` : '';
-  const params: any[] = level ? [userId, level] : [userId];
+  const params: unknown[] = level ? [userId, level] : [userId];
   const row = await queryOne<{ cnt: number }>(
     env,
     `
@@ -107,7 +107,7 @@ export async function countDueWordsByLevel(env: Env, userId: number): Promise<{ 
  */
 export async function countNewWords(env: Env, userId: number, level?: number): Promise<number> {
   const levelFilter = level ? ` AND w.level = ?` : '';
-  const params: any[] = level ? [level, userId] : [userId];
+  const params: unknown[] = level ? [level, userId] : [userId];
   const row = await queryOne<{ cnt: number }>(
     env,
     `
@@ -156,7 +156,7 @@ export async function countNewWordsByLevel(env: Env, userId: number): Promise<{ 
  */
 export async function pickNextReviewWord(env: Env, userId: number, level?: number): Promise<DbWord | null> {
   const levelFilter = level ? ` AND w.level = ?` : '';
-  const params: any[] = level ? [userId, level] : [userId];
+  const params: unknown[] = level ? [userId, level] : [userId];
   const row = await queryOne<DbWord>(
     env,
     `
@@ -200,7 +200,7 @@ export async function pickNextNewWord(env: Env, userId: number, level?: number):
 
   // If we have a last word, try to exclude words with same english text
   if (lastEnglish) {
-    const params: any[] = level ? [level, lastEnglish, userId] : [lastEnglish, userId];
+    const params: unknown[] = level ? [level, lastEnglish, userId] : [lastEnglish, userId];
     const row = await queryOne<DbWord>(
       env,
       `
@@ -223,7 +223,7 @@ export async function pickNextNewWord(env: Env, userId: number, level?: number):
   }
 
   // Fallback: just pick the next one in order (even if same english)
-  const params2: any[] = level ? [level, userId] : [userId];
+  const params2: unknown[] = level ? [level, userId] : [userId];
   const row = await queryOne<DbWord>(
     env,
     `
@@ -287,9 +287,9 @@ export async function getOrCreateUserWordState(
 }
 
 function addDaysToIso(iso: string, days: number): string {
-  const d = new Date(iso);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString();
+  const date = new Date(iso);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
 }
 
 /**
@@ -300,7 +300,7 @@ export async function prepareUpdateFsrs(
   userId: number,
   wordId: number,
   rating: Rating
-): Promise<any[]> {
+): Promise<D1PreparedStatement[]> {
   let state = await queryOne<UserWordState>(
     env,
     `SELECT * FROM user_words_sm2 WHERE user_id = ? AND word_id = ?`,
@@ -533,7 +533,7 @@ export async function getUnlearnedLessons(
   level?: number
 ): Promise<{ lesson_id: number; lesson_name: string | null; word_count: number; min_order: number }[]> {
   const levelFilter = level ? ` AND w.level = ?` : '';
-  const params: any[] = level ? [level, userId] : [userId];
+  const params: unknown[] = level ? [level, userId] : [userId];
 
   const rows = await queryAll<{ lesson_id: number; lesson_name: string | null; word_count: number; min_order: number }>(
     env,
@@ -636,7 +636,7 @@ export async function pickNextNewWordByLesson(
   lessonName: string | null
 ): Promise<DbWord | null> {
   let lessonFilter: string;
-  const baseParams: any[] = [];
+  const baseParams: unknown[] = [];
 
   if (lessonName === null) {
     lessonFilter = ' AND (TRIM(w.lesson_name) IS NULL OR TRIM(w.lesson_name) = \'\')';
@@ -659,7 +659,7 @@ export async function pickNextNewWordByLesson(
 
   // If we have a last word, try to exclude words with same english text
   if (lastEnglish) {
-    const params: any[] = [...baseParams, lastEnglish, userId];
+    const params: unknown[] = [...baseParams, lastEnglish, userId];
     const row = await queryOne<DbWord>(
       env,
       `
@@ -682,7 +682,7 @@ export async function pickNextNewWordByLesson(
   }
 
   // Fallback: just pick the next one in order (even if same english)
-  const params2: any[] = [...baseParams, userId];
+  const params2: unknown[] = [...baseParams, userId];
   const row = await queryOne<DbWord>(
     env,
     `
@@ -717,7 +717,7 @@ export async function peekNextNewWord(
 ): Promise<DbWord | null> {
   let levelFilter = '';
   let lessonFilter = '';
-  const params: any[] = [];
+  const params: unknown[] = [];
 
   if (level !== undefined) {
     levelFilter = ' AND w.level = ?';

@@ -60,3 +60,18 @@ export const LEITNER_TEST_TYPE_ORDER: LeitnerTestType[] = [
   LEITNER_TEST_TYPES.WORD_TO_DEFINITION,
   LEITNER_TEST_TYPES.CLOZE,
 ];
+
+/** Hours after which an active reading session is considered stale and auto-cancelled. */
+export const STALE_SESSION_HOURS = 2;
+
+/** Admin session TTL in milliseconds (24 hours). */
+export const ADMIN_SESSION_TTL_MS = 86400 * 1000;
+
+/** Admin session TTL in seconds (used for cookie Max-Age). */
+export const ADMIN_SESSION_TTL_SECONDS = 86400;
+
+/** Maximum attempts to pick a leitner question before giving up. */
+export const QUESTION_PICK_MAX_ATTEMPTS = 15;
+
+/** Number of items per page in admin list views. */
+export const ADMIN_LIST_PAGE_SIZE = 50;

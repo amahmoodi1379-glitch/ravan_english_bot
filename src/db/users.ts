@@ -24,6 +24,13 @@ export interface TelegramUserLike {
   last_name?: string;
 }
 
+/**
+ * Update an existing user's Telegram profile info and last-seen timestamp if stale.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The existing database user record to update
+ * @param tg - The Telegram user data from the incoming message
+ * @returns void
+ */
 export async function touchExistingUser(env: Env, user: DbUser, tg: TelegramUserLike): Promise<void> {
   const now = new Date();
   const nowIso = now.toISOString();
@@ -64,6 +71,12 @@ export async function touchExistingUser(env: Env, user: DbUser, tg: TelegramUser
   user.last_seen_at = nowIso;
 }
 
+/**
+ * Retrieve an existing user by Telegram ID or create a new one if not found.
+ * @param env - The worker environment containing the D1 database binding
+ * @param tg - The Telegram user data from the incoming message
+ * @returns The existing or newly created DbUser record
+ */
 export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<DbUser> {
   const existing = await queryOne<DbUser>(env, "SELECT * FROM users WHERE telegram_id = ?", [tg.id]);
   if (existing) {
@@ -97,6 +110,12 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
   return newUser;
 }
 
+/**
+ * Look up a user by their Telegram ID.
+ * @param env - The worker environment containing the D1 database binding
+ * @param telegramId - The Telegram user ID to search for
+ * @returns The matching DbUser record, or null if not found
+ */
 export async function getUserByTelegramId(env: Env, telegramId: number): Promise<DbUser | null> {
   return await queryOne<DbUser>(env, "SELECT * FROM users WHERE telegram_id = ?", [telegramId]);
 }

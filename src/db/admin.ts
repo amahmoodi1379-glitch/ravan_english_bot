@@ -70,8 +70,29 @@ export async function insertLicense(env: Env, code: string, expirationDays: numb
   }
 }
 
-export async function findUserWithLicense(env: Env, identifier: string): Promise<any> {
-  let user = await queryOne(
+/** Row shape returned by findUserWithLicense — user columns joined with license info. */
+export interface UserWithLicenseRow {
+  id: number;
+  telegram_id: number;
+  username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  display_name: string | null;
+  xp_total: number;
+  is_approved: number;
+  is_banned: number;
+  banned_until: string | null;
+  banned_by_admin_id: number | null;
+  ban_reason: string | null;
+  created_at: string;
+  code: string | null;
+  expiration_days: number | null;
+  used_at: string | null;
+  license_created_at: string | null;
+}
+
+export async function findUserWithLicense(env: Env, identifier: string): Promise<UserWithLicenseRow | null> {
+  let user = await queryOne<UserWithLicenseRow>(
     env,
     `SELECT u.*, ac.code, ac.expiration_days, ac.used_at, ac.created_at as license_created_at
      FROM users u 
@@ -83,7 +104,7 @@ export async function findUserWithLicense(env: Env, identifier: string): Promise
   if (user) return user;
 
   if (/^\d+$/.test(identifier)) {
-    user = await queryOne(
+    user = await queryOne<UserWithLicenseRow>(
       env,
       `SELECT u.*, ac.code, ac.expiration_days, ac.used_at, ac.created_at as license_created_at
        FROM users u 
@@ -95,7 +116,7 @@ export async function findUserWithLicense(env: Env, identifier: string): Promise
   }
 
   const username = identifier.startsWith('@') ? identifier.substring(1) : identifier;
-  user = await queryOne(
+  user = await queryOne<UserWithLicenseRow>(
     env,
     `SELECT u.*, ac.code, ac.expiration_days, ac.used_at, ac.created_at as license_created_at
      FROM users u 
@@ -129,8 +150,15 @@ export async function unbanUser(env: Env, userId: number): Promise<boolean> {
   return result.meta.changes > 0;
 }
 
-export async function getApprovedUsers(env: Env): Promise<any[]> {
-  return await queryAll(
+export interface ApprovedUserRow {
+  id: number;
+  telegram_id: number;
+  first_name: string | null;
+  username: string | null;
+}
+
+export async function getApprovedUsers(env: Env): Promise<ApprovedUserRow[]> {
+  return await queryAll<ApprovedUserRow>(
     env,
     "SELECT id, telegram_id, first_name, username FROM users WHERE is_approved = 1 AND is_banned = 0 ORDER BY id"
   );

@@ -1,5 +1,5 @@
 import { Env } from "../../types";
-import { TelegramCallbackQuery } from "../router";
+import { TelegramCallbackQuery } from "../types";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getOrCreateUser } from "../../db/users";
 import { CB_PREFIX } from "../../config/constants";
@@ -52,6 +52,12 @@ function buildLeaderboardText(
   return text;
 }
 
+/**
+ * Show the leaderboard home menu with XP and streak category buttons.
+ * @param env - The worker environment containing the bot token
+ * @param chatId - The Telegram chat ID to send the menu to
+ * @returns void
+ */
 export async function showLeaderboardHome(env: Env, chatId: number): Promise<void> {
   const text = `🏆 <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
   const replyMarkup = {
@@ -157,6 +163,12 @@ async function showStreakLeaderboard(
   await sendMessage(env, chatId, text, { reply_markup: replyMarkup });
 }
 
+/**
+ * Handle inline button callbacks for leaderboard navigation and display.
+ * @param env - The worker environment containing the D1 database binding
+ * @param callbackQuery - The Telegram callback query from the inline button press
+ * @returns void
+ */
 export async function handleLeaderboardCallback(
   env: Env,
   callbackQuery: TelegramCallbackQuery

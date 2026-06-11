@@ -38,6 +38,12 @@ function getSinceExpr(period: ActivityPeriod): string | null {
   return null;
 }
 
+/**
+ * Retrieve a user's profile data (display name, avatar, XP, timestamps).
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to look up
+ * @returns The UserProfile record, or null if not found
+ */
 export async function getUserProfile(env: Env, userId: number): Promise<UserProfile | null> {
   const row = await queryOne<UserProfile>(
     env,
@@ -58,6 +64,13 @@ export async function getUserProfile(env: Env, userId: number): Promise<UserProf
   return row ?? null;
 }
 
+/**
+ * Update a user's display name (subject to a 3-change lifetime limit).
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to update
+ * @param newName - The new display name to set
+ * @returns A NameChangeResult indicating success or the reason for failure
+ */
 export async function updateDisplayName(
   env: Env,
   userId: number,
@@ -102,6 +115,13 @@ export async function updateDisplayName(
   };
 }
 
+/**
+ * Set the avatar code for a user.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to update
+ * @param avatarCode - The avatar code string to store
+ * @returns void
+ */
 export async function setAvatar(env: Env, userId: number, avatarCode: string): Promise<void> {
   const now = new Date().toISOString();
   await execute(
@@ -115,6 +135,13 @@ export async function setAvatar(env: Env, userId: number, avatarCode: string): P
   );
 }
 
+/**
+ * Compute aggregated activity statistics for a user over a given time period.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to compute stats for
+ * @param period - The time window: "day", "week", "month", or "all"
+ * @returns An ActivityStats object with XP, question counts, and reading data
+ */
 export async function getUserActivityStats(
   env: Env,
   userId: number,
