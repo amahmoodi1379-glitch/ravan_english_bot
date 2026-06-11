@@ -43,8 +43,8 @@ function buildLeaderboardText(
   }
 
   if (userRank && userRank.score > 0) {
-    const inTop10 = entries.some((e) => e.rank === userRank.rank);
-    if (!inTop10) {
+    const inList = entries.some((e) => e.rank === userRank.rank);
+    if (!inList) {
       text += `\n📍 <b>رتبه شما:</b> ${userRank.rank} — ${userRank.score.toLocaleString("fa-IR")} ${scoreLabel}`;
     }
   }
