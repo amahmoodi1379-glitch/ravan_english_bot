@@ -100,23 +100,29 @@ export async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Pr
   }
 }
 
+const leitnerPrefixes = new Set([
+  CB_PREFIX.LEITNER,
+  CB_PREFIX.LEITNER_IGNORE,
+  CB_PREFIX.LEITNER_IGNORE_CONFIRM,
+  CB_PREFIX.LEITNER_RATE,
+  CB_PREFIX.LEITNER_NEXT,
+  CB_PREFIX.LEITNER_EXIT,
+  CB_PREFIX.LEITNER_EXIT_CONFIRM,
+  CB_PREFIX.LEITNER_DUNNO,
+  CB_PREFIX.LEITNER_HOME,
+  CB_PREFIX.LEITNER_UNLEECH,
+  CB_PREFIX.LEITNER_NEW_LEVEL,
+  CB_PREFIX.LEITNER_REVIEW_LEVEL,
+  CB_PREFIX.LEITNER_LESSON_PICK,
+  CB_PREFIX.LEITNER_LESSON_CONT,
+  CB_PREFIX.LEITNER_LESSON_STOP,
+]);
+
 async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
+  const prefix = data.split(":")[0];
 
-  if (
-    data.startsWith(`${CB_PREFIX.LEITNER}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_IGNORE}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_IGNORE_CONFIRM}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_RATE}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_NEXT}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_EXIT}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_EXIT_CONFIRM}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_DUNNO}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_HOME}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_UNLEECH}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_NEW_LEVEL}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_REVIEW_LEVEL}:`)
-  ) {
+  if (leitnerPrefixes.has(prefix)) {
     await handleLeitnerCallback(env, callbackQuery);
     return;
   }
