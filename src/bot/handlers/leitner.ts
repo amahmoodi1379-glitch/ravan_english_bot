@@ -70,6 +70,14 @@ function parseMode(raw: string | undefined): ReviewMode {
   return "review";
 }
 
+/**
+ * Extract mode from parts array starting at `fromIndex` and joining the rest
+ * with ":". This handles modes that themselves contain colons (e.g. "newL:5").
+ */
+function extractMode(parts: string[], fromIndex: number): ReviewMode {
+  return parseMode(parts.slice(fromIndex).join(":"));
+}
+
 function getLevelFromMode(mode: ReviewMode): number | undefined {
   const match = mode.match(/\d$/);
   return match ? parseInt(match[0], 10) : undefined;
@@ -574,7 +582,7 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
         await handleExitConfirm(env, callbackQuery, user, chatId, messageId);
         return;
       case CB_PREFIX.LEITNER_NEXT: {
-        const mode = parseMode(parts[1]);
+        const mode = extractMode(parts, 1);
         await answerCallbackQuery(env, callbackQuery.id);
         await removeInlineKeyboard(env, chatId, messageId);
         await sendLeitnerQuestion(env, user, chatId, mode);
@@ -648,7 +656,7 @@ async function handleDunno(
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
-  const mode = parseMode(parts[2]);
+  const mode = extractMode(parts, 2);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -731,7 +739,7 @@ async function handleExitRequest(
   messageId: number,
   parts: string[]
 ): Promise<void> {
-  const mode = parseMode(parts[1]);
+  const mode = extractMode(parts, 1);
   await answerCallbackQuery(env, callbackQuery.id);
   await removeInlineKeyboard(env, chatId, messageId);
 
@@ -788,7 +796,7 @@ async function handleLessonTransition(
 ): Promise<void> {
   if (action === "continue") {
     // parts = ["llc", mode] e.g. ["llc", "newL", "5"] — rejoin mode from index 1
-    const mode = parseMode(parts.slice(1).join(":"));
+    const mode = extractMode(parts, 1);
     await answerCallbackQuery(env, callbackQuery.id);
     await removeInlineKeyboard(env, chatId, messageId);
     await sendLeitnerQuestion(env, user, chatId, mode);
@@ -897,7 +905,7 @@ async function handleRating(
 ): Promise<void> {
   const questionId = Number(parts[1]);
   const ratingValue = Number(parts[2]) as Rating;
-  const mode = parseMode(parts[3]);
+  const mode = extractMode(parts, 3);
 
   if (!Number.isFinite(questionId) || !Number.isFinite(ratingValue)) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -977,7 +985,7 @@ async function handleIgnoreWord(
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
-  const mode = parseMode(parts[2]);
+  const mode = extractMode(parts, 2);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -1022,7 +1030,7 @@ async function handleIgnoreWordConfirm(
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
-  const mode = parseMode(parts[2]);
+  const mode = extractMode(parts, 2);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -1058,7 +1066,7 @@ async function handleUnleech(
   parts: string[]
 ): Promise<void> {
   const questionId = Number(parts[1]);
-  const mode = parseMode(parts[2]);
+  const mode = extractMode(parts, 2);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
@@ -1210,7 +1218,7 @@ async function handleAnswer(
 ): Promise<void> {
   const questionId = Number(parts[1]);
   const chosenOption = parts[2];
-  const mode = parseMode(parts[3]);
+  const mode = extractMode(parts, 3);
 
   if (!Number.isFinite(questionId)) {
     await answerCallbackQuery(env, callbackQuery.id);
