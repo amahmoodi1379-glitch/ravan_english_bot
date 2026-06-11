@@ -3,6 +3,17 @@ import { queryOne, queryAll, execute, prepare } from "./client";
 import { schedule, Rating, CardState, FsrsCard } from "../utils/fsrs";
 import { TIME_ZONE_OFFSET, LEITNER_LEECH_THRESHOLD } from "../config/constants";
 
+/**
+ * Produces an ISO 8601 formatted "now" expression for SQLite that matches
+ * the format stored in next_review_date (from JS Date.toISOString()).
+ * This allows sargable index-backed comparisons without wrapping the column.
+ *
+ * Result format: 2024-01-15T10:30:00.000Z
+ * SQLite strftime('%Y-%m-%dT%H:%M:%fZ', ...) produces this exact format.
+ */
+const NOW_ISO = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '${TIME_ZONE_OFFSET}')`;
+
+
 export interface DbWord {
   id: number;
   english: string;
@@ -58,7 +69,7 @@ export async function countDueWords(env: Env, userId: number, level?: number): P
       AND s.ignored = 0
       AND w.is_active = 1${levelFilter}
       AND s.card_state != 0
-      AND datetime(s.next_review_date) <= datetime('now', '${TIME_ZONE_OFFSET}')
+      AND s.next_review_date <= ${NOW_ISO}
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     `,
     params
@@ -81,7 +92,7 @@ export async function countDueWordsByLevel(env: Env, userId: number): Promise<{ 
       AND w.is_active = 1
       AND w.level BETWEEN 1 AND 4
       AND s.card_state != 0
-      AND datetime(s.next_review_date) <= datetime('now', '${TIME_ZONE_OFFSET}')
+      AND s.next_review_date <= ${NOW_ISO}
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     GROUP BY w.level
     ORDER BY w.level ASC
@@ -156,7 +167,7 @@ export async function pickNextReviewWord(env: Env, userId: number, level?: numbe
       AND s.ignored = 0
       AND w.is_active = 1${levelFilter}
       AND s.card_state != 0
-      AND datetime(s.next_review_date) <= datetime('now', '${TIME_ZONE_OFFSET}')
+      AND s.next_review_date <= ${NOW_ISO}
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
     ORDER BY s.next_review_date ASC, w.order_index ASC
     LIMIT 1

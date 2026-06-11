@@ -831,7 +831,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const newCode = (form.get("new_code") || "").toString().trim();
     const daysStr = (form.get("expiration_days") || "").toString().trim();
     const parsedDays = daysStr ? parseInt(daysStr, 10) : null;
-    const expirationDays = (parsedDays !== null && !isNaN(parsedDays) && parsedDays > 0) ? parsedDays : null;
+    const expirationDays = (parsedDays && !isNaN(parsedDays) && parsedDays > 0) ? parsedDays : null;
     if (newCode) {
       try {
         await execute(
