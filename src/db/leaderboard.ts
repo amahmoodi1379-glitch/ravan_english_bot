@@ -21,7 +21,7 @@ export interface UserRank {
 export async function getLeaderboardXp(
   env: Env,
   period: LeaderboardPeriod,
-  limit = 10
+  limit = 50
 ): Promise<LeaderboardEntry[]> {
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
   let rows: any[];
@@ -153,7 +153,7 @@ export async function getUserRankXp(
 export async function getLeaderboardStreak(
   env: Env,
   type: StreakType,
-  limit = 10
+  limit = 50
 ): Promise<LeaderboardEntry[]> {
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
   let rows: any[];
