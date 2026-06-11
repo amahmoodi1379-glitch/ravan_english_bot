@@ -830,13 +830,14 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const form = await parseForm(request);
     const newCode = (form.get("new_code") || "").toString().trim();
     const daysStr = (form.get("expiration_days") || "").toString().trim();
-    const expirationDays = daysStr ? parseInt(daysStr, 10) : null;
+    const parsedDays = daysStr ? parseInt(daysStr, 10) : null;
+    const expirationDays = (parsedDays !== null && !isNaN(parsedDays) && parsedDays > 0) ? parsedDays : null;
     if (newCode) {
       try {
         await execute(
           env,
           `INSERT INTO access_codes (code, expiration_days) VALUES (?, ?)`,
-          [newCode, (expirationDays && expirationDays > 0) ? expirationDays : null]
+          [newCode, expirationDays]
         );
       } catch {}
     }
