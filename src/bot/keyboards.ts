@@ -10,7 +10,23 @@ export const PROFILE_MENU_BUTTON_SETTINGS = "⚙️ تنظیمات پروفای�
 export const PROFILE_MENU_BUTTON_STATS = "📈 آمار فعالیت";
 export const PROFILE_MENU_BUTTON_SUMMARY = "🪪 خلاصه پروفایل";
 
-export function getMainMenuKeyboard() {
+interface ReplyKeyboardMarkup {
+  keyboard: { text: string; style?: string }[][];
+  resize_keyboard: boolean;
+  one_time_keyboard: boolean;
+}
+
+interface AdminReplyKeyboardMarkup {
+  keyboard: string[][];
+  resize_keyboard: boolean;
+  one_time_keyboard: boolean;
+}
+
+/**
+ * Build the main menu reply keyboard with training, leaderboard, and profile buttons.
+ * @returns A Telegram ReplyKeyboardMarkup object for the main menu
+ */
+export function getMainMenuKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: MAIN_MENU_BUTTON_TRAINING, style: "success" }],
@@ -22,7 +38,11 @@ export function getMainMenuKeyboard() {
   };
 }
 
-export function getTrainingMenuKeyboard() {
+/**
+ * Build the training sub-menu reply keyboard with leitner, reading, and back buttons.
+ * @returns A Telegram ReplyKeyboardMarkup object for the training menu
+ */
+export function getTrainingMenuKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: TRAINING_MENU_BUTTON_LEITNER, style: "success" }],
@@ -34,7 +54,11 @@ export function getTrainingMenuKeyboard() {
   };
 }
 
-export function getProfileMenuKeyboard() {
+/**
+ * Build the profile sub-menu reply keyboard with settings, stats, summary, and back buttons.
+ * @returns A Telegram ReplyKeyboardMarkup object for the profile menu
+ */
+export function getProfileMenuKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: PROFILE_MENU_BUTTON_SETTINGS }],
@@ -63,7 +87,11 @@ export const ADMIN_SUBMENU_BUTTON_UNBAN = "✅ رفع مسدودیت";
 export const ADMIN_SUBMENU_BUTTON_ADD_ADMIN = "➕ افزودن ادمین";
 export const ADMIN_SUBMENU_BUTTON_REMOVE_ADMIN = "➖ حذف ادمین";
 
-export function getAdminMenuKeyboard() {
+/**
+ * Build the admin panel main menu reply keyboard.
+ * @returns An AdminReplyKeyboardMarkup object for the admin panel
+ */
+export function getAdminMenuKeyboard(): AdminReplyKeyboardMarkup {
   return {
     keyboard: [
       [ADMIN_MENU_BUTTON_LICENSE],
@@ -78,7 +106,12 @@ export function getAdminMenuKeyboard() {
   };
 }
 
-export function getAdminSubMenuKeyboard(buttons: string[][]) {
+/**
+ * Build a custom admin sub-menu reply keyboard from the given button rows.
+ * @param buttons - A 2D array of button label strings defining the keyboard layout
+ * @returns An AdminReplyKeyboardMarkup object for the sub-menu
+ */
+export function getAdminSubMenuKeyboard(buttons: string[][]): AdminReplyKeyboardMarkup {
   return {
     keyboard: buttons,
     resize_keyboard: true,
@@ -86,39 +119,3 @@ export function getAdminSubMenuKeyboard(buttons: string[][]) {
   };
 }
 
-export function getPaginatedReadingKeyboard(
-  titles: string[],
-  currentPage: number,
-  totalPages: number
-) {
-  const keyboard: any[][] = [];
-
-  for (let i = 0; i < titles.length; i += 2) {
-    const chunk = titles.slice(i, i + 2);
-    keyboard.push(chunk.map(title => ({ text: title })));
-  }
-
-  if (totalPages > 1) {
-    const navRow: any[] = [];
-
-    if (currentPage > 1) {
-      navRow.push({ text: `▶️ صفحه ${currentPage - 1}` });
-    }
-
-    if (currentPage < totalPages) {
-      navRow.push({ text: `صفحه ${currentPage + 1} ◀️` });
-    }
-
-    if (navRow.length > 0) {
-      keyboard.push(navRow);
-    }
-  }
-
-  keyboard.push([{ text: TRAINING_MENU_BUTTON_BACK }]);
-
-  return {
-    keyboard: keyboard,
-    resize_keyboard: true,
-    one_time_keyboard: false
-  };
-}

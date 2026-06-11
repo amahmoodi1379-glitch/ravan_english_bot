@@ -1,5 +1,5 @@
 import { Env } from "../../types";
-import { TelegramCallbackQuery } from "../router";
+import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, answerCallbackQuery, editMessageText } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import {
@@ -17,9 +17,9 @@ import {
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
-import { queryAll, queryOne, prepare } from "../../db/client";
+import { queryAll, queryOne, prepare, execute } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
-import { CB_PREFIX, GAME_CONFIG } from "../../config/constants";
+import { CB_PREFIX, GAME_CONFIG, STALE_SESSION_HOURS } from "../../config/constants";
 import { getMainMenuKeyboard, getTrainingMenuKeyboard } from "../keyboards";
 import { optionLetterToNumber } from "../../utils/options";
 
@@ -42,8 +42,8 @@ function buildReadingInlineKeyboard(
   texts: { id: number; title: string }[],
   currentPage: number,
   totalPages: number
-): any {
-  const keyboard: any[][] = [];
+): { inline_keyboard: InlineKeyboardButton[][] } {
+  const keyboard: InlineKeyboardButton[][] = [];
 
   // Each text gets its own row as an inline button
   for (const t of texts) {
@@ -51,7 +51,7 @@ function buildReadingInlineKeyboard(
   }
 
   // Navigation row
-  const navRow: any[] = [];
+  const navRow: InlineKeyboardButton[] = [];
   if (currentPage > 1) {
     navRow.push({ text: "صفحه قبل ▶️", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage - 1}` });
   }
@@ -68,6 +68,13 @@ function buildReadingInlineKeyboard(
   return { inline_keyboard: keyboard };
 }
 
+/**
+ * Show the reading text selection menu with paginated inline buttons.
+ * @param env - The worker environment containing the D1 database binding
+ * @param chatId - The Telegram chat ID to send the menu to
+ * @param page - The page number to display (defaults to 1)
+ * @returns void
+ */
 export async function startReadingMenuForUser(env: Env, chatId: number, page: number = 1): Promise<void> {
   const totalCount = await getReadingTextsCount(env);
   if (totalCount === 0) {
@@ -98,12 +105,49 @@ export async function startReadingMenuForUser(env: Env, chatId: number, page: nu
 }
 
 /**
- * @deprecated No longer used — reading uses inline keyboard now.
+ * Check if user has a stale active reading session and handle it.
+ * - If session is older than STALE_SESSION_HOURS: auto-cancel it, return false (no message sent).
+ * - If session is active and fresh: send "you have an active session" message, return true.
+ * - If no active session: return false.
+ *
+ * Returns `true` if a message was sent (caller should return early), `false` otherwise.
  */
-export async function handleReadingTitleSelection(_env: Env, _user: DbUser, _chatId: number, _title: string): Promise<boolean> {
+export async function checkAndCancelStaleSession(env: Env, user: DbUser, chatId: number): Promise<boolean> {
+  const activeReadingSession = await queryOne<{ id: number; started_at: string }>(
+    env,
+    `SELECT id, started_at FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
+    [user.id]
+  );
+  if (activeReadingSession) {
+    const sessionAgeHours = (Date.now() - new Date(activeReadingSession.started_at).getTime()) / (1000 * 60 * 60);
+
+    if (sessionAgeHours > STALE_SESSION_HOURS) {
+      // Auto-cancel stale sessions
+      await execute(
+        env,
+        `UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`,
+        [activeReadingSession.id]
+      );
+    } else {
+      await sendMessage(
+        env,
+        chatId,
+        "📖 یک تست درک مطلب فعال داری! روی دکمه‌های سوالات کلیک کن.\nاگه می‌خوای لغوش کنی، دکمه «❌ انصراف و خروج» رو بزن.",
+        { reply_markup: getMainMenuKeyboard() }
+      );
+      return true;
+    }
+  }
+
   return false;
 }
 
+/**
+ * Handle the callback when a user selects a reading text (or pagination/back action).
+ * @param env - The worker environment containing the D1 database binding
+ * @param callbackQuery - The Telegram callback query from the inline button press
+ * @returns void
+ */
 export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
@@ -196,6 +240,12 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   }
 }
 
+/**
+ * Handle the callback when a user selects an answer for a reading comprehension question.
+ * @param env - The worker environment containing the D1 database binding
+ * @param callbackQuery - The Telegram callback query from the answer button press
+ * @returns void
+ */
 export async function handleReadingAnswerCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const parts = data.split(":");
@@ -401,7 +451,7 @@ async function sendReadingSummary(
 
   const { totalXp, stmts: xpStmts } = calculateAndPrepareXpForReading(env, user.id, session.id, newCorrectCount, total);
 
-  const batchStatements: any[] = [...xpStmts];
+  const batchStatements: D1PreparedStatement[] = [...xpStmts];
 
   if (totalXp > 0) {
     batchStatements.push(prepareUpdateSessionXp(env, session.id, totalXp));

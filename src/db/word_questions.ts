@@ -20,6 +20,13 @@ function shuffleArray<T>(array: T[]): T[] {
   return newArray;
 }
 
+/**
+ * Insert multiple-choice questions for a word, shuffling options before storage.
+ * @param env - The worker environment containing the D1 database binding
+ * @param wordId - The word ID to associate the questions with
+ * @param questions - An array of question data rows to insert
+ * @returns void
+ */
 export async function insertWordQuestions(
   env: Env,
   wordId: number,

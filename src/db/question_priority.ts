@@ -1,4 +1,4 @@
-export const PRIMARY_WORD_STYLE_ORDER = [
+const PRIMARY_WORD_STYLE_ORDER = [
   "en_to_fa",
   "fa_to_en",
   "definition_to_word",
@@ -33,11 +33,21 @@ function buildPriorityCase(columnName: string, orderedValues: readonly string[],
   return `CASE ${columnName} ${cases} ELSE ${fallbackPriority} END`;
 }
 
+/**
+ * Generate a SQL CASE expression that orders word question styles by priority.
+ * @param columnName - The SQL column reference for the question style field
+ * @returns A SQL CASE expression string for ORDER BY clauses
+ */
 export function getWordStylePrioritySql(columnName: string = "q.question_style"): string {
   const ordered = [...PRIMARY_WORD_STYLE_ORDER, ...LEGACY_WORD_STYLE_ORDER];
   return buildPriorityCase(columnName, ordered, 999);
 }
 
+/**
+ * Generate a SQL CASE expression that orders text question types by priority.
+ * @param columnName - The SQL column reference for the question type field
+ * @returns A SQL CASE expression string for ORDER BY clauses
+ */
 export function getTextQuestionTypePrioritySql(columnName: string = "q.question_type"): string {
   const ordered = [...PRIMARY_TEXT_TYPE_ORDER, ...LEGACY_TEXT_TYPE_ORDER];
   return buildPriorityCase(columnName, ordered, 999);

@@ -1,5 +1,5 @@
 import { Env } from "../../types";
-import { TelegramCallbackQuery } from "../router";
+import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getProfileMenuKeyboard } from "../keyboards";
 import { getOrCreateUser, DbUser } from "../../db/users";
@@ -40,6 +40,13 @@ async function getStreakInfo(env: Env, userId: number): Promise<number> {
   return 0;
 }
 
+/**
+ * Display the user's profile home with name, XP, streak, and avatar.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param chatId - The Telegram chat ID to send the profile to
+ * @returns void
+ */
 export async function showProfileHome(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
@@ -68,6 +75,13 @@ export async function showProfileHome(env: Env, user: DbUser, chatId: number): P
   });
 }
 
+/**
+ * Display the profile settings page with avatar selection and name change instructions.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param chatId - The Telegram chat ID to send the settings to
+ * @returns void
+ */
 export async function showProfileSettings(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
@@ -90,7 +104,7 @@ export async function showProfileSettings(env: Env, user: DbUser, chatId: number
     `🎭 <b>آواتار فعلی:</b> ${avatarEmoji} (${avatarLabel})\n` +
     `برای تغییر، یکی از گزینه‌های زیر رو انتخاب کن: 👇`;
 
-  const inlineRows: any[][] = [];
+  const inlineRows: InlineKeyboardButton[][] = [];
   for (let i = 0; i < AVATARS.length; i += 4) {
     const slice = AVATARS.slice(i, i + 4);
     inlineRows.push(
@@ -108,6 +122,12 @@ export async function showProfileSettings(env: Env, user: DbUser, chatId: number
   });
 }
 
+/**
+ * Handle the avatar selection callback from the inline keyboard.
+ * @param env - The worker environment containing the D1 database binding
+ * @param callbackQuery - The Telegram callback query containing the selected avatar code
+ * @returns void
+ */
 export async function handleAvatarCallback(
   env: Env,
   callbackQuery: TelegramCallbackQuery
@@ -146,6 +166,14 @@ export async function handleAvatarCallback(
   });
 }
 
+/**
+ * Process the /setname command to update the user's display name.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param chatId - The Telegram chat ID to respond to
+ * @param text - The full command text (e.g., "/setname NewName")
+ * @returns void
+ */
 export async function handleSetDisplayNameCommand(
   env: Env,
   user: DbUser,
@@ -196,6 +224,12 @@ export async function handleSetDisplayNameCommand(
   );
 }
 
+/**
+ * Show the activity stats period selection menu.
+ * @param env - The worker environment containing the bot token
+ * @param chatId - The Telegram chat ID to send the period picker to
+ * @returns void
+ */
 export async function startProfileStats(env: Env, chatId: number): Promise<void> {
   await sendMessage(
     env,
@@ -252,6 +286,12 @@ function buildStatsText(stats: ActivityStats): string {
   return text;
 }
 
+/**
+ * Handle the stats period selection callback and display activity statistics.
+ * @param env - The worker environment containing the D1 database binding
+ * @param callbackQuery - The Telegram callback query containing the chosen period
+ * @returns void
+ */
 export async function handleStatsCallback(
   env: Env,
   callbackQuery: TelegramCallbackQuery
@@ -287,6 +327,13 @@ export async function handleStatsCallback(
   await sendMessage(env, chatId, text);
 }
 
+/**
+ * Show a concise profile summary card with name, XP, avatar, and join date.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param chatId - The Telegram chat ID to send the summary to
+ * @returns void
+ */
 export async function showProfileSummary(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 

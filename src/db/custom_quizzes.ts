@@ -42,6 +42,14 @@ export interface CustomQuizAnswer {
   answered_at: string | null;
 }
 
+/**
+ * Create a new custom quiz in draft status.
+ * @param env - The worker environment containing the D1 database binding
+ * @param adminId - The admin user ID creating the quiz
+ * @param title - The quiz title
+ * @param totalTimeMinutes - Time limit for the quiz in minutes
+ * @returns The newly created quiz's row ID
+ */
 export async function createQuiz(
   env: Env,
   adminId: number,
@@ -51,9 +59,17 @@ export async function createQuiz(
   const result = await env.DB.prepare(
     `INSERT INTO custom_quizzes (admin_id, title, total_time_minutes, status) VALUES (?, ?, ?, 'draft')`
   ).bind(adminId, title, totalTimeMinutes).run();
-  return (result.meta as any)?.last_row_id || 0;
+  // D1 meta.last_row_id is not in official types but is returned at runtime
+  return (result.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
 }
 
+/**
+ * Update the title of an existing quiz.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to update
+ * @param title - The new title string
+ * @returns void
+ */
 export async function updateQuizTitle(
   env: Env,
   quizId: number,
@@ -66,6 +82,13 @@ export async function updateQuizTitle(
   );
 }
 
+/**
+ * Update the time limit of an existing quiz.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to update
+ * @param minutes - The new time limit in minutes
+ * @returns void
+ */
 export async function updateQuizTime(
   env: Env,
   quizId: number,
@@ -78,6 +101,13 @@ export async function updateQuizTime(
   );
 }
 
+/**
+ * Set the status of a quiz (e.g., draft, active, published).
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to update
+ * @param status - The new status string
+ * @returns void
+ */
 export async function setQuizStatus(
   env: Env,
   quizId: number,
@@ -90,6 +120,12 @@ export async function setQuizStatus(
   );
 }
 
+/**
+ * Retrieve a quiz by its ID.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to look up
+ * @returns The CustomQuiz record, or null if not found
+ */
 export async function getQuizById(
   env: Env,
   quizId: number
@@ -101,6 +137,12 @@ export async function getQuizById(
   );
 }
 
+/**
+ * List all active quizzes belonging to a specific admin.
+ * @param env - The worker environment containing the D1 database binding
+ * @param adminId - The admin user ID
+ * @returns An array of active CustomQuiz records
+ */
 export async function getActiveQuizzesByAdmin(
   env: Env,
   adminId: number
@@ -112,6 +154,12 @@ export async function getActiveQuizzesByAdmin(
   );
 }
 
+/**
+ * List all published quizzes belonging to a specific admin.
+ * @param env - The worker environment containing the D1 database binding
+ * @param adminId - The admin user ID
+ * @returns An array of published CustomQuiz records
+ */
 export async function getPublishedQuizzesByAdmin(
   env: Env,
   adminId: number
@@ -123,6 +171,12 @@ export async function getPublishedQuizzesByAdmin(
   );
 }
 
+/**
+ * Permanently delete a quiz and its associated data.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to delete
+ * @returns void
+ */
 export async function deleteQuiz(
   env: Env,
   quizId: number
@@ -130,6 +184,12 @@ export async function deleteQuiz(
   await execute(env, `DELETE FROM custom_quizzes WHERE id = ?`, [quizId]);
 }
 
+/**
+ * Count the number of distinct participants who have completed a quiz.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to count participants for
+ * @returns The distinct participant count
+ */
 export async function getParticipantCount(
   env: Env,
   quizId: number
@@ -142,6 +202,20 @@ export async function getParticipantCount(
   return row?.cnt || 0;
 }
 
+/**
+ * Add a multiple-choice question to a quiz.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to add the question to
+ * @param questionIndex - The display order index of the question
+ * @param questionText - The question text
+ * @param optionA - Answer option A
+ * @param optionB - Answer option B
+ * @param optionC - Answer option C
+ * @param optionD - Answer option D
+ * @param correctOption - The correct option letter ("A", "B", "C", or "D")
+ * @param explanation - Optional explanation text for the correct answer
+ * @returns The newly created question's row ID
+ */
 export async function addQuizQuestion(
   env: Env,
   quizId: number,
@@ -158,9 +232,23 @@ export async function addQuizQuestion(
     `INSERT INTO custom_quiz_questions (quiz_id, question_index, question_text, option_a, option_b, option_c, option_d, correct_option, explanation)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(quizId, questionIndex, questionText, optionA, optionB, optionC, optionD, correctOption, explanation || null).run();
-  return (result.meta as any)?.last_row_id || 0;
+  // D1 meta.last_row_id is not in official types but is returned at runtime
+  return (result.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
 }
 
+/**
+ * Update an existing quiz question's text, options, and correct answer.
+ * @param env - The worker environment containing the D1 database binding
+ * @param questionId - The question ID to update
+ * @param questionText - The new question text
+ * @param optionA - Updated answer option A
+ * @param optionB - Updated answer option B
+ * @param optionC - Updated answer option C
+ * @param optionD - Updated answer option D
+ * @param correctOption - The updated correct option letter
+ * @param explanation - Optional updated explanation text
+ * @returns void
+ */
 export async function updateQuizQuestion(
   env: Env,
   questionId: number,
@@ -181,6 +269,12 @@ export async function updateQuizQuestion(
   );
 }
 
+/**
+ * Get all questions for a quiz ordered by their index.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to retrieve questions for
+ * @returns An array of CustomQuizQuestion records
+ */
 export async function getQuizQuestions(
   env: Env,
   quizId: number
@@ -192,6 +286,12 @@ export async function getQuizQuestions(
   );
 }
 
+/**
+ * Retrieve a single quiz question by ID.
+ * @param env - The worker environment containing the D1 database binding
+ * @param questionId - The question ID to look up
+ * @returns The CustomQuizQuestion record, or null if not found
+ */
 export async function getQuizQuestionById(
   env: Env,
   questionId: number
@@ -203,11 +303,25 @@ export async function getQuizQuestionById(
   );
 }
 
+/**
+ * Get the total number of questions in a quiz.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to count questions for
+ * @returns The question count
+ */
 export async function getQuestionCount(env: Env, quizId: number): Promise<number> {
   const row = await queryOne<{ cnt: number }>(env, `SELECT COUNT(*) as cnt FROM custom_quiz_questions WHERE quiz_id = ?`, [quizId]);
   return row?.cnt || 0;
 }
 
+/**
+ * Create a shareable link for a quiz with an expiration date.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to generate a link for
+ * @param linkToken - The unique token for the link
+ * @param expiresAt - The ISO timestamp when the link expires
+ * @returns void
+ */
 export async function createQuizLink(
   env: Env,
   quizId: number,
@@ -221,6 +335,12 @@ export async function createQuizLink(
   );
 }
 
+/**
+ * Look up a quiz link by its token string.
+ * @param env - The worker environment containing the D1 database binding
+ * @param token - The link token to search for
+ * @returns The quiz_id and expiration, or null if not found
+ */
 export async function getQuizLinkByToken(
   env: Env,
   token: string
@@ -232,6 +352,12 @@ export async function getQuizLinkByToken(
   );
 }
 
+/**
+ * Get the most recently created link for a quiz.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to find the link for
+ * @returns The link token and expiration, or null if no link exists
+ */
 export async function getLatestQuizLink(
   env: Env,
   quizId: number
@@ -243,6 +369,14 @@ export async function getLatestQuizLink(
   );
 }
 
+/**
+ * Create a new quiz attempt for a user.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID being attempted
+ * @param userId - The user ID starting the attempt
+ * @param chatId - Optional Telegram chat ID for sending results
+ * @returns The newly created attempt's row ID
+ */
 export async function createAttempt(
   env: Env,
   quizId: number,
@@ -252,9 +386,16 @@ export async function createAttempt(
   const result = await env.DB.prepare(
     `INSERT INTO custom_quiz_attempts (quiz_id, user_id, chat_id, status) VALUES (?, ?, ?, 'in_progress')`
   ).bind(quizId, userId, chatId ?? null).run();
-  return (result.meta as any)?.last_row_id || 0;
+  // D1 meta.last_row_id is not in official types but is returned at runtime
+  return (result.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
 }
 
+/**
+ * Retrieve a quiz attempt by its ID.
+ * @param env - The worker environment containing the D1 database binding
+ * @param attemptId - The attempt ID to look up
+ * @returns The CustomQuizAttempt record, or null if not found
+ */
 export async function getAttempt(
   env: Env,
   attemptId: number
@@ -266,6 +407,13 @@ export async function getAttempt(
   );
 }
 
+/**
+ * Find the most recent attempt by a user on a specific quiz.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID
+ * @param userId - The user ID
+ * @returns The most recent CustomQuizAttempt, or null if none exists
+ */
 export async function getAttemptByQuizAndUser(
   env: Env,
   quizId: number,
@@ -278,6 +426,13 @@ export async function getAttemptByQuizAndUser(
   );
 }
 
+/**
+ * Mark a quiz attempt as finished (completed or auto-ended).
+ * @param env - The worker environment containing the D1 database binding
+ * @param attemptId - The attempt ID to finish
+ * @param status - The finish status: "finished" or "auto_ended"
+ * @returns void
+ */
 export async function finishAttempt(
   env: Env,
   attemptId: number,
@@ -290,6 +445,13 @@ export async function finishAttempt(
   );
 }
 
+/**
+ * Update the current question index pointer for an in-progress attempt.
+ * @param env - The worker environment containing the D1 database binding
+ * @param attemptId - The attempt ID to update
+ * @param index - The new question index value
+ * @returns void
+ */
 export async function updateCurrentQuestionIndex(
   env: Env,
   attemptId: number,
@@ -302,6 +464,12 @@ export async function updateCurrentQuestionIndex(
   );
 }
 
+/**
+ * Count how many attempts are currently in-progress and within the time limit.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to check
+ * @returns The number of active in-progress attempts
+ */
 export async function getInProgressAttemptsCount(
   env: Env,
   quizId: number
@@ -319,6 +487,12 @@ export async function getInProgressAttemptsCount(
   return result?.count || 0;
 }
 
+/**
+ * Get all finished attempts that have a chat_id (for sending results back to users).
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to look up
+ * @returns An array of attempt records with id, user_id, and chat_id
+ */
 export async function getFinishedAttemptsWithChatId(
   env: Env,
   quizId: number
@@ -331,6 +505,14 @@ export async function getFinishedAttemptsWithChatId(
   );
 }
 
+/**
+ * Save or update the user's answer for a specific question in an attempt.
+ * @param env - The worker environment containing the D1 database binding
+ * @param attemptId - The attempt ID the answer belongs to
+ * @param questionId - The question ID being answered
+ * @param chosenOption - The chosen option letter, or null if unanswered
+ * @returns void
+ */
 export async function saveAnswer(
   env: Env,
   attemptId: number,
@@ -357,6 +539,13 @@ export async function saveAnswer(
   }
 }
 
+/**
+ * Retrieve the user's saved answer for a specific question in an attempt.
+ * @param env - The worker environment containing the D1 database binding
+ * @param attemptId - The attempt ID
+ * @param questionId - The question ID
+ * @returns The CustomQuizAnswer record, or null if not answered
+ */
 export async function getAnswerForQuestion(
   env: Env,
   attemptId: number,
@@ -369,6 +558,12 @@ export async function getAnswerForQuestion(
   );
 }
 
+/**
+ * Count how many questions have been answered in a given attempt.
+ * @param env - The worker environment containing the D1 database binding
+ * @param attemptId - The attempt ID to count answers for
+ * @returns The number of answered questions
+ */
 export async function getAnsweredCount(
   env: Env,
   attemptId: number
@@ -381,12 +576,31 @@ export async function getAnsweredCount(
   return row?.cnt ?? 0;
 }
 
+interface LeaderboardNegativeRow {
+  attempt_id: number;
+  user_id: number;
+  display_name: string;
+  avatar_code: string | null;
+  correct: number;
+  wrong: number;
+  unanswered: number;
+  total_q: number;
+  total_seconds: number;
+}
+
+/**
+ * Compute a ranked leaderboard for a quiz using negative marking (wrong answers penalized).
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to compute leaderboard for
+ * @param limit - Maximum number of entries to return (default 50)
+ * @returns An array of ranked leaderboard entries with scores and timing
+ */
 export async function getLeaderboardWithNegative(
   env: Env,
   quizId: number,
   limit = 50
 ): Promise<{ rank: number; user_id: number; display_name: string; avatar_code: string | null; percentage: number; correct: number; wrong: number; unanswered: number; total_seconds: number }[]> {
-  const rows = await queryAll<any>(
+  const rows = await queryAll<LeaderboardNegativeRow>(
     env,
     `
     SELECT
@@ -432,12 +646,29 @@ export async function getLeaderboardWithNegative(
   });
 }
 
+interface LeaderboardPositiveRow {
+  attempt_id: number;
+  user_id: number;
+  display_name: string;
+  avatar_code: string | null;
+  correct: number;
+  total_q: number;
+  total_seconds: number;
+}
+
+/**
+ * Compute a ranked leaderboard for a quiz without negative marking (correct answers only).
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID to compute leaderboard for
+ * @param limit - Maximum number of entries to return (default 50)
+ * @returns An array of ranked leaderboard entries with correct counts and timing
+ */
 export async function getLeaderboardWithoutNegative(
   env: Env,
   quizId: number,
   limit = 50
 ): Promise<{ rank: number; user_id: number; display_name: string; avatar_code: string | null; percentage: number; correct: number; total_seconds: number }[]> {
-  const rows = await queryAll<any>(
+  const rows = await queryAll<LeaderboardPositiveRow>(
     env,
     `
     SELECT
@@ -476,6 +707,13 @@ export async function getLeaderboardWithoutNegative(
   });
 }
 
+/**
+ * Get a specific user's rank and detailed results using negative marking scoring.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID
+ * @param userId - The user ID to look up
+ * @returns The user's rank, percentage, correct/wrong/unanswered counts, or null if no attempt
+ */
 export async function getUserRankWithNegative(
   env: Env,
   quizId: number,
@@ -488,7 +726,7 @@ export async function getUserRankWithNegative(
   );
   if (!userAttempt) return null;
 
-  const stats = await queryOne<any>(
+  const stats = await queryOne<{ correct: number; wrong: number; unanswered: number; total_q: number }>(
     env,
     `
     SELECT
@@ -539,6 +777,13 @@ export async function getUserRankWithNegative(
   };
 }
 
+/**
+ * Get a specific user's rank and results without negative marking.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The quiz ID
+ * @param userId - The user ID to look up
+ * @returns The user's rank, percentage, and correct count, or null if no attempt
+ */
 export async function getUserRankWithoutNegative(
   env: Env,
   quizId: number,
@@ -551,7 +796,7 @@ export async function getUserRankWithoutNegative(
   );
   if (!userAttempt) return null;
 
-  const stats = await queryOne<any>(
+  const stats = await queryOne<{ correct: number; total_q: number; total_seconds: number }>(
     env,
     `
     SELECT

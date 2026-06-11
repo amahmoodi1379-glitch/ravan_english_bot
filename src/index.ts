@@ -1,10 +1,11 @@
 import { Env } from "./types";
-import { handleTelegramUpdate, TelegramUpdate } from "./bot/router";
+import { handleTelegramUpdate } from "./bot/router";
+import { TelegramUpdate } from "./bot/types";
 import { execute } from "./db/client";
 import { handleAdminRequest } from "./admin/router";
 
 export default {
-  async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     try {
@@ -35,13 +36,13 @@ export default {
       }
 
       return new Response("Not found", { status: 404 });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Global Error:", err);
       return new Response("Internal Server Error (Logged)", { status: 500 });
     }
   },
 
-  async scheduled(event: any, env: Env, ctx: any): Promise<void> {
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil((async () => {
       try {
         await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");

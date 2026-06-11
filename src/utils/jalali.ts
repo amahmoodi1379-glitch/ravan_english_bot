@@ -43,13 +43,15 @@ function gregorianToJalali(gy: number, gm: number, gd: number): [number, number,
 
 /**
  * Convert an ISO date string (or Date) to a formatted Jalali date string.
- * Example output: "۱۴۰۳/۰۹/۱۵" or "۱۵ آذر ۱۴۰۳"
+ * @param dateInput - The date to convert (ISO string or Date object)
+ * @param format - Output format: 'short' for "۱۴۰۳/۰۹/۱۵" or 'long' for "۱۵ آذر ۱۴۰۳" (defaults to 'long')
+ * @returns The formatted Jalali date string, or '-' if the date is invalid
  */
 export function toJalaliString(dateInput: string | Date, format: 'short' | 'long' = 'long'): string {
-  const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
-  if (isNaN(d.getTime())) return '-';
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (isNaN(date.getTime())) return '-';
 
-  const [jy, jm, jd] = gregorianToJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  const [jy, jm, jd] = gregorianToJalali(date.getFullYear(), date.getMonth() + 1, date.getDate());
 
   if (format === 'short') {
     const mm = jm < 10 ? `0${jm}` : `${jm}`;

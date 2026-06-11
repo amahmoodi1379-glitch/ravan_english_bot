@@ -1,4 +1,5 @@
 import { Env } from "../types";
+import { TelegramUpdate, TelegramCallbackQuery } from "./types";
 import {
   getMainMenuKeyboard,
   getTrainingMenuKeyboard,
@@ -46,48 +47,17 @@ import {
 import {
   handleAdminCommand
 } from "./handlers/admin";
+import { handleNewUserLicenseFlow, handleUnapprovedUserLicenseFlow } from "./handlers/license";
+import { checkAndCancelStaleSession } from "./handlers/reading";
 import { CB_PREFIX } from "../config/constants";
-import { getOrCreateUser, getUserByTelegramId, touchExistingUser, DbUser } from "../db/users";
-import { queryOne, execute } from "../db/client";
+import { getUserByTelegramId, touchExistingUser } from "../db/users";
 
-export interface TelegramUser {
-  id: number;
-  first_name?: string;
-  last_name?: string;
-  username?: string;
-}
-
-export interface TelegramChat {
-  id: number;
-  type: string;
-}
-
-export interface TelegramMessage {
-  message_id: number;
-  from?: TelegramUser;
-  chat: TelegramChat;
-  text?: string;
-  caption?: string;
-  photo?: Array<{ file_id: string; file_size?: number; width?: number; height?: number }>;
-  video?: { file_id: string; file_size?: number; width?: number; height?: number; duration?: number };
-  audio?: { file_id: string; file_size?: number; duration?: number };
-  document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
-  voice?: { file_id: string; file_size?: number; duration?: number };
-}
-
-export interface TelegramCallbackQuery {
-  id: string;
-  from: TelegramUser;
-  data?: string;
-  message?: TelegramMessage;
-}
-
-export interface TelegramUpdate {
-  update_id: number;
-  message?: TelegramMessage;
-  callback_query?: TelegramCallbackQuery;
-}
-
+/**
+ * Process an incoming Telegram update by delegating to callback or message handlers.
+ * @param env - The worker environment containing bindings and secrets
+ * @param update - The raw Telegram Update object from the webhook
+ * @returns void
+ */
 export async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Promise<void> {
   if (update.callback_query) {
     await handleCallback(env, update.callback_query);
@@ -166,44 +136,7 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   await answerCallbackQuery(env, callbackQuery.id);
 }
 
-function extractLicenseCode(text: string): string {
-  let code = text.trim();
-  if (code.startsWith("/start")) {
-    code = code.replace("/start", "").trim();
-  }
-  return code;
-}
 
-async function applyLicenseCode(
-  env: Env,
-  user: DbUser,
-  code: string
-): Promise<{ ok: boolean; expireMessage: string }> {
-  const licenseInfo = await queryOne<{ expiration_days: number | null }>(
-    env,
-    `SELECT expiration_days FROM access_codes WHERE code = ? AND used_by_user_id IS NULL`,
-    [code]
-  );
-  if (!licenseInfo) return { ok: false, expireMessage: "" };
-
-  const now = new Date().toISOString();
-  const result = await execute(
-    env,
-    `UPDATE access_codes SET used_by_user_id = ?, used_at = ? WHERE code = ? AND used_by_user_id IS NULL`,
-    [user.id, now, code]
-  );
-  if (result.meta.changes === 0) return { ok: false, expireMessage: "" };
-
-  let expireMessage = "";
-  if (licenseInfo.expiration_days && licenseInfo.expiration_days > 0) {
-    const expireDate = new Date(Date.now() + licenseInfo.expiration_days * 24 * 60 * 60 * 1000);
-    expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${expireDate.toLocaleDateString('fa-IR')})`;
-  }
-
-  await execute(env, `UPDATE users SET is_approved = 1 WHERE id = ?`, [user.id]);
-  user.is_approved = 1;
-  return { ok: true, expireMessage };
-}
 
 async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
@@ -227,35 +160,12 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   let user = await getUserByTelegramId(env, tgUser.id);
 
   if (!user) {
-    const inputCode = extractLicenseCode(text);
-    if (!inputCode) {
-      await sendMessage(env, chatId, "👋 سلام! به ربات خوش اومدی.\n\nاین یک ربات خصوصی است. لطفاً کد لایسنس (Access Code) خودتون رو ارسال کنید تا اکانت شما فعال شود.");
-      return;
-    }
-
-    user = await getOrCreateUser(env, tgUser);
-    const result = await applyLicenseCode(env, user, inputCode);
-    if (result.ok) {
-      await sendMessage(env, chatId, `✅ تبریک! لایسنس شما تایید شد.${result.expireMessage}\nحالا می‌تونی از ربات استفاده کنی. برای شروع روی /start بزن یا از منو استفاده کن.`);
-    } else {
-      await sendMessage(env, chatId, "⛔️ کد لایسنس نامعتبر است یا قبلاً استفاده شده.\nلطفاً کد صحیح را ارسال کنید.");
-    }
+    await handleNewUserLicenseFlow(env, chatId, tgUser, text);
     return;
   }
 
   if (!user.is_approved) {
-    const inputCode = extractLicenseCode(text);
-    if (!inputCode) {
-      await sendMessage(env, chatId, "لطفاً کد لایسنس خود را ارسال کنید:");
-      return;
-    }
-
-    const result = await applyLicenseCode(env, user, inputCode);
-    if (result.ok) {
-      await sendMessage(env, chatId, `✅ اکانت شما فعال شد!${result.expireMessage}\nحالا می‌تونید از ربات استفاده کنید.`);
-    } else {
-      await sendMessage(env, chatId, "⛔️ کد وارد شده معتبر نیست. لطفاً کد صحیح را ارسال کنید.");
-    }
+    await handleUnapprovedUserLicenseFlow(env, chatId, user, text);
     return;
   }
 
@@ -341,31 +251,8 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  const activeReadingSession = await queryOne<{ id: number; started_at: string }>(
-    env,
-    `SELECT id, started_at FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
-    [user.id]
-  );
-  if (activeReadingSession) {
-    const sessionAgeHours = (Date.now() - new Date(activeReadingSession.started_at).getTime()) / (1000 * 60 * 60);
-
-    if (sessionAgeHours > 2) {
-      // Auto-cancel stale sessions (2 hours is generous)
-      await execute(
-        env,
-        `UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`,
-        [activeReadingSession.id]
-      );
-    } else {
-      await sendMessage(
-        env,
-        chatId,
-        "📖 یک تست درک مطلب فعال داری! روی دکمه‌های سوالات کلیک کن.\nاگه می‌خوای لغوش کنی، دکمه «❌ انصراف و خروج» رو بزن.",
-        { reply_markup: getMainMenuKeyboard() }
-      );
-      return;
-    }
-  }
+  const staleHandled = await checkAndCancelStaleSession(env, user, chatId);
+  if (staleHandled) return;
 
   await sendMessage(
     env,

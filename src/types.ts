@@ -4,5 +4,5 @@ export interface Env {
   ADMIN_PASSWORD?: string;
   BOT_USERNAME?: string;
 
-  DB: any;
+  DB: D1Database;
 }

@@ -18,13 +18,20 @@ export interface UserRank {
   score: number;
 }
 
+/**
+ * Fetch the XP leaderboard for a given time period.
+ * @param env - The worker environment containing the D1 database binding
+ * @param period - The leaderboard period: "weekly", "monthly", or "all"
+ * @param limit - Maximum number of entries to return (default 50)
+ * @returns An array of LeaderboardEntry objects ranked by XP
+ */
 export async function getLeaderboardXp(
   env: Env,
   period: LeaderboardPeriod,
   limit = 50
 ): Promise<LeaderboardEntry[]> {
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
-  let rows: any[];
+  let rows: LeaderboardEntry[];
 
   if (period === "weekly") {
     rows = await queryAll(
@@ -94,6 +101,13 @@ export async function getLeaderboardXp(
   }));
 }
 
+/**
+ * Get a specific user's rank and score on the XP leaderboard.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to look up
+ * @param period - The leaderboard period: "weekly", "monthly", or "all"
+ * @returns The user's rank and score, or null if the user is not eligible
+ */
 export async function getUserRankXp(
   env: Env,
   userId: number,
@@ -150,13 +164,20 @@ export async function getUserRankXp(
   return { rank: (result?.cnt ?? 0) + 1, score: userScore.score };
 }
 
+/**
+ * Fetch the streak leaderboard (live streaks or all-time records).
+ * @param env - The worker environment containing the D1 database binding
+ * @param type - Whether to show "live" current streaks or all-time "record" streaks
+ * @param limit - Maximum number of entries to return (default 50)
+ * @returns An array of LeaderboardEntry objects ranked by streak count
+ */
 export async function getLeaderboardStreak(
   env: Env,
   type: StreakType,
   limit = 50
 ): Promise<LeaderboardEntry[]> {
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
-  let rows: any[];
+  let rows: LeaderboardEntry[];
 
   if (type === "live") {
     rows = await queryAll(
@@ -204,6 +225,13 @@ export async function getLeaderboardStreak(
   }));
 }
 
+/**
+ * Get a specific user's rank and score on the streak leaderboard.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to look up
+ * @param type - Whether to check "live" current streak or all-time "record"
+ * @returns The user's rank and streak score, or null if the user is not eligible
+ */
 export async function getUserRankStreak(
   env: Env,
   userId: number,

@@ -2,12 +2,20 @@ import { Env } from "../types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Send a text message to a Telegram chat.
+ * @param env - The worker environment containing the bot token
+ * @param chatId - The target chat ID to send the message to
+ * @param text - The HTML-formatted message text
+ * @param extra - Additional Telegram sendMessage parameters (e.g., reply_markup)
+ * @returns The Telegram API response data, or null on failure
+ */
 export async function sendMessage(
   env: Env,
   chatId: number,
   text: string,
   extra?: Record<string, unknown>
-): Promise<any> {
+): Promise<unknown> {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
   const body: Record<string, unknown> = {
@@ -20,6 +28,15 @@ export async function sendMessage(
   return fetchWithRetry(url, body);
 }
 
+/**
+ * Copy a message from one chat to another via Telegram API.
+ * @param env - The worker environment containing the bot token
+ * @param fromChatId - The source chat ID to copy from
+ * @param messageId - The message ID to copy
+ * @param toChatId - The destination chat ID to copy to
+ * @param extra - Additional Telegram copyMessage parameters
+ * @returns void
+ */
 export async function copyMessage(
   env: Env,
   fromChatId: number,
@@ -37,6 +54,14 @@ export async function copyMessage(
   await fetchWithRetry(url, body);
 }
 
+/**
+ * Answer a Telegram callback query (dismiss the loading spinner on inline buttons).
+ * @param env - The worker environment containing the bot token
+ * @param callbackQueryId - The ID of the callback query to answer
+ * @param text - Optional notification text to show the user
+ * @param showAlert - Whether to show text as an alert popup (defaults to true)
+ * @returns void
+ */
 export async function answerCallbackQuery(
   env: Env,
   callbackQueryId: string,
@@ -59,6 +84,11 @@ export async function answerCallbackQuery(
 
 let cachedBotUsername: string | null = null;
 
+/**
+ * Retrieve the bot's username via the Telegram getMe endpoint (cached after first call).
+ * @param env - The worker environment containing the bot token
+ * @returns The bot's username string, or null if the request fails
+ */
 export async function getBotUsername(env: Env): Promise<string | null> {
   if (cachedBotUsername) return cachedBotUsername;
   try {
@@ -76,13 +106,22 @@ export async function getBotUsername(env: Env): Promise<string | null> {
   }
 }
 
+/**
+ * Edit the text of an existing Telegram message.
+ * @param env - The worker environment containing the bot token
+ * @param chatId - The chat ID containing the message
+ * @param messageId - The ID of the message to edit
+ * @param text - The new HTML-formatted message text
+ * @param extra - Additional Telegram editMessageText parameters
+ * @returns The Telegram API response data, or null on failure
+ */
 export async function editMessageText(
   env: Env,
   chatId: number,
   messageId: number,
   text: string,
   extra?: Record<string, unknown>
-): Promise<any> {
+): Promise<unknown> {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/editMessageText`;
   const body: Record<string, unknown> = {
     chat_id: chatId,
@@ -94,6 +133,14 @@ export async function editMessageText(
   return await fetchWithRetry(url, body);
 }
 
+/**
+ * Edit or remove the inline keyboard markup of an existing Telegram message.
+ * @param env - The worker environment containing the bot token
+ * @param chatId - The chat ID containing the message
+ * @param messageId - The ID of the message whose markup to edit
+ * @param replyMarkup - The new inline keyboard markup, or undefined to clear it
+ * @returns void
+ */
 export async function editMessageReplyMarkup(
   env: Env,
   chatId: number,
@@ -113,7 +160,13 @@ export async function editMessageReplyMarkup(
   await fetchWithRetry(url, body);
 }
 
-async function fetchWithRetry(url: string, body: any, retries = 3): Promise<any> {
+interface TelegramApiResponse {
+  ok?: boolean;
+  parameters?: { retry_after?: number };
+  [key: string]: unknown;
+}
+
+async function fetchWithRetry(url: string, body: Record<string, unknown>, retries = 3): Promise<unknown> {
   for (let i = 0; i < retries; i++) {
     try {
       const resp = await fetch(url, {
@@ -122,7 +175,7 @@ async function fetchWithRetry(url: string, body: any, retries = 3): Promise<any>
         body: JSON.stringify(body)
       });
 
-      const data: any = await resp.json().catch(() => ({}));
+      const data = await resp.json().catch(() => ({})) as TelegramApiResponse;
 
       if (resp.ok) {
         return data;

@@ -1,5 +1,53 @@
 import { escapeHtml } from "../utils/response";
 
+/** Row shape for word form rendering. */
+export interface WordFormRow {
+  id?: number | string;
+  english?: string;
+  persian?: string;
+  level?: number;
+  lesson_name?: string | null;
+  synonyms?: string | null;
+  antonyms?: string | null;
+  is_active?: number | boolean;
+}
+
+/** Row shape for text form rendering. */
+export interface TextFormRow {
+  id?: number | string;
+  title?: string;
+  body_en?: string;
+  level?: number | string | null;
+  is_active?: number | boolean;
+}
+
+/** Row shape for user form rendering. */
+export interface UserFormRow {
+  id: number;
+  telegram_id: number;
+  username?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  display_name?: string | null;
+  xp_total: number;
+  is_approved: number | boolean;
+}
+
+/** Row shape for question list rendering. */
+export interface QuestionRow {
+  id: number;
+  question_text: string;
+  option_a: string;
+  option_b: string;
+  option_c: string;
+  option_d: string;
+  correct_option: string;
+  explanation_text: string | null;
+  source: string;
+  question_style?: string;
+  question_type?: string;
+}
+
 export function renderAdminLayout(title: string, content: string, section: string = ""): string {
   const nav = `
     <nav style="margin-bottom: 16px;">
@@ -64,7 +112,7 @@ export function renderAdminLayout(title: string, content: string, section: strin
 function renderQuestionManager(
   type: "word" | "text",
   parentId: number,
-  questions: any[] = [],
+  questions: QuestionRow[] = [],
   styleValueKey: string = "question_style"
 ): string {
   const basePath = type === "word" ? "/admin/words/questions" : "/admin/texts/questions";
@@ -74,8 +122,10 @@ function renderQuestionManager(
 
   const listHtml = questions.length === 0
     ? "<p>هنوز سوالی ثبت نشده است.</p>"
-    : questions.map((q: any) => {
-      const styleValue = q[styleValueKey] || "";
+    : questions.map((q: QuestionRow) => {
+      const styleValue = String(
+        (styleValueKey === "question_style" ? q.question_style : q.question_type) || ""
+      );
       return `
         <div class="q-box">
           <div class="q-meta">ID: ${q.id} | ${escapeHtml(styleLabel)}: ${escapeHtml(styleValue || "-")} | Source: ${escapeHtml(q.source || "-")}</div>
@@ -270,7 +320,7 @@ Example JSON Structure:
   `;
 }
 
-export function renderWordForm(word: any, heading: string, questions: any[] = []): string {
+export function renderWordForm(word: WordFormRow, heading: string, questions: QuestionRow[] = []): string {
   const hasId = Number(word.id) > 0;
   return `
     <h2>${escapeHtml(heading)}</h2>
@@ -304,7 +354,7 @@ export function renderWordForm(word: any, heading: string, questions: any[] = []
   `;
 }
 
-export function renderTextForm(text: any, heading: string, questions: any[] = []): string {
+export function renderTextForm(text: TextFormRow, heading: string, questions: QuestionRow[] = []): string {
   const hasId = Number(text.id) > 0;
   return `
     <h2>${escapeHtml(heading)}</h2>
@@ -329,7 +379,7 @@ export function renderTextForm(text: any, heading: string, questions: any[] = []
   `;
 }
 
-export function renderUserForm(user: any, heading: string): string {
+export function renderUserForm(user: UserFormRow, heading: string): string {
   return `
     <h2>${escapeHtml(heading)}</h2>
     <div style="background:#eee; padding:10px; border-radius:6px; margin-bottom:10px; font-size:12px;">

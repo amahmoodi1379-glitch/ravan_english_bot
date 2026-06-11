@@ -9,6 +9,11 @@ export interface DbReadingText {
   is_active: number;
 }
 
+/**
+ * Get the total count of active reading texts.
+ * @param env - The worker environment containing the D1 database binding
+ * @returns The number of active reading texts
+ */
 export async function getReadingTextsCount(env: Env): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
     env,
@@ -17,6 +22,13 @@ export async function getReadingTextsCount(env: Env): Promise<number> {
   return row?.cnt ?? 0;
 }
 
+/**
+ * Retrieve a paginated list of active reading texts.
+ * @param env - The worker environment containing the D1 database binding
+ * @param limit - Maximum number of texts to return
+ * @param offset - Number of texts to skip before returning results
+ * @returns An array of DbReadingText records
+ */
 export async function getPaginatedReadingTexts(env: Env, limit: number, offset: number): Promise<DbReadingText[]> {
   return await queryAll<DbReadingText>(
     env,
@@ -31,6 +43,12 @@ export async function getPaginatedReadingTexts(env: Env, limit: number, offset: 
   );
 }
 
+/**
+ * Find an active reading text by its exact title.
+ * @param env - The worker environment containing the D1 database binding
+ * @param title - The title to search for
+ * @returns The matching DbReadingText, or null if not found
+ */
 export async function getReadingTextByTitle(env: Env, title: string): Promise<DbReadingText | null> {
   const row = await queryOne<DbReadingText>(
     env,
