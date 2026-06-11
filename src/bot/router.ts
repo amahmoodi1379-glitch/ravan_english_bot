@@ -115,7 +115,10 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
     data.startsWith(`${CB_PREFIX.LEITNER_HOME}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_UNLEECH}:`) ||
     data.startsWith(`${CB_PREFIX.LEITNER_NEW_LEVEL}:`) ||
-    data.startsWith(`${CB_PREFIX.LEITNER_REVIEW_LEVEL}:`)
+    data.startsWith(`${CB_PREFIX.LEITNER_REVIEW_LEVEL}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_LESSON_PICK}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_LESSON_CONT}:`) ||
+    data.startsWith(`${CB_PREFIX.LEITNER_LESSON_STOP}:`)
   ) {
     await handleLeitnerCallback(env, callbackQuery);
     return;
