@@ -160,14 +160,14 @@ function renderQuestionManager(
             <textarea name="explanation_text" rows="2">${escapeHtml(q.explanation_text || "")}</textarea>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
               <button type="submit">ذخیره تغییرات سوال</button>
-          </form>
-              <form method="post" action="${basePath}/delete" onsubmit="return confirm('آیا مطمئنی؟');" style="margin:0;">
-                <input type="hidden" name="id" value="${q.id}" />
-                <input type="hidden" name="${parentField}" value="${parentId}" />
-                <input type="hidden" name="return_to" value="edit" />
-                <button type="submit" class="danger">حذف سوال</button>
-              </form>
             </div>
+          </form>
+          <form method="post" action="${basePath}/delete" onsubmit="return confirm('آیا مطمئنی؟');" style="margin:0; margin-top:6px;">
+            <input type="hidden" name="id" value="${q.id}" />
+            <input type="hidden" name="${parentField}" value="${parentId}" />
+            <input type="hidden" name="return_to" value="edit" />
+            <button type="submit" class="danger">حذف سوال</button>
+          </form>
         </div>
       `;
     }).join("");
