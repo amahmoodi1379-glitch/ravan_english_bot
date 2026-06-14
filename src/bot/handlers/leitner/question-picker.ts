@@ -215,12 +215,14 @@ export async function sendLeitnerQuestion(
       continue;
     }
 
-    // Record that the user has seen this question.
+    // Record that the user has seen this question (reset answered state so they can answer again).
     const now = new Date().toISOString();
     await env.DB.prepare(
-      `INSERT OR IGNORE INTO user_word_question_history
+      `INSERT INTO user_word_question_history
         (user_id, word_id, question_id, context, shown_at)
-       VALUES (?, ?, ?, 'leitner', ?)`
+       VALUES (?, ?, ?, 'leitner', ?)
+       ON CONFLICT(user_id, question_id, context)
+       DO UPDATE SET shown_at = excluded.shown_at, answered_at = NULL, is_correct = NULL`
     ).bind(user.id, question.word_id, question.id, now).run();
 
     const messageText =
