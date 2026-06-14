@@ -287,10 +287,25 @@ export async function sendCompletionMessage(
     return;
   }
 
-  // new / new1-4
+  // Lesson-filtered mode (newL:X)
+  if (isLessonMode(mode)) {
+    const lessonId = getLessonIdFromMode(mode);
+    let lessonLabel = "این درس";
+    if (lessonId !== undefined) {
+      const rawName = await getLessonNameById(env, lessonId);
+      const lessonName = trimLessonName(rawName);
+      if (lessonName) lessonLabel = `درس «${lessonName}»`;
+    }
+    await sendMessage(env, chatId, `📚 واژه‌های ${lessonLabel} رو تموم کردی! آفرین! 🌟`, {
+      reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
+    });
+    return;
+  }
+
+  // Level-based mode (new, new1–4)
   const level = getLevelFromMode(mode);
-  const levelText = level ? `واژه‌های سطح ${level}` : "همه واژه‌های موجود";
-  await sendMessage(env, chatId, `📚 ${levelText} رو شروع کردی! آفرین! 🌟`, {
+  const levelText = level ? `واژه‌های سطح ${level}` : "همه واژه‌های جدید";
+  await sendMessage(env, chatId, `📚 ${levelText} رو تموم کردی! آفرین! 🌟`, {
     reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
   });
 }
