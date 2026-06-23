@@ -13,7 +13,9 @@ import {
   countNewWordsByLevel,
   countLeechWords,
   getReviewStats,
+  getQuestionAnswerStats,
 } from "../../../db/leitner";
+import { formatAnswerStatsLine } from "../../../utils/answer_stats";
 import { prepareXpForLeitner, checkAndUpdateStreak } from "../../../db/xp";
 import {
   CB_PREFIX,
@@ -271,6 +273,9 @@ async function handleDunno(
   if (explanation) {
     replyText += `\n\n${explanation}`;
   }
+
+  const dunnoStats = await getQuestionAnswerStats(env, question.id);
+  replyText += formatAnswerStatsLine(dunnoStats);
 
   const rows: InlineKeyboardButton[][] = [];
   if (mode === "leech") rows.push([unleechButton(question.id, mode)]);
@@ -558,7 +563,12 @@ async function handleNewLevel(
     }
 
     let text = "🆕 <b>واژه‌های جدید</b>\n\nکدوم سطح رو میخوای شروع کنی؟\n\n";
+    text += `📚 به‌ترتیب کتاب: <b>${total}</b> واژه\n`;
     const keyboard: InlineKeyboardButton[][] = [];
+
+    // Primary options first: book-order (green) then lesson-based (blue)
+    keyboard.push([{ text: `📚 به‌ترتیب کتاب (${total} واژه)`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:new`, style: "success" }]);
+    keyboard.push([{ text: "📖 انتخاب بر اساس درس", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:0`, style: "primary" }]);
 
     for (const { level, count } of levelCounts) {
       if (count > 0) {
@@ -570,9 +580,6 @@ async function handleNewLevel(
       }
     }
 
-    text += `\n🎲 درهم: <b>${total}</b> واژه`;
-    keyboard.push([{ text: `🎲 درهم (${total} واژه)`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:new` }]);
-    keyboard.push([{ text: "📖 انتخاب بر اساس درس", callback_data: `${CB_PREFIX.LEITNER_LESSON_PICK}:0` }]);
     keyboard.push([homeButton()]);
 
     await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: keyboard } });
@@ -615,7 +622,11 @@ async function handleReviewLevel(
     }
 
     let text = "📋 <b>مرور واژگان</b>\n\nکدوم سطح رو میخوای مرور کنی؟\n\n";
+    text += `📚 به‌ترتیب کتاب: <b>${total}</b> واژه\n`;
     const keyboard: InlineKeyboardButton[][] = [];
+
+    // Book-order option first (green)
+    keyboard.push([{ text: `📚 به‌ترتیب کتاب (${total} واژه)`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:review`, style: "success" }]);
 
     for (const { level, count } of levelCounts) {
       if (count > 0) {
@@ -627,8 +638,6 @@ async function handleReviewLevel(
       }
     }
 
-    text += `\n🎲 درهم: <b>${total}</b> واژه`;
-    keyboard.push([{ text: `🎲 درهم (${total} واژه)`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:review` }]);
     keyboard.push([homeButton()]);
 
     await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: keyboard } });
@@ -739,6 +748,9 @@ async function handleAnswer(
   if (explanation) {
     replyText += `\n\n${explanation}`;
   }
+
+  const answerStats = await getQuestionAnswerStats(env, question.id);
+  replyText += formatAnswerStatsLine(answerStats);
 
   let ratingButtons: InlineKeyboardButton[];
   if (isCorrect) {

@@ -446,6 +446,31 @@ export async function getReviewStats(env: Env, userId: number, hours: number = 2
 }
 
 /**
+ * Aggregate how all users have answered a specific leitner question.
+ * Counts only answered records; "نمیدونم" is stored as is_correct = 0 (incorrect).
+ */
+export async function getQuestionAnswerStats(
+  env: Env,
+  questionId: number
+): Promise<ReviewStats> {
+  const row = await queryOne<{ correct: number; incorrect: number; total: number }>(
+    env,
+    `
+    SELECT
+      COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
+      COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) as incorrect,
+      COUNT(*) as total
+    FROM user_word_question_history
+    WHERE question_id = ?
+      AND context = 'leitner'
+      AND answered_at IS NOT NULL
+    `,
+    [questionId]
+  );
+  return row ?? { correct: 0, incorrect: 0, total: 0 };
+}
+
+/**
  * Read a word's question_stage WITHOUT creating a state row.
  * Returns 1 (default) if the user has no state for this word yet.
  * This is important so that merely *showing* a new-word question does not

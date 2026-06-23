@@ -42,6 +42,19 @@ function gregorianToJalali(gy: number, gm: number, gd: number): [number, number,
 }
 
 /**
+ * Convert a Date to its Jalali (Shamsi) parts [year, month, day].
+ * Uses the local Gregorian fields of the Date (so the caller controls the timezone
+ * by constructing the Date appropriately).
+ * @param date - The Date to convert
+ * @returns A tuple [jy, jm, jd] (month is 1-12, day is 1-31)
+ */
+export function toJalaliParts(date: Date): [number, number, number] {
+  // Use UTC fields so callers can pass a UTC-shifted Date (e.g. Iran-local wall
+  // clock) and get correct results regardless of the host machine's timezone.
+  return gregorianToJalali(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
+/**
  * Convert an ISO date string (or Date) to a formatted Jalali date string.
  * @param dateInput - The date to convert (ISO string or Date object)
  * @param format - Output format: 'short' for "۱۴۰۳/۰۹/۱۵" or 'long' for "۱۵ آذر ۱۴۰۳" (defaults to 'long')

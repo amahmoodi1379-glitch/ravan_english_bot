@@ -1,7 +1,107 @@
 import { Env } from "../types";
 import { queryOne, execute } from "./client";
+import { TIME_ZONE_OFFSET } from "../config/constants";
 
 export type ActivityPeriod = "day" | "week" | "month" | "all";
+
+export interface PeriodMetrics {
+  xp: number;
+  questions: number;
+  new_words: number;
+}
+
+export interface PeriodComparison {
+  current: PeriodMetrics;
+  previous: PeriodMetrics;
+}
+
+/** Local-date bucketing modifier shared across analytics queries. */
+const LOCAL_DATE = `'${TIME_ZONE_OFFSET}'`;
+
+/**
+ * Compute study metrics (XP, answered questions, new words) for a user across two
+ * consecutive local-date windows: the current window [curStart, curEnd) and the
+ * previous window [prevStart, prevEnd). Dates are 'YYYY-MM-DD' in Iran local time.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user ID to compute metrics for
+ * @param r - The window boundaries as local date strings
+ * @returns A PeriodComparison with current and previous metric totals
+ */
+export async function getActivityComparison(
+  env: Env,
+  userId: number,
+  r: { curStart: string; curEnd: string; prevStart: string; prevEnd: string }
+): Promise<PeriodComparison> {
+  const { curStart, curEnd, prevStart, prevEnd } = r;
+
+  // XP from activity_log
+  const xpRow = await queryOne<{ cur: number; prev: number }>(
+    env,
+    `
+    SELECT
+      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN xp_delta ELSE 0 END), 0) AS cur,
+      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN xp_delta ELSE 0 END), 0) AS prev
+    FROM (
+      SELECT xp_delta, date(created_at, ${LOCAL_DATE}) AS d
+      FROM activity_log
+      WHERE user_id = ? AND date(created_at, ${LOCAL_DATE}) >= ? AND date(created_at, ${LOCAL_DATE}) < ?
+    )
+    `,
+    [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd]
+  );
+
+  // Answered questions: leitner + reading combined
+  const qRow = await queryOne<{ cur: number; prev: number }>(
+    env,
+    `
+    SELECT
+      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS cur,
+      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS prev
+    FROM (
+      SELECT date(answered_at, ${LOCAL_DATE}) AS d
+      FROM user_word_question_history
+      WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL
+        AND date(answered_at, ${LOCAL_DATE}) >= ? AND date(answered_at, ${LOCAL_DATE}) < ?
+      UNION ALL
+      SELECT date(answered_at, ${LOCAL_DATE}) AS d
+      FROM user_text_question_history
+      WHERE user_id = ? AND answered_at IS NOT NULL
+        AND date(answered_at, ${LOCAL_DATE}) >= ? AND date(answered_at, ${LOCAL_DATE}) < ?
+    )
+    `,
+    [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd, userId, prevStart, curEnd]
+  );
+
+  // New words learned (state row created), excluding ignored
+  const wRow = await queryOne<{ cur: number; prev: number }>(
+    env,
+    `
+    SELECT
+      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS cur,
+      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS prev
+    FROM (
+      SELECT date(created_at, ${LOCAL_DATE}) AS d
+      FROM user_words_sm2
+      WHERE user_id = ? AND ignored = 0
+        AND date(created_at, ${LOCAL_DATE}) >= ? AND date(created_at, ${LOCAL_DATE}) < ?
+    )
+    `,
+    [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd]
+  );
+
+  return {
+    current: {
+      xp: xpRow?.cur ?? 0,
+      questions: qRow?.cur ?? 0,
+      new_words: wRow?.cur ?? 0,
+    },
+    previous: {
+      xp: xpRow?.prev ?? 0,
+      questions: qRow?.prev ?? 0,
+      new_words: wRow?.prev ?? 0,
+    },
+  };
+}
 
 export interface UserProfile {
   id: number;

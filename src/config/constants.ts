@@ -35,9 +35,20 @@ export const CB_PREFIX = {
   LEITNER_LESSON_PICK: "llp",
   LEITNER_LESSON_CONT: "llc",
   LEITNER_LESSON_STOP: "lls",
+  JOIN_CHECK: "jck",
+  REMINDER_OPEN: "rmo",
 };
 
 export const LESSON_PICKER_PAGE_SIZE = 20;
+
+/** Required channel the user must join to use the bot (force-join). */
+export const REQUIRED_CHANNEL = "@psynex";
+
+/** Minimum number of recorded answers before showing the "others answered" stats line. */
+export const ANSWER_STATS_MIN_THRESHOLD = 5;
+
+/** Days of inactivity at which each return-reminder stage fires (subscribers only). */
+export const INACTIVITY_REMINDER_DAYS = [2, 5, 10] as const;
 
 export const LEITNER_LEECH_THRESHOLD = 4;
 

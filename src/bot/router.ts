@@ -13,7 +13,7 @@ import {
   PROFILE_MENU_BUTTON_STATS,
   PROFILE_MENU_BUTTON_SUMMARY
 } from "./keyboards";
-import { sendMessage, answerCallbackQuery } from "./telegram-api";
+import { sendMessage, answerCallbackQuery, getChatMemberStatus } from "./telegram-api";
 import { handleStartCommand } from "./handlers/start";
 import {
   startLeitnerForUser,
@@ -49,8 +49,45 @@ import {
 } from "./handlers/admin";
 import { handleNewUserLicenseFlow, handleUnapprovedUserLicenseFlow } from "./handlers/license";
 import { checkAndCancelStaleSession } from "./handlers/reading";
-import { CB_PREFIX } from "../config/constants";
-import { getUserByTelegramId, touchExistingUser } from "../db/users";
+import { CB_PREFIX, REQUIRED_CHANNEL } from "../config/constants";
+import { getUserByTelegramId, getOrCreateUser, touchExistingUser } from "../db/users";
+
+/** Channel-membership statuses that count as "joined". */
+const MEMBER_STATUSES = new Set(["creator", "administrator", "member"]);
+
+/**
+ * Build the force-join prompt keyboard: a link to the channel and a re-check button.
+ */
+function joinKeyboard() {
+  const channelUrl = `https://t.me/${REQUIRED_CHANNEL.replace(/^@/, "")}`;
+  return {
+    inline_keyboard: [
+      [{ text: "📢 عضویت در کانال", url: channelUrl }],
+      [{ text: "✅ عضو شدم، بررسی کن", callback_data: `${CB_PREFIX.JOIN_CHECK}:1` }],
+    ],
+  };
+}
+
+const JOIN_PROMPT_TEXT =
+  `🔒 برای استفاده از ربات، لازمه اول عضو کانال ما بشی:\n\n` +
+  `${REQUIRED_CHANNEL}\n\n` +
+  `بعد از عضویت، دکمه‌ی «✅ عضو شدم، بررسی کن» رو بزن.`;
+
+/**
+ * Check whether the user is a member of the required channel.
+ * Fails open (treats as member) if the API call errors — e.g. the bot is not yet
+ * an admin of the channel — to avoid locking everyone out on misconfiguration.
+ * @param env - The worker environment containing the bot token
+ * @param tgUserId - The Telegram user ID to check
+ * @returns True if the user may proceed (member or fail-open), false if blocked
+ */
+async function isChannelMember(env: Env, tgUserId: number): Promise<boolean> {
+  const res = await getChatMemberStatus(env, REQUIRED_CHANNEL, tgUserId);
+  if (res === null) return true; // fail-open on API error
+  if (MEMBER_STATUSES.has(res.status)) return true;
+  if (res.status === "restricted" && res.isMember) return true;
+  return false;
+}
 
 /**
  * Process an incoming Telegram update by delegating to callback or message handlers.
@@ -91,6 +128,25 @@ const leitnerPrefixes = new Set([
 async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const prefix = data.split(":")[0];
+  const cbChatId = callbackQuery.message?.chat.id;
+
+  // Force-join gate (except the membership re-check button itself).
+  if (prefix === CB_PREFIX.JOIN_CHECK) {
+    await handleJoinCheck(env, callbackQuery, cbChatId);
+    return;
+  }
+  if (callbackQuery.from && !(await isChannelMember(env, callbackQuery.from.id))) {
+    await answerCallbackQuery(env, callbackQuery.id, "ابتدا باید عضو کانال شوی 🔒");
+    if (cbChatId !== undefined) {
+      await sendMessage(env, cbChatId, JOIN_PROMPT_TEXT, { reply_markup: joinKeyboard() });
+    }
+    return;
+  }
+
+  if (prefix === CB_PREFIX.REMINDER_OPEN) {
+    await handleReminderOpen(env, callbackQuery, cbChatId, data);
+    return;
+  }
 
   if (leitnerPrefixes.has(prefix)) {
     await handleLeitnerCallback(env, callbackQuery);
@@ -136,6 +192,51 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
   await answerCallbackQuery(env, callbackQuery.id);
 }
 
+/**
+ * Handle the "I joined, re-check" button: re-verify membership and grant access if joined.
+ */
+async function handleJoinCheck(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  chatId: number | undefined
+): Promise<void> {
+  if (!callbackQuery.from || chatId === undefined) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+  if (await isChannelMember(env, callbackQuery.from.id)) {
+    await answerCallbackQuery(env, callbackQuery.id, "عضویت تأیید شد ✅");
+    await sendMessage(env, chatId, "🎉 عالی! حالا می‌تونی از ربات استفاده کنی 👇", {
+      reply_markup: getMainMenuKeyboard(),
+    });
+  } else {
+    // The user clicked this button on the existing join-prompt message, so the
+    // alert alone is enough — re-sending the prompt would spam the chat.
+    await answerCallbackQuery(env, callbackQuery.id, "هنوز عضو کانال نیستی 🔒");
+  }
+}
+
+/**
+ * Handle the glassy reminder buttons that jump straight into a practice section.
+ */
+async function handleReminderOpen(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  chatId: number | undefined,
+  data: string
+): Promise<void> {
+  await answerCallbackQuery(env, callbackQuery.id);
+  if (chatId === undefined || !callbackQuery.from) return;
+
+  const target = data.split(":")[1];
+  const user = await getOrCreateUser(env, callbackQuery.from);
+  if (target === "reading") {
+    await startReadingMenuForUser(env, chatId, 1);
+  } else {
+    await startLeitnerForUser(env, user, chatId);
+  }
+}
+
 
 
 async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
@@ -147,6 +248,12 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   const tgUser = message.from;
 
   if (!tgUser) {
+    return;
+  }
+
+  // Force-join gate: everyone (including admins) must be a channel member.
+  if (!(await isChannelMember(env, tgUser.id))) {
+    await sendMessage(env, chatId, JOIN_PROMPT_TEXT, { reply_markup: joinKeyboard() });
     return;
   }
 

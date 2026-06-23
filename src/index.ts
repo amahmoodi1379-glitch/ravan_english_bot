@@ -3,6 +3,9 @@ import { handleTelegramUpdate } from "./bot/router";
 import { TelegramUpdate } from "./bot/types";
 import { execute } from "./db/client";
 import { handleAdminRequest } from "./admin/router";
+import { sendInactivityReminders } from "./bot/handlers/reminders";
+import { sendProgressReports } from "./bot/handlers/reports";
+import { toJalaliParts } from "./utils/jalali";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -110,7 +113,48 @@ export default {
         console.error("License expiration check error:", err);
       }
 
-      const iranHour = new Date(Date.now() + 3.5 * 60 * 60 * 1000).getUTCHours();
+      const iranNow = new Date(Date.now() + 3.5 * 60 * 60 * 1000);
+      const iranHour = iranNow.getUTCHours();
+
+      // Return-reminders for inactive subscribers (2/5/10 days) — once daily at 10:00 Iran
+      if (iranHour === 10) {
+        try {
+          await sendInactivityReminders(env);
+        } catch (err) {
+          console.error("Inactivity reminders error:", err);
+        }
+      }
+
+      // Progress reports — at 21:00 Iran. Daily every day; weekly on Friday;
+      // monthly on the last day of the Jalali month.
+      if (iranHour === 21) {
+        try {
+          await sendProgressReports(env, "daily");
+        } catch (err) {
+          console.error("Daily progress report error:", err);
+        }
+
+        // Friday (Iran local) marks the end of the Persian week.
+        if (iranNow.getUTCDay() === 5) {
+          try {
+            await sendProgressReports(env, "weekly");
+          } catch (err) {
+            console.error("Weekly progress report error:", err);
+          }
+        }
+
+        // Last day of the Jalali month: tomorrow's Jalali day-of-month is 1.
+        const tomorrow = new Date(iranNow.getTime() + 24 * 60 * 60 * 1000);
+        const [, , tomorrowJd] = toJalaliParts(tomorrow);
+        if (tomorrowJd === 1) {
+          try {
+            await sendProgressReports(env, "monthly");
+          } catch (err) {
+            console.error("Monthly progress report error:", err);
+          }
+        }
+      }
+
       if (iranHour === 1) {
         try {
           await execute(env, "DELETE FROM activity_log WHERE created_at < datetime('now', '-60 days')");

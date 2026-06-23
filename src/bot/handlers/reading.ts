@@ -14,9 +14,11 @@ import {
   getSessionStats,
   prepareUpdateSessionXp,
   getNewCorrectCount,
+  getTextQuestionAnswerStats,
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
+import { formatAnswerStatsLine } from "../../utils/answer_stats";
 import { queryAll, queryOne, prepare, execute } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { CB_PREFIX, GAME_CONFIG, STALE_SESSION_HOURS } from "../../config/constants";
@@ -352,6 +354,9 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
       `جواب تو: <b>${chosenNum}</b>\n` +
       `✅ جواب صحیح: <b>${correctNum}</b>`;
   }
+
+  const answerStats = await getTextQuestionAnswerStats(env, question.id);
+  replyText += formatAnswerStatsLine(answerStats);
 
   await sendMessage(env, chatId, replyText);
 
