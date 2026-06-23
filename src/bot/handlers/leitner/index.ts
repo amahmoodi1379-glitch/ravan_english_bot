@@ -246,7 +246,7 @@ async function handleDunno(
   batch.push(prepare(
     env,
     `UPDATE user_word_question_history
-     SET is_correct = 0, answered_at = ?
+     SET is_correct = 0, answered_at = ?, first_is_correct = COALESCE(first_is_correct, 0)
      WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`,
     [now, user.id, question.id]
   ));
@@ -710,9 +710,9 @@ async function handleAnswer(
   // Atomically mark as answered — if another request already answered, changes=0
   const answerResult = await env.DB.prepare(
     `UPDATE user_word_question_history
-     SET is_correct = ?, answered_at = ?
+     SET is_correct = ?, answered_at = ?, first_is_correct = COALESCE(first_is_correct, ?)
      WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
-  ).bind(isCorrect ? 1 : 0, now, user.id, question.id).run();
+  ).bind(isCorrect ? 1 : 0, now, isCorrect ? 1 : 0, user.id, question.id).run();
 
   if (answerResult.meta.changes === 0) {
     // Already answered by a concurrent request — silently stop
