@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryAll, queryOne, execute } from "./client";
+import { queryAll, queryOne, prepare } from "./client";
 
 /** Allowed reading-comprehension question types stored in text_questions.question_type. */
 const ALLOWED_TEXT_QUESTION_TYPES = [
@@ -94,7 +94,7 @@ export async function insertTextQuestions(
   textId: number,
   questions: NewTextQuestionRow[]
 ): Promise<number> {
-  let inserted = 0;
+  const statements: D1PreparedStatement[] = [];
   for (const q of questions) {
     const opts = q.options.slice(0, 4);
     while (opts.length < 4) {
@@ -107,27 +107,32 @@ export async function insertTextQuestions(
 
     const [a, b, c, d] = opts;
 
-    await execute(
-      env,
-      `
-      INSERT INTO text_questions
-        (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_type, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        textId,
-        q.questionText,
-        a,
-        b,
-        c,
-        d,
-        correctLetter,
-        q.explanation || null,
-        questionType,
-        q.source || "ai"
-      ]
+    statements.push(
+      prepare(
+        env,
+        `
+        INSERT INTO text_questions
+          (text_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation_text, question_type, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          textId,
+          q.questionText,
+          a,
+          b,
+          c,
+          d,
+          correctLetter,
+          q.explanation || null,
+          questionType,
+          q.source || "ai"
+        ]
+      )
     );
-    inserted++;
   }
-  return inserted;
+
+  if (statements.length > 0) {
+    await env.DB.batch(statements);
+  }
+  return statements.length;
 }

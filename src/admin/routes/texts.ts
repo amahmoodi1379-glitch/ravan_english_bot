@@ -253,14 +253,22 @@ export async function handleTextRoutes(request: Request, env: Env, url: URL): Pr
     const validQuestions = [];
     for (const item of questionsArray) {
       // item is unknown — value comes from JSON.parse of user input
+      if (typeof item !== "object" || item === null) continue;
       const entry = item as Record<string, unknown>;
-      if (entry.questionText && Array.isArray(entry.options) && entry.options.length === 4 && typeof entry.correctIndex === 'number') {
+      const isValid =
+        typeof entry.questionText === "string" &&
+        entry.questionText.trim() !== "" &&
+        Array.isArray(entry.options) &&
+        entry.options.length === 4 &&
+        entry.options.every((opt) => typeof opt === "string") &&
+        typeof entry.correctIndex === "number";
+      if (isValid) {
         validQuestions.push({
           questionText: entry.questionText as string,
           options: entry.options as string[],
-          correctIndex: entry.correctIndex,
-          explanation: (entry.explanation as string) || "",
-          questionType: (entry.questionType as string) || "reading",
+          correctIndex: entry.correctIndex as number,
+          explanation: typeof entry.explanation === "string" ? entry.explanation : "",
+          questionType: typeof entry.questionType === "string" ? entry.questionType : "reading",
           source: "manual" as const
         });
       }

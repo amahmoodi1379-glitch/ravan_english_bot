@@ -389,7 +389,7 @@ Example of the EXACT JSON shape (the content here is only an illustration of the
   }
 ]`;
 
-  const fullPrompt = promptTemplate.replace(/\{\{PASSAGE\}\}/g, bodyEn);
+  const fullPrompt = promptTemplate.replace(/\{\{PASSAGE\}\}/g, () => bodyEn);
 
   const encodedPrompt = escapeHtml(fullPrompt);
   const encodedPassage = escapeHtml(bodyEn);
