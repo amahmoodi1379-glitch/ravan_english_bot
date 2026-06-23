@@ -12,7 +12,7 @@
 -- • When you change the schema: add a new migration in migrations/ AND update
 --   this file to match. They must never disagree. See .kiro/steering/database.md
 --
--- Last consolidated: migration 0025 (FSRS).
+-- Last consolidated: migration 0027 (inactivity_reminder_stage).
 -- ============================================================================
 
 
@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- streak (0007, 0019)
   streak_count INTEGER DEFAULT 0,
   last_streak_date TEXT,
-  max_streak_record INTEGER NOT NULL DEFAULT 0
+  max_streak_record INTEGER NOT NULL DEFAULT 0,
+  -- inactivity return-reminder stage (0027): 0=none 1=2d 2=5d 3=10d; reset on interaction
+  inactivity_reminder_stage INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);

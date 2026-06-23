@@ -15,6 +15,30 @@ export interface DbTextQuestion {
   question_type: string | null;
 }
 
+/**
+ * Aggregate how all users have answered a specific reading-comprehension question.
+ * Counts only answered records (across all reading sessions).
+ */
+export async function getTextQuestionAnswerStats(
+  env: Env,
+  questionId: number
+): Promise<{ correct: number; incorrect: number; total: number }> {
+  const row = await queryOne<{ correct: number; incorrect: number; total: number }>(
+    env,
+    `
+    SELECT
+      COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
+      COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) as incorrect,
+      COUNT(*) as total
+    FROM user_text_question_history
+    WHERE question_id = ?
+      AND answered_at IS NOT NULL
+    `,
+    [questionId]
+  );
+  return row ?? { correct: 0, incorrect: 0, total: 0 };
+}
+
 export interface ReadingSession {
   id: number;
   user_id: number;

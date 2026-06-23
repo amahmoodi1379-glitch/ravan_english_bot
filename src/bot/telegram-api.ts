@@ -160,6 +160,40 @@ export async function editMessageReplyMarkup(
   await fetchWithRetry(url, body);
 }
 
+/**
+ * Get a user's membership status in a chat/channel via the Telegram getChatMember endpoint.
+ * @param env - The worker environment containing the bot token
+ * @param chatId - The target chat/channel (numeric id or "@username")
+ * @param userId - The Telegram user ID to check
+ * @returns An object with the membership status and is_member flag, or null on failure
+ */
+export async function getChatMemberStatus(
+  env: Env,
+  chatId: number | string,
+  userId: number
+): Promise<{ status: string; isMember: boolean } | null> {
+  try {
+    const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getChatMember`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, user_id: userId }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as {
+      ok?: boolean;
+      result?: { status?: string; is_member?: boolean };
+    };
+    if (!data.ok || !data.result?.status) {
+      console.error("getChatMember failed:", JSON.stringify(data));
+      return null;
+    }
+    return { status: data.result.status, isMember: data.result.is_member === true };
+  } catch (err) {
+    console.error("Network error in getChatMember:", err);
+    return null;
+  }
+}
+
 interface TelegramApiResponse {
   ok?: boolean;
   parameters?: { retry_after?: number };

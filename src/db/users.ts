@@ -58,7 +58,7 @@ export async function touchExistingUser(env: Env, user: DbUser, tg: TelegramUser
     env,
     `
       UPDATE users
-      SET username = ?, first_name = ?, last_name = ?, display_name = COALESCE(display_name, ?), last_seen_at = ?, updated_at = ?
+      SET username = ?, first_name = ?, last_name = ?, display_name = COALESCE(display_name, ?), last_seen_at = ?, updated_at = ?, inactivity_reminder_stage = 0
       WHERE id = ?
     `,
     [tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, nowIso, nowIso, user.id]
