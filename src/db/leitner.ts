@@ -178,52 +178,15 @@ export async function pickNextReviewWord(env: Env, userId: number, level?: numbe
 }
 
 /**
- * Pick the next new word for the user to learn.
- * Skips words with the same English spelling as the most recently shown word
- * to avoid boring repetition of homographs.
+ * Pick the next new word for the user to learn, in book order (order_index).
+ * Used by the "book order" and per-level new-word modes. Picking is purely
+ * sequential so it stays consistent with peekNextNewWord (no homograph-skip),
+ * which avoids silent lesson jumps / bounce-backs at lesson boundaries.
  * Optionally filters by level.
  */
 export async function pickNextNewWord(env: Env, userId: number, level?: number): Promise<DbWord | null> {
   const levelFilter = level ? ` AND w.level = ?` : '';
-
-  // Get the last word this user was shown in leitner context
-  const lastWord = await queryOne<{ english: string }>(
-    env,
-    `SELECT w.english FROM user_word_question_history h
-     JOIN words w ON w.id = h.word_id
-     WHERE h.user_id = ? AND h.context = 'leitner'
-     ORDER BY h.shown_at DESC LIMIT 1`,
-    [userId]
-  );
-
-  const lastEnglish = lastWord?.english ?? null;
-
-  // If we have a last word, try to exclude words with same english text
-  if (lastEnglish) {
-    const params: unknown[] = level ? [level, lastEnglish, userId] : [lastEnglish, userId];
-    const row = await queryOne<DbWord>(
-      env,
-      `
-      SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
-      FROM words w
-      WHERE w.is_active = 1${levelFilter}
-        AND LOWER(w.english) != LOWER(?)
-        AND NOT EXISTS (
-          SELECT 1 FROM user_words_sm2 s
-          WHERE s.user_id = ? AND s.word_id = w.id
-        )
-        AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
-      ORDER BY w.order_index ASC, w.id ASC
-      LIMIT 1
-      `,
-      params
-    );
-
-    if (row) return row;
-  }
-
-  // Fallback: just pick the next one in order (even if same english)
-  const params2: unknown[] = level ? [level, userId] : [userId];
+  const params: unknown[] = level ? [level, userId] : [userId];
   const row = await queryOne<DbWord>(
     env,
     `
@@ -238,7 +201,7 @@ export async function pickNextNewWord(env: Env, userId: number, level?: number):
     ORDER BY w.order_index ASC, w.id ASC
     LIMIT 1
     `,
-    params2
+    params
   );
   return row ?? null;
 }
@@ -446,8 +409,9 @@ export async function getReviewStats(env: Env, userId: number, hours: number = 2
 }
 
 /**
- * Aggregate how all users have answered a specific leitner question.
- * Counts only answered records; "نمیدونم" is stored as is_correct = 0 (incorrect).
+ * Aggregate how all users FIRST answered a specific leitner question.
+ * Uses first_is_correct (set once on the first answer, never overwritten on
+ * re-show); "نمیدونم" counts as a first answer of 0 (incorrect).
  */
 export async function getQuestionAnswerStats(
   env: Env,
@@ -457,13 +421,13 @@ export async function getQuestionAnswerStats(
     env,
     `
     SELECT
-      COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
-      COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) as incorrect,
-      COUNT(*) as total
+      COALESCE(SUM(CASE WHEN first_is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
+      COALESCE(SUM(CASE WHEN first_is_correct = 0 THEN 1 ELSE 0 END), 0) as incorrect,
+      COUNT(first_is_correct) as total
     FROM user_word_question_history
     WHERE question_id = ?
       AND context = 'leitner'
-      AND answered_at IS NOT NULL
+      AND first_is_correct IS NOT NULL
     `,
     [questionId]
   );
@@ -651,8 +615,11 @@ export async function countNewWordsByLesson(
 
 
 /**
- * Pick next new word filtered by lesson name (trimmed comparison).
- * Mirrors pickNextNewWord but adds a lesson filter.
+ * Pick a random unlearned new word within a lesson (trimmed comparison).
+ * Randomizing within the lesson naturally spreads out look-alike words so we no
+ * longer need a homograph-skip step. The candidate set is just one lesson's
+ * unlearned words (small), so ORDER BY RANDOM() is cheap; the WHERE filter still
+ * uses the (is_active, order_index) index.
  * If lessonName is null, picks words where TRIM(lesson_name) IS NULL or empty.
  */
 export async function pickNextNewWordByLesson(
@@ -661,53 +628,17 @@ export async function pickNextNewWordByLesson(
   lessonName: string | null
 ): Promise<DbWord | null> {
   let lessonFilter: string;
-  const baseParams: unknown[] = [];
+  const params: unknown[] = [];
 
   if (lessonName === null) {
     lessonFilter = ' AND (TRIM(w.lesson_name) IS NULL OR TRIM(w.lesson_name) = \'\')';
   } else {
     lessonFilter = ' AND TRIM(w.lesson_name) = ?';
-    baseParams.push(lessonName.trim());
+    params.push(lessonName.trim());
   }
 
-  // Get the last word this user was shown in leitner context
-  const lastWord = await queryOne<{ english: string }>(
-    env,
-    `SELECT w.english FROM user_word_question_history h
-     JOIN words w ON w.id = h.word_id
-     WHERE h.user_id = ? AND h.context = 'leitner'
-     ORDER BY h.shown_at DESC LIMIT 1`,
-    [userId]
-  );
+  params.push(userId);
 
-  const lastEnglish = lastWord?.english ?? null;
-
-  // If we have a last word, try to exclude words with same english text
-  if (lastEnglish) {
-    const params: unknown[] = [...baseParams, lastEnglish, userId];
-    const row = await queryOne<DbWord>(
-      env,
-      `
-      SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
-      FROM words w
-      WHERE w.is_active = 1${lessonFilter}
-        AND LOWER(w.english) != LOWER(?)
-        AND NOT EXISTS (
-          SELECT 1 FROM user_words_sm2 s
-          WHERE s.user_id = ? AND s.word_id = w.id
-        )
-        AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
-      ORDER BY w.order_index ASC, w.id ASC
-      LIMIT 1
-      `,
-      params
-    );
-
-    if (row) return row;
-  }
-
-  // Fallback: just pick the next one in order (even if same english)
-  const params2: unknown[] = [...baseParams, userId];
   const row = await queryOne<DbWord>(
     env,
     `
@@ -719,10 +650,10 @@ export async function pickNextNewWordByLesson(
         WHERE s.user_id = ? AND s.word_id = w.id
       )
       AND EXISTS (SELECT 1 FROM word_questions q WHERE q.word_id = w.id)
-    ORDER BY w.order_index ASC, w.id ASC
+    ORDER BY RANDOM()
     LIMIT 1
     `,
-    params2
+    params
   );
   return row ?? null;
 }

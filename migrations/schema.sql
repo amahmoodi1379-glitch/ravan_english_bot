@@ -12,7 +12,7 @@
 -- • When you change the schema: add a new migration in migrations/ AND update
 --   this file to match. They must never disagree. See .kiro/steering/database.md
 --
--- Last consolidated: migration 0027 (inactivity_reminder_stage).
+-- Last consolidated: migration 0028 (first-answer stats).
 -- ============================================================================
 
 
@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS user_word_question_history (
   question_id INTEGER NOT NULL,
   context TEXT NOT NULL,                        -- e.g. 'leitner', 'duel'
   is_correct INTEGER,
+  first_is_correct INTEGER,                     -- (0028) preserved FIRST answer; never overwritten on re-show
   shown_at TEXT NOT NULL,
   answered_at TEXT,
   UNIQUE(user_id, question_id, context),
@@ -154,6 +155,8 @@ CREATE INDEX IF NOT EXISTS idx_uwqh_user_word
   ON user_word_question_history(user_id, word_id);
 CREATE INDEX IF NOT EXISTS idx_uwqh_user_question_context_answered
   ON user_word_question_history(user_id, question_id, context, answered_at);
+CREATE INDEX IF NOT EXISTS idx_uwqh_question
+  ON user_word_question_history(question_id);
 
 
 -- ========================= ACTIVITY / XP LOG =========================
@@ -241,6 +244,8 @@ CREATE TABLE IF NOT EXISTS user_text_question_history (
 CREATE INDEX IF NOT EXISTS idx_utqh_user_text ON user_text_question_history(user_id, text_id);
 CREATE INDEX IF NOT EXISTS idx_utqh_session_question
   ON user_text_question_history(reading_session_id, question_id);
+CREATE INDEX IF NOT EXISTS idx_utqh_question
+  ON user_text_question_history(question_id);
 
 -- free-form reflection practice (no XP)
 CREATE TABLE IF NOT EXISTS reflection_sessions (

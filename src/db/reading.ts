@@ -16,8 +16,9 @@ export interface DbTextQuestion {
 }
 
 /**
- * Aggregate how all users have answered a specific reading-comprehension question.
- * Counts only answered records (across all reading sessions).
+ * Aggregate how all users FIRST answered a specific reading-comprehension question.
+ * A user may answer the same question across multiple sessions; we take each user's
+ * earliest answered attempt (by answered_at) so the stats reflect first attempts.
  */
 export async function getTextQuestionAnswerStats(
   env: Env,
@@ -30,9 +31,14 @@ export async function getTextQuestionAnswerStats(
       COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
       COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) as incorrect,
       COUNT(*) as total
-    FROM user_text_question_history
-    WHERE question_id = ?
-      AND answered_at IS NOT NULL
+    FROM (
+      SELECT is_correct,
+             ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY answered_at ASC, id ASC) AS rn
+      FROM user_text_question_history
+      WHERE question_id = ?
+        AND answered_at IS NOT NULL
+    )
+    WHERE rn = 1
     `,
     [questionId]
   );
