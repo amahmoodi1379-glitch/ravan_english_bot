@@ -19,7 +19,7 @@ import {
   ReadingSession
 } from "../../db/reading";
 import { formatAnswerStatsLine } from "../../utils/answer_stats";
-import { queryAll, queryOne, prepare, execute } from "../../db/client";
+import { queryAll, queryOne, execute } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { CB_PREFIX, GAME_CONFIG, STALE_SESSION_HOURS } from "../../config/constants";
 import { getMainMenuKeyboard, getTrainingMenuKeyboard } from "../keyboards";
@@ -429,6 +429,18 @@ async function sendReadingSummary(
   session: ReadingSession,
   chatId: number
 ): Promise<void> {
+  // Atomically claim completion first: flip in_progress -> completed in a single
+  // statement. Only the request that wins this transition awards XP and prints the
+  // summary; any concurrent duplicate (e.g. a double-tap on the last answer) sees
+  // changes=0 and stops here — so reading XP is never granted twice for a session.
+  const completedAt = new Date().toISOString();
+  const completion = await env.DB.prepare(
+    `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ? AND status = 'in_progress'`
+  ).bind(completedAt, session.id).run();
+  if (completion.meta.changes === 0) {
+    return;
+  }
+
   const stats = await getSessionStats(env, session.id);
   const total = stats.total;
   const correct = stats.correct;
@@ -461,10 +473,6 @@ async function sendReadingSummary(
   if (totalXp > 0) {
     batchStatements.push(prepareUpdateSessionXp(env, session.id, totalXp));
   }
-
-  const now = new Date().toISOString();
-
-  batchStatements.push(prepare(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, session.id]));
 
   if (batchStatements.length > 0) {
     await env.DB.batch(batchStatements);

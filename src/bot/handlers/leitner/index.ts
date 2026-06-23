@@ -2,7 +2,7 @@ import { Env } from "../../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../../types";
 import { sendMessage, answerCallbackQuery } from "../../telegram-api";
 import { getOrCreateUser, DbUser } from "../../../db/users";
-import { queryOne, prepare } from "../../../db/client";
+import { queryOne } from "../../../db/client";
 import {
   prepareUpdateFsrs,
   markWordAsIgnored,
@@ -238,21 +238,26 @@ async function handleDunno(
     return;
   }
 
+  // Atomically mark as answered — if a concurrent request (double-tap / retry)
+  // already answered, changes=0 and we stop, so FSRS (Again) is never applied
+  // twice. Mirrors the answered_at guard in handleAnswer.
+  const now = new Date().toISOString();
+  const answerClaim = await env.DB.prepare(
+    `UPDATE user_word_question_history
+     SET is_correct = 0, answered_at = ?, first_is_correct = COALESCE(first_is_correct, 0)
+     WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
+  ).bind(now, user.id, question.id).run();
+
+  if (answerClaim.meta.changes === 0) {
+    await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
+    return;
+  }
+
   await answerCallbackQuery(env, callbackQuery.id);
   await removeInlineKeyboard(env, chatId, messageId);
 
-  const now = new Date().toISOString();
-  const batch: D1PreparedStatement[] = [];
-  batch.push(prepare(
-    env,
-    `UPDATE user_word_question_history
-     SET is_correct = 0, answered_at = ?, first_is_correct = COALESCE(first_is_correct, 0)
-     WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`,
-    [now, user.id, question.id]
-  ));
   const fsrsStmts = await prepareUpdateFsrs(env, user.id, question.word_id, Rating.Again);
-  batch.push(...fsrsStmts);
-  await env.DB.batch(batch);
+  await env.DB.batch(fsrsStmts);
 
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
@@ -360,23 +365,20 @@ async function handleRating(
     return;
   }
 
-  // Idempotency guard: a rating is "already applied" if the word has been
-  // reviewed at/after the moment this question was answered.
-  const alreadyRated = await queryOne<{ id: number }>(
-    env,
-    `SELECT s.id
-     FROM user_words_sm2 s
-     JOIN word_questions q ON q.word_id = s.word_id
-     JOIN user_word_question_history h
-          ON h.user_id = s.user_id AND h.word_id = s.word_id
-         AND h.question_id = q.id AND h.context = 'leitner'
-     WHERE s.user_id = ? AND q.id = ?
-       AND s.last_reviewed_at IS NOT NULL
-       AND h.answered_at IS NOT NULL
-       AND s.last_reviewed_at >= h.answered_at`,
-    [user.id, questionId]
-  );
-  if (alreadyRated) {
+  // Atomic idempotency guard: CLAIM the rating slot by flipping rated_at from
+  // NULL in a single statement. Only the request whose UPDATE actually changes a
+  // row proceeds to award XP / apply FSRS; a fast double-tap (or a Telegram
+  // callback retry) loses the race here and stops — so no double XP, ever.
+  // This mirrors the proven answered_at guard in handleAnswer.
+  const ratedAt = new Date().toISOString();
+  const claim = await env.DB.prepare(
+    `UPDATE user_word_question_history
+     SET rated_at = ?
+     WHERE user_id = ? AND question_id = ? AND context = 'leitner'
+       AND answered_at IS NOT NULL AND rated_at IS NULL`
+  ).bind(ratedAt, user.id, questionId).run();
+
+  if (claim.meta.changes === 0) {
     await answerCallbackQuery(env, callbackQuery.id, "امتیاز قبلاً ثبت شده 👍");
     return;
   }

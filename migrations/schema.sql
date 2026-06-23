@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS user_word_question_history (
   first_is_correct INTEGER,                     -- (0028) preserved FIRST answer; never overwritten on re-show
   shown_at TEXT NOT NULL,
   answered_at TEXT,
+  rated_at TEXT,                                -- (0029) set atomically when XP/FSRS applied; guards against double-award
   UNIQUE(user_id, question_id, context),
   FOREIGN KEY (user_id) REFERENCES users(id),
   FOREIGN KEY (word_id) REFERENCES words(id),
@@ -155,6 +156,8 @@ CREATE INDEX IF NOT EXISTS idx_uwqh_user_word
   ON user_word_question_history(user_id, word_id);
 CREATE INDEX IF NOT EXISTS idx_uwqh_user_question_context_answered
   ON user_word_question_history(user_id, question_id, context, answered_at);
+CREATE INDEX IF NOT EXISTS idx_uwqh_user_question_context_rated
+  ON user_word_question_history(user_id, question_id, context, rated_at);
 CREATE INDEX IF NOT EXISTS idx_uwqh_question
   ON user_word_question_history(question_id);
 
