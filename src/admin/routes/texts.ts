@@ -2,6 +2,7 @@ import { Env } from "../../types";
 import { queryAll, queryOne, execute } from "../../db/client";
 import { htmlResponse, redirect, parseForm, escapeHtml } from "../../utils/response";
 import { renderAdminLayout, renderTextForm } from "../views";
+import { insertTextQuestions } from "../../db/texts";
 import { parseAndValidateQuestionForm, getQuestionRedirectPath } from "../utils";
 import { ADMIN_LIST_PAGE_SIZE } from "../../config/constants";
 
@@ -223,6 +224,59 @@ export async function handleTextRoutes(request: Request, env: Env, url: URL): Pr
       `UPDATE text_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, correct_option=?, explanation_text=?, question_type=?, source=? WHERE id=? AND text_id=?`,
       [questionData.questionText, questionData.optionA, questionData.optionB, questionData.optionC, questionData.optionD, questionData.correctOption, questionData.explanationText, questionData.questionStyle, questionData.source, id, textId]
     );
+
+    return redirect(getQuestionRedirectPath("text", textId, returnTo));
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/texts/questions/import_json") {
+    const form = await parseForm(request);
+    const textId = Number(form.get("text_id"));
+    const jsonData = (form.get("json_data") || "").toString().trim();
+    const returnTo = (form.get("return_to") || "").toString().trim();
+
+    if (!textId) return htmlResponse("شناسه متن نامعتبر است.", 400);
+
+    const text = await queryOne<{ id: number }>(env, "SELECT id FROM reading_texts WHERE id = ?", [textId]);
+    if (!text) return htmlResponse("متن پیدا نشد.", 404);
+
+    let questionsArray: unknown[] = []; // unknown — value comes from JSON.parse of user input
+    try {
+      questionsArray = JSON.parse(jsonData);
+    } catch (e) {
+      return htmlResponse(renderAdminLayout("خطا", '<div class="error" style="color:red; padding:20px;">فرمت JSON اشتباه است. لطفا چک کنید ویرگول یا پرانتز کم و زیاد نباشد.</div>', "texts"), 400);
+    }
+
+    if (!Array.isArray(questionsArray)) {
+      return htmlResponse(renderAdminLayout("خطا", '<div class="error">ورودی باید یک لیست [] باشد.</div>', "texts"), 400);
+    }
+
+    const validQuestions = [];
+    for (const item of questionsArray) {
+      // item is unknown — value comes from JSON.parse of user input
+      if (typeof item !== "object" || item === null) continue;
+      const entry = item as Record<string, unknown>;
+      const isValid =
+        typeof entry.questionText === "string" &&
+        entry.questionText.trim() !== "" &&
+        Array.isArray(entry.options) &&
+        entry.options.length === 4 &&
+        entry.options.every((opt) => typeof opt === "string") &&
+        typeof entry.correctIndex === "number";
+      if (isValid) {
+        validQuestions.push({
+          questionText: entry.questionText as string,
+          options: entry.options as string[],
+          correctIndex: entry.correctIndex as number,
+          explanation: typeof entry.explanation === "string" ? entry.explanation : "",
+          questionType: typeof entry.questionType === "string" ? entry.questionType : "reading",
+          source: "manual" as const
+        });
+      }
+    }
+
+    if (validQuestions.length > 0) {
+      await insertTextQuestions(env, textId, validQuestions);
+    }
 
     return redirect(getQuestionRedirectPath("text", textId, returnTo));
   }
