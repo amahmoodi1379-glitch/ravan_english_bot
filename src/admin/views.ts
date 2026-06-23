@@ -320,6 +320,120 @@ Example JSON Structure:
   `;
 }
 
+function renderTextPromptBox(bodyEn: string): string {
+  const promptTemplate = `You are an expert English reading-comprehension test writer for L2 learners. Generate exactly 5 multiple-choice questions about the passage below. Each question must have 4 options: A, B, C, and D. Each question must have exactly ONE correct answer. Most learners are at level B1 of the CEFR system, so keep this in mind. It is best not to go above level B2 unless necessary.
+"""
+{{PASSAGE}}
+"""
+
+WHAT TO TEST
+Test comprehension of THIS passage only. Do NOT write isolated dictionary/vocabulary questions. Do NOT ask about the title, author, source, or anything outside the passage prose. You may test different common reading-comprehension skills when suitable.
+
+PASSAGE-DEPENDENCE (IMPORTANT)
+- Every question must be answerable ONLY by reading this passage. An educated reader must NOT be able to answer confidently from prior knowledge.
+- If the passage states widely known facts (e.g., anatomy, basic science, history), do NOT test the fact in isolation. Anchor the question to what THIS passage specifically says, groups together, or contrasts, and frame stems with "According to the passage…". Test the specific combinations, distinctions, or relationships the passage makes — not the general fact.
+
+ORDER & DIFFICULTY
+- Cover the whole passage, not only the beginning. If the passage has one paragraph, cover different parts of it: beginning, middle, end, examples, lists, or conclusions when present.
+- Question 5 MUST be the hardest question.
+- Question 5 MUST require integrating, comparing, or connecting information from at least TWO different parts of the passage. It must not simply ask for a detail that appears near the end of the passage.
+
+RULES — DO
+- Make the correct answer a paraphrase of the text, not a copied sentence.
+- Necessary technical terms from the passage may be reused, but the full correct option should not simply copy the original wording.
+- Make all 3 wrong options plausible.
+- Wrong options may be based on a believable misreading, a true detail that does not answer the question, an over-generalization, a reversed cause/effect relationship, or an idea that sounds reasonable but is not stated in the passage. These are only examples; you may use any fair trap.
+- Keep all 4 options similar in length and difficulty.
+- Make every question dependent on the passage.
+- Before finalizing, check that each question has only one correct answer.
+
+AVOIDING TEST-WISE CUES (IMPORTANT)
+- The correct option must NOT be the longest, the most detailed, or the most hedged. Make sure at least one or two DISTRACTORS are as long as, or longer than, the correct option.
+- Do not give the answer away through length, grammatical fit with the stem, extra specificity, or absolute words ("always", "never", "only", "all").
+- After drafting, check every distractor. Replace any distractor that can be rejected without reading the passage because it is too extreme, too obviously false, or uses giveaway wording such as all, always, never, none, completely, or any when that wording is not justified by the passage.
+- If the correct option is noticeably longer, more specific, or more polished than at least two distractors, revise the distractors so the answer is not cued by form rather than comprehension.
+
+ANSWER DISTRIBUTION
+- BEFORE writing the options, first decide the correct-answer letter for all 5 questions as an unpredictable spread, then build the options to match.
+- Spread the correct answers across A, B, C, and D as evenly as possible. With 5 questions, one letter may be used twice and the other three letters once each.
+- Do NOT let the correct letter be guessable from the question number.
+- Do NOT use an obvious pattern such as A, B, C, D, A.
+- If generating multiple question sets in the same conversation or batch, do NOT reuse the same answer-key pattern from recent outputs. Vary the sequence across sets, not only within one set.
+
+RULES — DON'T
+- No "All of the above", "None of the above", or "Both A and B".
+- No two options should mean the same thing.
+- Do not make the wrong options absurd or obviously unrelated.
+- Do not make the options harder to read than the passage itself.
+
+OUTPUT FORMAT (VERY IMPORTANT — the website reads this automatically, so follow it EXACTLY)
+- Return ONLY a valid JSON array. Output nothing else: no greeting, no explanation outside the JSON, no markdown, and NO code fences (no \`\`\`).
+- The array must contain EXACTLY 5 objects, ordered from question 1 to question 5.
+- Each object must contain EXACTLY these five keys and no others:
+  - "questionText" (string): the question stem.
+  - "options" (array of EXACTLY 4 strings): the four choices, in the order A, B, C, D.
+  - "correctIndex" (integer): the index of the correct option inside "options". 0 means A, 1 means B, 2 means C, 3 means D. Exactly one correct answer.
+  - "explanation" (string): a short explanation (in English) of why the correct option is right, based on the passage.
+  - "questionType" (string): exactly one of "main_idea", "detail", "inference", "vocabulary_in_context", "reading".
+- Use straight double quotes (") for all keys and string values. Do NOT use smart/curly quotes. Do NOT add trailing commas.
+- Make sure the "correctIndex" you give truly points to the correct option after you finish writing the options.
+
+Example of the EXACT JSON shape (the content here is only an illustration of the format):
+[
+  {
+    "questionText": "According to the passage, why did the city build the new park?",
+    "options": ["To reduce flooding in the area", "To attract more tourists each year", "To replace an older sports stadium", "To give students a place to study"],
+    "correctIndex": 0,
+    "explanation": "The passage says the park was built mainly to absorb rainwater and lower the risk of flooding.",
+    "questionType": "detail"
+  }
+]`;
+
+  const fullPrompt = promptTemplate.replace(/\{\{PASSAGE\}\}/g, bodyEn);
+
+  const encodedPrompt = escapeHtml(fullPrompt);
+  const encodedPassage = escapeHtml(bodyEn);
+
+  return `
+    <div class="q-box" style="border: 2px solid #059669; background:#f0fdf4; margin-top: 16px;">
+      <div style="font-weight:bold; color:#059669; margin-bottom:10px;">📋 کپی پرامپت AI (تولید سوالات درک مطلب)</div>
+      <p style="font-size:12px; color:#555; margin-top:0;">
+        پرامپت کامل را کپی کن و به هوش مصنوعی بده. خروجی JSON را که می‌دهد، در کادر «ورود دسته‌جمعی سوالات (JSON)» پایین پیست کن تا همه سوالات خودکار ثبت شوند.
+      </p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" id="btn-copy-passage" style="background:#059669; color:white;">کپی متن (Passage)</button>
+        <button type="button" id="btn-copy-text-prompt" style="background:#0d9488; color:white;">کپی کل پرامپت</button>
+      </div>
+    </div>
+    <script type="text/template" id="tpl-text-passage">${encodedPassage}</script>
+    <script type="text/template" id="tpl-text-prompt">${encodedPrompt}</script>
+    <script>
+    (function(){
+      function decode(id){
+        var el=document.getElementById(id);
+        if(!el)return '';
+        var d=document.createElement('textarea');
+        d.innerHTML=el.innerHTML;
+        return d.value;
+      }
+      function flash(btn){
+        var o=btn.textContent;
+        btn.textContent=decodeURIComponent('%E2%9C%85%20%DA%A9%D9%BE%DB%8C%20%D8%B4%D8%AF!');
+        setTimeout(function(){btn.textContent=o;},2000);
+      }
+      document.getElementById('btn-copy-passage').addEventListener('click',function(){
+        var self=this;
+        navigator.clipboard.writeText(decode('tpl-text-passage')).then(function(){flash(self);});
+      });
+      document.getElementById('btn-copy-text-prompt').addEventListener('click',function(){
+        var self=this;
+        navigator.clipboard.writeText(decode('tpl-text-prompt')).then(function(){flash(self);});
+      });
+    })();
+    </script>
+  `;
+}
+
 export function renderWordForm(word: WordFormRow, heading: string, questions: QuestionRow[] = []): string {
   const hasId = Number(word.id) > 0;
   return `
@@ -375,6 +489,7 @@ export function renderTextForm(text: TextFormRow, heading: string, questions: Qu
         <a href="/admin/texts"><button type="button" class="secondary">انصراف</button></a>
       </div>
     </form>
+    ${hasId ? renderTextPromptBox(text.body_en || "") : ""}
     ${hasId ? renderQuestionManager("text", Number(text.id), questions, "question_type") : ""}
   `;
 }
