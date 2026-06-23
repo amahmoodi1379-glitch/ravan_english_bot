@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, queryAll, execute, prepare } from "./client";
+import { queryOne, queryAll, execute, prepare, SqlGuard } from "./client";
 import { schedule, Rating, CardState, FsrsCard } from "../utils/fsrs";
 import { TIME_ZONE_OFFSET, LEITNER_LEECH_THRESHOLD } from "../config/constants";
 
@@ -262,7 +262,8 @@ export async function prepareUpdateFsrs(
   env: Env,
   userId: number,
   wordId: number,
-  rating: Rating
+  rating: Rating,
+  guard?: SqlGuard
 ): Promise<D1PreparedStatement[]> {
   let state = await queryOne<UserWordState>(
     env,
@@ -332,7 +333,7 @@ export async function prepareUpdateFsrs(
         lapses = ?,
         reps = ?,
         updated_at = ?
-    WHERE id = ?
+    WHERE id = ?${guard ? ` AND ${guard.sql}` : ""}
     `,
     [
       result.interval,
@@ -348,7 +349,8 @@ export async function prepareUpdateFsrs(
       result.lapses,
       result.reps,
       nowIso,
-      state.id
+      state.id,
+      ...(guard ? guard.params : [])
     ]
   );
 

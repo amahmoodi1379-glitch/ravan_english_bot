@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, execute, prepare } from "./client";
+import { queryOne, execute, prepare, SqlGuard } from "./client";
 import { getTextQuestionTypePrioritySql } from "./question_priority";
 
 export interface DbTextQuestion {
@@ -177,11 +177,11 @@ export async function getSessionStats(env: Env, sessionId: number): Promise<{ to
  * @param xp - The XP amount to set
  * @returns A D1PreparedStatement ready for batching
  */
-export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number): D1PreparedStatement {
+export function prepareUpdateSessionXp(env: Env, sessionId: number, xp: number, guard?: SqlGuard): D1PreparedStatement {
   return prepare(
     env,
-    `UPDATE reading_sessions SET xp_gained = ? WHERE id = ?`,
-    [xp, sessionId]
+    `UPDATE reading_sessions SET xp_gained = ? WHERE id = ?${guard ? ` AND ${guard.sql}` : ""}`,
+    [xp, sessionId, ...(guard ? guard.params : [])]
   );
 }
 

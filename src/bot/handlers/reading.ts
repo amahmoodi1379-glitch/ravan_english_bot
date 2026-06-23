@@ -19,7 +19,7 @@ import {
   ReadingSession
 } from "../../db/reading";
 import { formatAnswerStatsLine } from "../../utils/answer_stats";
-import { queryAll, queryOne, prepare, execute } from "../../db/client";
+import { queryAll, queryOne, execute, prepare, SqlGuard } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { CB_PREFIX, GAME_CONFIG, STALE_SESSION_HOURS } from "../../config/constants";
 import { getMainMenuKeyboard, getTrainingMenuKeyboard } from "../keyboards";
@@ -429,6 +429,7 @@ async function sendReadingSummary(
   session: ReadingSession,
   chatId: number
 ): Promise<void> {
+  // Read everything needed for XP + the summary first (side-effect-free).
   const stats = await getSessionStats(env, session.id);
   const total = stats.total;
   const correct = stats.correct;
@@ -454,20 +455,37 @@ async function sendReadingSummary(
 
   const newCorrectCount = await getNewCorrectCount(env, session.id, user.id);
 
-  const { totalXp, stmts: xpStmts } = calculateAndPrepareXpForReading(env, user.id, session.id, newCorrectCount, total);
+  // Exactly-once + fully atomic: award XP and flip the session
+  // in_progress -> completed as ONE DB.batch() (single transaction). The XP
+  // statements are gated on the session still being in_progress and the
+  // completion runs LAST, so the winning transaction awards XP and completes
+  // together (all-or-nothing), while any duplicate finish becomes a no-op. There
+  // is no partial-failure window where the session is marked completed but XP is
+  // lost (Gemini's concern), nor one where XP is granted twice.
+  const completedAt = new Date().toISOString();
+  const guard: SqlGuard = {
+    sql: `EXISTS (SELECT 1 FROM reading_sessions WHERE id = ? AND status = 'in_progress')`,
+    params: [session.id],
+  };
+
+  const { totalXp, stmts: xpStmts } = calculateAndPrepareXpForReading(env, user.id, session.id, newCorrectCount, total, guard);
 
   const batchStatements: D1PreparedStatement[] = [...xpStmts];
-
   if (totalXp > 0) {
-    batchStatements.push(prepareUpdateSessionXp(env, session.id, totalXp));
+    batchStatements.push(prepareUpdateSessionXp(env, session.id, totalXp, guard));
   }
+  // Completion LAST so the gates above evaluate against the pre-completion state.
+  batchStatements.push(prepare(
+    env,
+    `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ? AND status = 'in_progress'`,
+    [completedAt, session.id]
+  ));
 
-  const now = new Date().toISOString();
-
-  batchStatements.push(prepare(env, `UPDATE reading_sessions SET status = 'completed', completed_at = ? WHERE id = ?`, [now, session.id]));
-
-  if (batchStatements.length > 0) {
-    await env.DB.batch(batchStatements);
+  const results = await env.DB.batch(batchStatements);
+  const completionResult = results[results.length - 1];
+  if (!completionResult || completionResult.meta.changes === 0) {
+    // Already completed by a concurrent/duplicate finish — XP not double-awarded.
+    return;
   }
 
   const streakMsg = await checkAndUpdateStreak(env, user.id);
