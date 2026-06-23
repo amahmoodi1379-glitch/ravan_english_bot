@@ -63,13 +63,20 @@ export async function sendInactivityReminders(env: Env): Promise<void> {
 
     try {
       await sendMessage(env, u.telegram_id, reminderText(stage), { reply_markup: reminderKeyboard() });
-      await setReminderStage(env, u.id, stage);
-      sent++;
     } catch (err) {
+      // Even if delivery fails (e.g. the user blocked the bot — common for inactive
+      // users), advance the stage anyway to avoid re-selecting them every cron run.
       console.error(`Inactivity reminder failed for ${u.telegram_id}:`, err);
     }
 
-    if (sent > 0 && sent % 25 === 0) {
+    try {
+      await setReminderStage(env, u.id, stage);
+    } catch (err) {
+      console.error(`Failed to persist reminder stage for ${u.telegram_id}:`, err);
+    }
+    sent++;
+
+    if (sent % 25 === 0) {
       await sleep(100);
     }
   }

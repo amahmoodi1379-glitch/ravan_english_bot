@@ -49,7 +49,9 @@ function gregorianToJalali(gy: number, gm: number, gd: number): [number, number,
  * @returns A tuple [jy, jm, jd] (month is 1-12, day is 1-31)
  */
 export function toJalaliParts(date: Date): [number, number, number] {
-  return gregorianToJalali(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  // Use UTC fields so callers can pass a UTC-shifted Date (e.g. Iran-local wall
+  // clock) and get correct results regardless of the host machine's timezone.
+  return gregorianToJalali(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 
 /**

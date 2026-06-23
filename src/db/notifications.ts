@@ -1,8 +1,5 @@
 import { Env } from "../types";
 import { queryAll, execute } from "./client";
-import { TIME_ZONE_OFFSET } from "../config/constants";
-
-const LOCAL_DATE = `'${TIME_ZONE_OFFSET}'`;
 
 export interface InactiveUserRow {
   id: number;
@@ -32,7 +29,9 @@ export async function getUsersForInactivityReminder(env: Env): Promise<InactiveU
       AND COALESCE(is_banned, 0) = 0
       AND last_seen_at IS NOT NULL
       AND inactivity_reminder_stage < 3
-      AND julianday('now') - julianday(last_seen_at) >= 2
+      -- SARGable: last_seen_at is stored as ISO (toISOString); compare against an
+      -- ISO-formatted threshold rather than wrapping the column in julianday().
+      AND last_seen_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2 days')
     `,
     []
   );
@@ -79,8 +78,11 @@ export async function getActiveUsersForReport(
       AND EXISTS (
         SELECT 1 FROM activity_log a
         WHERE a.user_id = u.id
-          AND date(a.created_at, ${LOCAL_DATE}) >= ?
-          AND date(a.created_at, ${LOCAL_DATE}) < ?
+          -- SARGable: convert the local-date bounds to UTC datetime so the
+          -- (user_id, created_at) index range can be used (activity_log.created_at
+          -- is stored via datetime('now')).
+          AND a.created_at >= datetime(?, '-3.5 hours')
+          AND a.created_at < datetime(?, '-3.5 hours')
       )
     `,
     [curStart, curEnd]

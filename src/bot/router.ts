@@ -210,8 +210,9 @@ async function handleJoinCheck(
       reply_markup: getMainMenuKeyboard(),
     });
   } else {
+    // The user clicked this button on the existing join-prompt message, so the
+    // alert alone is enough — re-sending the prompt would spam the chat.
     await answerCallbackQuery(env, callbackQuery.id, "هنوز عضو کانال نیستی 🔒");
-    await sendMessage(env, chatId, JOIN_PROMPT_TEXT, { reply_markup: joinKeyboard() });
   }
 }
 
