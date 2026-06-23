@@ -1,6 +1,19 @@
 import { Env } from "../types";
 
 /**
+ * A reusable SQL boolean fragment (plus its bound params) used to gate a
+ * statement's side-effect on some external condition — e.g. "only apply this
+ * FSRS/XP update if the claim row is still unclaimed". Appended to a statement's
+ * WHERE clause so that claim + side-effects can live in one atomic DB.batch():
+ * the gate makes losing/duplicate requests no-ops without a partial-failure
+ * window. Example: { sql: "EXISTS (SELECT 1 FROM t WHERE id = ? AND done IS NULL)", params: [id] }.
+ */
+export interface SqlGuard {
+  sql: string;
+  params: unknown[];
+}
+
+/**
  * Execute a SQL query and return the first matching row, or null if none found.
  * @param env - The worker environment containing the D1 database binding
  * @param sql - The SQL query string to execute

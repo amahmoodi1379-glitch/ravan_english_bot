@@ -1,16 +1,24 @@
 import { Env } from "../types";
-import { prepare } from "./client";
+import { prepare, SqlGuard } from "./client";
 import { XP_VALUES, TIME_ZONE_OFFSET } from "../config/constants";
 
 export type ActivityType = "leitner_question" | "reading_session";
 
+/**
+ * Build the statements that award XP. When `guard` is supplied, both the
+ * xp_total increment and the activity_log insert are gated on it, so they can
+ * be placed in the same atomic DB.batch() as the "claim" statement and only
+ * take effect for the request that actually wins the claim (no double XP, and
+ * no partial-failure window where the claim commits but XP doesn't).
+ */
 function prepareAddXp(
   env: Env,
   userId: number,
   xpDelta: number,
   activityType: ActivityType,
   refId?: number,
-  meta?: Record<string, unknown>
+  meta?: Record<string, unknown>,
+  guard?: SqlGuard
 ): D1PreparedStatement[] {
   if (xpDelta <= 0) return [];
 
@@ -21,19 +29,30 @@ function prepareAddXp(
     `
     UPDATE users
     SET xp_total = xp_total + ?, updated_at = datetime('now')
-    WHERE id = ?
+    WHERE id = ?${guard ? ` AND ${guard.sql}` : ""}
     `,
-    [xpDelta, userId]
+    [xpDelta, userId, ...(guard ? guard.params : [])]
   );
 
-  const stmt2 = prepare(
-    env,
-    `
-    INSERT INTO activity_log (user_id, activity_type, ref_id, xp_delta, meta_json)
-    VALUES (?, ?, ?, ?, ?)
-    `,
-    [userId, activityType, refId ?? null, xpDelta, metaJson]
-  );
+  // When guarded, use INSERT ... SELECT ... WHERE <guard> so the row is only
+  // logged if the guard holds (VALUES has no WHERE).
+  const stmt2 = guard
+    ? prepare(
+        env,
+        `
+        INSERT INTO activity_log (user_id, activity_type, ref_id, xp_delta, meta_json)
+        SELECT ?, ?, ?, ?, ? WHERE ${guard.sql}
+        `,
+        [userId, activityType, refId ?? null, xpDelta, metaJson, ...guard.params]
+      )
+    : prepare(
+        env,
+        `
+        INSERT INTO activity_log (user_id, activity_type, ref_id, xp_delta, meta_json)
+        VALUES (?, ?, ?, ?, ?)
+        `,
+        [userId, activityType, refId ?? null, xpDelta, metaJson]
+      );
 
   return [stmt1, stmt2];
 }
@@ -52,7 +71,8 @@ export function prepareXpForLeitner(
   userId: number,
   wordId: number,
   wordLevel: number,
-  isCorrect: boolean
+  isCorrect: boolean,
+  guard?: SqlGuard
 ): D1PreparedStatement[] {
   if (!isCorrect) return [];
 
@@ -65,7 +85,7 @@ export function prepareXpForLeitner(
     default: xp = XP_VALUES.LEITNER_LEVEL_1;
   }
 
-  return prepareAddXp(env, userId, xp, "leitner_question", wordId, { word_level: wordLevel });
+  return prepareAddXp(env, userId, xp, "leitner_question", wordId, { word_level: wordLevel }, guard);
 }
 
 /**
@@ -82,7 +102,8 @@ export function calculateAndPrepareXpForReading(
   userId: number,
   sessionId: number,
   correct: number,
-  total: number
+  total: number,
+  guard?: SqlGuard
 ): { totalXp: number; stmts: D1PreparedStatement[] } {
   const xpPerQuestion = XP_VALUES.READING_QUESTION;
   const baseXp = correct * xpPerQuestion;
@@ -101,7 +122,7 @@ export function calculateAndPrepareXpForReading(
     total,
     xp_per_question: xpPerQuestion,
     bonus
-  });
+  }, guard);
 
   return { totalXp, stmts };
 }

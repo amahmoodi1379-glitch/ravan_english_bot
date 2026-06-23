@@ -16,6 +16,7 @@
 
 ALTER TABLE user_word_question_history ADD COLUMN rated_at TEXT;
 
--- Partial-style index to make the atomic claim lookup fast.
-CREATE INDEX IF NOT EXISTS idx_uwqh_user_question_context_rated
-  ON user_word_question_history(user_id, question_id, context, rated_at);
+-- No new index needed: the table already has UNIQUE(user_id, question_id, context),
+-- whose automatic index fully serves the (user_id, question_id, context) point
+-- lookups used by the rating/dunno claims. An extra index on those same columns
+-- + rated_at would only add write overhead with no read benefit.

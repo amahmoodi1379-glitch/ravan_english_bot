@@ -2,7 +2,7 @@ import { Env } from "../../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../../types";
 import { sendMessage, answerCallbackQuery } from "../../telegram-api";
 import { getOrCreateUser, DbUser } from "../../../db/users";
-import { queryOne } from "../../../db/client";
+import { queryOne, prepare, SqlGuard } from "../../../db/client";
 import {
   prepareUpdateFsrs,
   markWordAsIgnored,
@@ -238,26 +238,40 @@ async function handleDunno(
     return;
   }
 
-  // Atomically mark as answered — if a concurrent request (double-tap / retry)
-  // already answered, changes=0 and we stop, so FSRS (Again) is never applied
-  // twice. Mirrors the answered_at guard in handleAnswer.
+  // Exactly-once, fully atomic: apply FSRS (Again) and claim answered_at as ONE
+  // DB.batch() (single transaction). FSRS is gated on the row still being
+  // unanswered and the claim runs LAST, so within the winning transaction FSRS
+  // applies (gate still sees NULL) while any concurrent/duplicate request finds
+  // answered_at already set and becomes a full no-op. One transaction ⇒ no
+  // partial-failure window: FSRS and the answered mark commit together or not.
   const now = new Date().toISOString();
-  const answerClaim = await env.DB.prepare(
+  const guard: SqlGuard = {
+    sql: `EXISTS (SELECT 1 FROM user_word_question_history
+                  WHERE user_id = ? AND question_id = ? AND context = 'leitner'
+                    AND answered_at IS NULL)`,
+    params: [user.id, question.id],
+  };
+
+  const batch: D1PreparedStatement[] = [];
+  batch.push(...await prepareUpdateFsrs(env, user.id, question.word_id, Rating.Again, guard));
+  // Claim LAST so the FSRS gate above evaluates against the pre-claim state.
+  batch.push(prepare(
+    env,
     `UPDATE user_word_question_history
      SET is_correct = 0, answered_at = ?, first_is_correct = COALESCE(first_is_correct, 0)
-     WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
-  ).bind(now, user.id, question.id).run();
+     WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`,
+    [now, user.id, question.id]
+  ));
 
-  if (answerClaim.meta.changes === 0) {
+  const results = await env.DB.batch(batch);
+  const claimResult = results[results.length - 1];
+  if (!claimResult || claimResult.meta.changes === 0) {
     await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
     return;
   }
 
   await answerCallbackQuery(env, callbackQuery.id);
   await removeInlineKeyboard(env, chatId, messageId);
-
-  const fsrsStmts = await prepareUpdateFsrs(env, user.id, question.word_id, Rating.Again);
-  await env.DB.batch(fsrsStmts);
 
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
@@ -365,48 +379,62 @@ async function handleRating(
     return;
   }
 
-  // Atomic idempotency guard: CLAIM the rating slot by flipping rated_at from
-  // NULL in a single statement. Only the request whose UPDATE actually changes a
-  // row proceeds to award XP / apply FSRS; a fast double-tap (or a Telegram
-  // callback retry) loses the race here and stops — so no double XP, ever.
-  // This mirrors the proven answered_at guard in handleAnswer.
-  const ratedAt = new Date().toISOString();
-  const claim = await env.DB.prepare(
-    `UPDATE user_word_question_history
-     SET rated_at = ?
-     WHERE user_id = ? AND question_id = ? AND context = 'leitner'
-       AND answered_at IS NOT NULL AND rated_at IS NULL`
-  ).bind(ratedAt, user.id, questionId).run();
-
-  if (claim.meta.changes === 0) {
-    await answerCallbackQuery(env, callbackQuery.id, "امتیاز قبلاً ثبت شده 👍");
-    return;
-  }
-
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
-
+  // Read question/word info first — this is a side-effect-free read.
   const question = await queryOne<{ word_id: number; level: number; lesson_name: string | null }>(
     env,
     `SELECT q.word_id, w.level, w.lesson_name FROM word_questions q JOIN words w ON w.id = q.word_id WHERE q.id = ?`,
     [questionId]
   );
   if (!question) {
+    await answerCallbackQuery(env, callbackQuery.id);
     await sendMessage(env, chatId, "❗️ خطا: سوال پیدا نشد.", {
       reply_markup: { inline_keyboard: [[nextButton(mode)], [homeButton()]] },
     });
     return;
   }
 
-  const batch: D1PreparedStatement[] = [];
-  const fsrsStmts = await prepareUpdateFsrs(env, user.id, question.word_id, ratingValue);
-  batch.push(...fsrsStmts);
+  // Exactly-once, fully atomic: build the whole effect (FSRS + XP + the rated_at
+  // claim) as ONE DB.batch() — a single transaction. The FSRS/XP statements are
+  // gated on the row still being unclaimed (rated_at IS NULL) and the claim
+  // statement runs LAST. Within the winning transaction the gates still see NULL
+  // (claim hasn't run yet) so everything applies; any concurrent/duplicate
+  // request runs after the first commits, sees rated_at set, and every statement
+  // (gates + claim) becomes a no-op. Because it is one transaction there is no
+  // partial-failure window: either the claim AND its XP/FSRS all commit, or none
+  // do — so XP can never be burned, nor double-awarded.
+  const ratedAt = new Date().toISOString();
+  const guard: SqlGuard = {
+    sql: `EXISTS (SELECT 1 FROM user_word_question_history
+                  WHERE user_id = ? AND question_id = ? AND context = 'leitner'
+                    AND answered_at IS NOT NULL AND rated_at IS NULL)`,
+    params: [user.id, questionId],
+  };
 
+  const batch: D1PreparedStatement[] = [];
+  batch.push(...await prepareUpdateFsrs(env, user.id, question.word_id, ratingValue, guard));
   if (ratingValue >= Rating.Good) {
-    const xpStmts = prepareXpForLeitner(env, user.id, question.word_id, question.level, true);
-    batch.push(...xpStmts);
+    batch.push(...prepareXpForLeitner(env, user.id, question.word_id, question.level, true, guard));
   }
-  await env.DB.batch(batch);
+  // Claim LAST so the gates above evaluate against the pre-claim (NULL) state.
+  batch.push(prepare(
+    env,
+    `UPDATE user_word_question_history
+     SET rated_at = ?
+     WHERE user_id = ? AND question_id = ? AND context = 'leitner'
+       AND answered_at IS NOT NULL AND rated_at IS NULL`,
+    [ratedAt, user.id, questionId]
+  ));
+
+  const results = await env.DB.batch(batch);
+  const claimResult = results[results.length - 1];
+  if (!claimResult || claimResult.meta.changes === 0) {
+    // Lost the race / already rated — nothing was applied by this request.
+    await answerCallbackQuery(env, callbackQuery.id, "امتیاز قبلاً ثبت شده 👍");
+    return;
+  }
+
+  await answerCallbackQuery(env, callbackQuery.id);
+  await removeInlineKeyboard(env, chatId, messageId);
 
   if (ratingValue >= Rating.Good) {
     const streakMsg = await checkAndUpdateStreak(env, user.id);
