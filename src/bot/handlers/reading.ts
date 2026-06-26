@@ -6,7 +6,7 @@ import {
   getReadingTextsCount,
   getPaginatedReadingTexts,
 } from "../../db/texts";
-import { pe, PE } from "../premium-emojis";
+import { pe } from "../premium-emojis";
 import {
   createReadingSession,
   getReadingSessionById,
@@ -100,7 +100,7 @@ export async function startReadingMenuForUser(env: Env, chatId: number, page: nu
   await sendMessage(
     env,
     chatId,
-    `${pe(PE.BOOKS, "📚")} <b>متون درک مطلب</b>\n<i>صفحه ${page} از ${totalPages}</i>\n\nیکی از متن‌ها رو انتخاب کن 👇`,
+    `${pe("📚")} <b>متون درک مطلب</b>\n<i>صفحه ${page} از ${totalPages}</i>\n\nیکی از متن‌ها رو انتخاب کن 👇`,
     {
       reply_markup: buildReadingInlineKeyboard(textItems, page, totalPages)
     }
@@ -200,7 +200,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
         env,
         chatId,
         messageId,
-        `${pe(PE.BOOKS, "📚")} <b>متون درک مطلب</b>\n<i>صفحه ${safePage} از ${totalPages}</i>\n\nیکی از متن‌ها رو انتخاب کن 👇`,
+        `${pe("📚")} <b>متون درک مطلب</b>\n<i>صفحه ${safePage} از ${totalPages}</i>\n\nیکی از متن‌ها رو انتخاب کن 👇`,
         { reply_markup: buildReadingInlineKeyboard(textItems, safePage, totalPages) }
       );
       return;
@@ -233,7 +233,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   await answerCallbackQuery(env, callbackQuery.id);
 
   // Update the text list message to indicate selection
-  await editMessageText(env, chatId, messageId, `${pe(PE.BOOK_OPEN, "📖")} <b>تست درک مطلب شروع شد</b>\nبه سوال‌ها با دقت جواب بده ✍️`);
+  await editMessageText(env, chatId, messageId, `${pe("📖")} <b>تست درک مطلب شروع شد</b>\nبه سوال‌ها با دقت جواب بده ✍️`);
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   if (!sent) {
@@ -348,7 +348,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   let replyText: string;
   if (isCorrect) {
     replyText =
-      `${pe(PE.SPARKLE, "✨")} <b>آفرین! جواب درست بود</b> ✅\n\n` +
+      `${pe("✨")} <b>آفرین! جواب درست بود</b> ✅\n\n` +
       `✅ گزینه صحیح: <b>${correctNum}</b>`;
   } else {
     const chosenNum = optionLetterToNumber(chosenOption);
@@ -402,7 +402,7 @@ async function sendNextReadingQuestion(
   }
 
   const messageText =
-    `${pe(PE.BOOK_OPEN, "📖")} <b>${question.question_text}</b>\n\n` +
+    `${pe("📖")} <b>${question.question_text}</b>\n\n` +
     `1️⃣  ${question.option_a}\n` +
     `2️⃣  ${question.option_b}\n` +
     `3️⃣  ${question.option_c}\n` +
@@ -496,14 +496,14 @@ async function sendReadingSummary(
     await sendMessage(env, chatId, streakMsg);
   }
 
-  let text = `${pe(PE.CHART, "📊")} <b>نتیجه‌ی تست درک مطلب</b>\n`;
+  let text = `${pe("📊")} <b>نتیجه‌ی تست درک مطلب</b>\n`;
   text += `━━━━━━━━━━━━━━\n`;
   text += `✅ پاسخ‌های درست: <b>${correct}</b> از <b>${total}</b>\n`;
 
   if (totalXp > 0) {
-    text += `${pe(PE.STAR, "⭐️")} XP دریافتی: <b>+${totalXp}</b>\n`;
+    text += `${pe("⭐️")} XP دریافتی: <b>+${totalXp}</b>\n`;
   } else if (correct > 0) {
-    text += `${pe(PE.STAR, "⭐️")} XP دریافتی: <b>0</b> <i>(تکراری)</i>\n`;
+    text += `${pe("⭐️")} XP دریافتی: <b>0</b> <i>(تکراری)</i>\n`;
   }
 
   if (rows.length > 0) {
@@ -519,7 +519,7 @@ async function sendReadingSummary(
 
   await sendMessage(env, chatId, text);
 
-  await sendMessage(env, chatId, `${pe(PE.MUSCLE, "💪")} خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟`, {
+  await sendMessage(env, chatId, `${pe("💪")} خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟`, {
     reply_markup: getTrainingMenuKeyboard()
   });
 }

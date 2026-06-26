@@ -1,40 +1,90 @@
-/**
- * Premium animated emoji IDs for Telegram Premium users.
- * To enable animated emoji: replace the IDs below with real ones from your emoji packs,
- * then change pe() to return the <tg-emoji> wrapper instead of just the fallback.
- *
- * How to get real IDs:
- *   1. Open @stickers bot in Telegram
- *   2. Forward any custom emoji to @getidsbot
- *   3. Copy the file_id (that's the custom_emoji_id)
- */
-export const PE = {
-  FIRE:       "5373141332479499264",  // 🔥
-  BRAIN:      "5375535990785261368",  // 🧠
-  TROPHY:     "5373847439576028849",  // 🏆
-  STAR:       "5368324170671202286",  // ⭐
-  TARGET:     "5373891995832178741",  // 🎯
-  BOOKS:      "5373923197528800000",  // 📚
-  PARTY:      "5373052712219494933",  // 🎉
-  CROWN:      "5373203457659895873",  // 👑
-  MUSCLE:     "5381001026355901124",  // 💪
-  SPARKLE:    "5379748063148161097",  // ✨
-  CHECK:      "5379170654832010486",  // ✅
-  LIGHTNING:  "5379765455408625639",  // ⚡
-  ROCKET:     "5381023085052637388",  // 🚀
-  BOOK_OPEN:  "5373903366051208319",  // 📖
-  CHART:      "5373847439576028850",  // 📊
-  WAVE:       "5370818494001145185",  // 👋
-  PERSON:     "5370869753619156925",  // 👤
-  MEDAL_GOLD: "5371638859539764878",  // 🥇
-  CLOCK:      "5373054812436021428",  // 🕐
-  PENCIL:     "5368324170671202001",  // ✏️
-};
+import { Env } from "../types";
 
 /**
- * Returns a fallback emoji for now. Once you have verified custom emoji IDs,
- * change this to: return `<tg-emoji emoji-id="${id}">${fallback}</tg-emoji>`;
+ * Premium animated emoji support.
+ *
+ * Telegram lets a bot render animated "premium" emoji via the HTML tag
+ * <tg-emoji emoji-id="...">fallback</tg-emoji> — but ONLY when the bot owner has
+ * Telegram Premium, and ONLY with REAL custom_emoji_id values that point to
+ * existing stickers (a fake id makes Telegram reject the whole message with
+ * "DOCUMENT_INVALID").
+ *
+ * Instead of hardcoding (and guessing) ids, the bot owner registers them at
+ * runtime: an admin sends the premium emoji to the bot with the `/pe` command,
+ * the bot reads the custom_emoji_id from the message entities and stores a
+ * base-emoji → id map in `system_settings`. From then on, pe("🔥") wraps the
+ * emoji in <tg-emoji> automatically. If no id is registered for an emoji, the
+ * plain emoji is returned — always safe.
  */
-export function pe(_id: string, fallback: string): string {
-  return fallback;
+
+const SETTING_KEY = "premium_emoji_map";
+
+/** Strip the variation selector so "⭐️" and "⭐" map to the same key. */
+function norm(emoji: string): string {
+  return emoji.replace(/️/g, "");
+}
+
+// Module-level cache (persists across requests while the isolate is warm).
+let emojiMap: Record<string, string> = {};
+let loaded = false;
+
+/**
+ * Load the registered premium-emoji map from the database into the module cache.
+ * Safe to call on every request — it only hits the DB once per warm isolate.
+ * @param env - The worker environment containing the D1 database binding
+ */
+export async function loadEmojiMap(env: Env): Promise<void> {
+  if (loaded) return;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT value FROM system_settings WHERE key = ?"
+    ).bind(SETTING_KEY).first<{ value: string }>();
+    if (row?.value) {
+      emojiMap = JSON.parse(row.value) as Record<string, string>;
+    }
+  } catch {
+    // Table missing or value unparoseable — fall back to plain emoji.
+  }
+  loaded = true;
+}
+
+/** Return the current in-memory base-emoji → custom_emoji_id map. */
+export function getEmojiMap(): Record<string, string> {
+  return emojiMap;
+}
+
+/**
+ * Persist a new base-emoji → custom_emoji_id map and refresh the cache.
+ * @param env - The worker environment containing the D1 database binding
+ * @param map - The full map to store (replaces the previous one)
+ */
+export async function saveEmojiMap(env: Env, map: Record<string, string>): Promise<void> {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS system_settings (
+       key TEXT PRIMARY KEY,
+       value TEXT NOT NULL,
+       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+     )`
+  ).run();
+  await env.DB.prepare(
+    `INSERT INTO system_settings (key, value, updated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).bind(SETTING_KEY, JSON.stringify(map)).run();
+  emojiMap = map;
+  loaded = true;
+}
+
+/**
+ * Render an emoji. If a premium custom_emoji_id has been registered for this
+ * base emoji (via the admin `/pe` command) it is wrapped in <tg-emoji> so
+ * Premium clients show the animated version; otherwise the plain emoji is
+ * returned. Always requires HTML parse mode (the bot already uses it).
+ * @param base - The plain unicode emoji (e.g. "🔥")
+ * @returns Either a <tg-emoji> HTML tag or the plain emoji
+ */
+export function pe(base: string): string {
+  const id = emojiMap[norm(base)];
+  if (id) return `<tg-emoji emoji-id="${id}">${base}</tg-emoji>`;
+  return base;
 }

@@ -12,7 +12,7 @@ import {
   StreakType,
 } from "../../db/leaderboard";
 import { getAvatarEmoji } from "../avatars";
-import { pe, PE } from "../premium-emojis";
+import { pe } from "../premium-emojis";
 
 const LB_BTN_XP = "⭐ لیدربورد امتیاز (XP)";
 const LB_BTN_STREAK = "🔥 لیدربورد استریک";
@@ -60,7 +60,7 @@ function buildLeaderboardText(
  * @returns void
  */
 export async function showLeaderboardHome(env: Env, chatId: number): Promise<void> {
-  const text = `${pe(PE.TROPHY, "🏆")} <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
+  const text = `${pe("🏆")} <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
       [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success" }],
@@ -72,7 +72,7 @@ export async function showLeaderboardHome(env: Env, chatId: number): Promise<voi
 }
 
 async function showXpMenu(env: Env, chatId: number): Promise<void> {
-  const text = `${pe(PE.STAR, "⭐")} <b>لیدربورد امتیاز (XP)</b>\n\nدوره زمانی رو انتخاب کن:`;
+  const text = `${pe("⭐")} <b>لیدربورد امتیاز (XP)</b>\n\nدوره زمانی رو انتخاب کن:`;
   const replyMarkup = {
     inline_keyboard: [
       [
@@ -88,7 +88,7 @@ async function showXpMenu(env: Env, chatId: number): Promise<void> {
 }
 
 async function showStreakMenu(env: Env, chatId: number): Promise<void> {
-  const text = `${pe(PE.FIRE, "🔥")} <b>لیدربورد استریک</b>\n\nکدوم نوع رو می‌خوای ببینی؟`;
+  const text = `${pe("🔥")} <b>لیدربورد استریک</b>\n\nکدوم نوع رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
       [
@@ -109,9 +109,9 @@ async function showXpLeaderboard(
   period: LeaderboardPeriod
 ): Promise<void> {
   const periodLabels: Record<LeaderboardPeriod, string> = {
-    weekly: `${pe(PE.STAR, "⭐")} لیدربورد XP — هفتگی`,
-    monthly: `${pe(PE.STAR, "⭐")} لیدربورد XP — ماهانه`,
-    all: `${pe(PE.STAR, "⭐")} لیدربورد XP — همیشگی`,
+    weekly: `${pe("⭐")} لیدربورد XP — هفتگی`,
+    monthly: `${pe("⭐")} لیدربورد XP — ماهانه`,
+    all: `${pe("⭐")} لیدربورد XP — همیشگی`,
   };
 
   const entries = await getLeaderboardXp(env, period);
@@ -142,7 +142,7 @@ async function showStreakLeaderboard(
   type: StreakType
 ): Promise<void> {
   const typeLabels: Record<StreakType, string> = {
-    live: `${pe(PE.FIRE, "🔥")} لیدربورد استریک — فعال`,
+    live: `${pe("🔥")} لیدربورد استریک — فعال`,
     record: `🏅 لیدربورد استریک — رکورد تاریخی`,
   };
 

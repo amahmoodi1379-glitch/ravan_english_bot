@@ -2,7 +2,7 @@ import { Env } from "../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getProfileMenuKeyboard } from "../keyboards";
-import { pe, PE } from "../premium-emojis";
+import { pe } from "../premium-emojis";
 import { escapeHtml } from "../../utils/html";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import {
@@ -62,13 +62,13 @@ export async function showProfileHome(env: Env, user: DbUser, chatId: number): P
   const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
 
   const streakCount = await getStreakInfo(env, user.id);
-  const streakText = streakCount > 0 ? `${pe(PE.FIRE, "🔥")} <b>${streakCount}</b> روز` : "خاموش ❄️";
+  const streakText = streakCount > 0 ? `${pe("🔥")} <b>${streakCount}</b> روز` : "خاموش ❄️";
 
   const text =
-    `${pe(PE.PERSON, "👤")} <b>پروفایل کاربری</b>\n` +
+    `${pe("👤")} <b>پروفایل کاربری</b>\n` +
     `━━━━━━━━━━━━━━\n` +
     `🏷 نام: <b>${escapeHtml(displayName)}</b>\n` +
-    `${pe(PE.STAR, "⭐️")} امتیاز: <b>${xpTotal}</b> XP\n` +
+    `${pe("⭐️")} امتیاز: <b>${xpTotal}</b> XP\n` +
     `زنجیره مطالعه: ${streakText}\n` +
     `🖼 آواتار: ${avatarEmoji}\n\n` +
     `👇 از منوی زیر تنظیمات رو انتخاب کن:`;
@@ -163,7 +163,7 @@ export async function handleAvatarCallback(
 
   await answerCallbackQuery(env, callbackQuery.id, "آواتار جدید ثبت شد! 😍");
 
-  const text = `${pe(PE.PARTY, "🎉")} آواتار تو به ${avatar.emoji} <b>${avatar.label}</b> تغییر کرد! ${pe(PE.SPARKLE, "✨")}`;
+  const text = `${pe("🎉")} آواتار تو به ${avatar.emoji} <b>${avatar.label}</b> تغییر کرد! ${pe("✨")}`;
   await sendMessage(env, chatId, text, {
     reply_markup: getProfileMenuKeyboard()
   });
@@ -220,7 +220,7 @@ export async function handleSetDisplayNameCommand(
   await sendMessage(
     env,
     chatId,
-    `${pe(PE.SPARKLE, "✨")} نام نمایشی به <b>${escapeHtml(newName)}</b> تغییر کرد ✅\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b>`,
+    `${pe("✨")} نام نمایشی به <b>${escapeHtml(newName)}</b> تغییر کرد ✅\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b>`,
     {
       reply_markup: getProfileMenuKeyboard()
     }
@@ -237,7 +237,7 @@ export async function startProfileStats(env: Env, chatId: number): Promise<void>
   await sendMessage(
     env,
     chatId,
-    `${pe(PE.CHART, "📊")} <b>آمار فعالیت</b>\n\nبازه‌ی زمانی رو انتخاب کن:`,
+    `${pe("📊")} <b>آمار فعالیت</b>\n\nبازه‌ی زمانی رو انتخاب کن:`,
     {
       reply_markup: {
         inline_keyboard: [
@@ -263,10 +263,10 @@ function periodLabel(period: ActivityPeriod): string {
 function buildStatsText(stats: ActivityStats): string {
   const label = periodLabel(stats.period);
 
-  let text = `${pe(PE.CHART, "📊")} <b>گزارش عملکرد — ${label}</b>\n`;
+  let text = `${pe("📊")} <b>گزارش عملکرد — ${label}</b>\n`;
   text += `━━━━━━━━━━━━━━\n\n`;
 
-  text += `${pe(PE.BRAIN, "🧠")} <b>واژگان (لایتنر)</b>\n`;
+  text += `${pe("🧠")} <b>واژگان (لایتنر)</b>\n`;
   text += `  سوالات پاسخ‌داده: <b>${stats.leitner_questions}</b>\n`;
   if (stats.leitner_questions > 0) {
     const accuracy = Math.round((stats.leitner_correct / stats.leitner_questions) * 100);
@@ -275,14 +275,14 @@ function buildStatsText(stats: ActivityStats): string {
   }
   text += `  🆕 واژه‌های یادگرفته: <b>${stats.new_words_learned}</b>\n`;
 
-  text += `\n${pe(PE.BOOK_OPEN, "📖")} <b>درک مطلب</b>\n`;
+  text += `\n${pe("📖")} <b>درک مطلب</b>\n`;
   text += `  تست‌های انجام‌شده: <b>${stats.reading_sets}</b>\n`;
   if (stats.reading_questions_total > 0) {
     const rAccuracy = Math.round((stats.reading_questions_correct / stats.reading_questions_total) * 100);
     text += `  سوالات: <b>${stats.reading_questions_correct}</b> درست از <b>${stats.reading_questions_total}</b> (${rAccuracy}٪)\n`;
   }
 
-  text += `\n${pe(PE.STAR, "⭐️")} XP کسب شده: <b>${stats.xp}</b>`;
+  text += `\n${pe("⭐️")} XP کسب شده: <b>${stats.xp}</b>`;
 
   return text;
 }
@@ -351,10 +351,10 @@ export async function showProfileSummary(env: Env, user: DbUser, chatId: number)
   const createdDateJalali = createdAt ? toJalaliString(createdAt) : "-";
 
   const text =
-    `${pe(PE.CROWN, "👑")} <b>کارت شناسایی زبان‌آموز</b>\n` +
+    `${pe("👑")} <b>کارت شناسایی زبان‌آموز</b>\n` +
     `━━━━━━━━━━━━━━\n` +
     `👤 نام: <b>${escapeHtml(displayName)}</b>\n` +
-    `${pe(PE.STAR, "⭐️")} امتیاز کل: <b>${xpTotal}</b> XP\n` +
+    `${pe("⭐️")} امتیاز کل: <b>${xpTotal}</b> XP\n` +
     `🎭 آواتار: ${avatarEmoji}\n` +
     `📅 تاریخ عضویت: <b>${createdDateJalali}</b>`;
 

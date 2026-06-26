@@ -2,7 +2,7 @@ import { Env } from "../../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../../types";
 import { sendMessage, answerCallbackQuery } from "../../telegram-api";
 import { getOrCreateUser, DbUser } from "../../../db/users";
-import { pe, PE } from "../../premium-emojis";
+import { pe } from "../../premium-emojis";
 import { queryOne, prepare, SqlGuard } from "../../../db/client";
 import {
   prepareUpdateFsrs,
@@ -70,15 +70,15 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
     return;
   }
 
-  let text = `${pe(PE.BRAIN, "🧠")} <b>سیستم مرور واژگان (FSRS)</b>\n\n`;
+  let text = `${pe("🧠")} <b>سیستم مرور واژگان (FSRS)</b>\n\n`;
   text += dueCount > 0
     ? `📋 <b>${dueCount}</b> واژه برای مرور امروز داری\n`
-    : `${pe(PE.CHECK, "✅")} مرورهای امروز تکمیل شده!\n`;
+    : `${pe("✅")} مرورهای امروز تکمیل شده!\n`;
   text += newCount > 0
-    ? `${pe(PE.LIGHTNING, "⚡")} <b>${newCount}</b> واژه جدید آماده یادگیری\n`
+    ? `${pe("⚡")} <b>${newCount}</b> واژه جدید آماده یادگیری\n`
     : `📚 همه واژه‌ها رو شروع کردی!\n`;
   if (leechCount > 0) {
-    text += `${pe(PE.FIRE, "🔥")} <b>${leechCount}</b> واژه‌ی سخت نیاز به تمرین بیشتر دارن\n`;
+    text += `${pe("🔥")} <b>${leechCount}</b> واژه‌ی سخت نیاز به تمرین بیشتر دارن\n`;
   }
 
   const keyboard: InlineKeyboardButton[][] = [];
@@ -349,7 +349,7 @@ async function handleExitConfirm(
 
   const stats = await getReviewStats(env, user.id, 24);
 
-  let summaryText = `${pe(PE.CHART, "📊")} <b>خلاصه امروز</b>\n`;
+  let summaryText = `${pe("📊")} <b>خلاصه امروز</b>\n`;
   summaryText += `━━━━━━━━━━━━━━\n`;
   if (stats.total > 0) {
     const accuracy = Math.round((stats.correct / stats.total) * 100);
@@ -360,7 +360,7 @@ async function handleExitConfirm(
   } else {
     summaryText += `هنوز سوالی جواب نداده‌ای.\n`;
   }
-  summaryText += `\n${pe(PE.MUSCLE, "💪")} خسته نباشی!`;
+  summaryText += `\n${pe("💪")} خسته نباشی!`;
 
   // Restore the reply keyboard so the user can navigate again.
   await sendMessage(env, chatId, summaryText, { reply_markup: getTrainingMenuKeyboard() });
@@ -763,7 +763,7 @@ async function handleAnswer(
   let replyText: string;
   if (isCorrect) {
     replyText =
-      `${pe(PE.SPARKLE, "✨")} <b>آفرین! جواب درسته</b> ✅\n\n` +
+      `${pe("✨")} <b>آفرین! جواب درسته</b> ✅\n\n` +
       `🔤 کلمه: <b>${question.english}</b>\n` +
       `🔵 معنی: <b>${question.persian}</b>\n` +
       `📊 ${levelLabel}`;

@@ -49,6 +49,9 @@ import {
 } from "./handlers/admin";
 import { handleNewUserLicenseFlow, handleUnapprovedUserLicenseFlow } from "./handlers/license";
 import { checkAndCancelStaleSession } from "./handlers/reading";
+import { handlePremiumEmojiCommand } from "./handlers/premium_emoji_admin";
+import { loadEmojiMap } from "./premium-emojis";
+import { isAdmin } from "../db/admin";
 import { CB_PREFIX, REQUIRED_CHANNEL } from "../config/constants";
 import { getUserByTelegramId, getOrCreateUser, touchExistingUser } from "../db/users";
 
@@ -96,6 +99,9 @@ async function isChannelMember(env: Env, tgUserId: number): Promise<boolean> {
  * @returns void
  */
 export async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Promise<void> {
+  // Warm the premium-emoji map so pe() can render animated emoji in any handler.
+  await loadEmojiMap(env);
+
   if (update.callback_query) {
     await handleCallback(env, update.callback_query);
     return;
@@ -254,6 +260,12 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   // Force-join gate: everyone (including admins) must be a channel member.
   if (!(await isChannelMember(env, tgUser.id))) {
     await sendMessage(env, chatId, JOIN_PROMPT_TEXT, { reply_markup: joinKeyboard() });
+    return;
+  }
+
+  // Premium-emoji registration (admin only): /pe + premium emoji → store ids.
+  if (text?.startsWith("/pe") && (await isAdmin(env, tgUser.id))) {
+    await handlePremiumEmojiCommand(env, message);
     return;
   }
 

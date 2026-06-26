@@ -7,7 +7,6 @@ import {
   LEITNER_TEST_TYPES,
   LeitnerTestType,
 } from "../../../config/constants";
-import { PE } from "../../premium-emojis";
 
 // --- Types ---
 
