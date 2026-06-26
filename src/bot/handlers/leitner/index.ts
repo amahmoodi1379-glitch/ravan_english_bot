@@ -16,7 +16,7 @@ import {
   getQuestionAnswerStats,
 } from "../../../db/leitner";
 import { formatAnswerStatsLine } from "../../../utils/answer_stats";
-import { prepareXpForLeitner, checkAndUpdateStreak } from "../../../db/xp";
+import { prepareXpForLeitner, prepareXpForLeitnerDunno, checkAndUpdateStreak } from "../../../db/xp";
 import {
   CB_PREFIX,
 } from "../../../config/constants";
@@ -254,7 +254,8 @@ async function handleDunno(
 
   const batch: D1PreparedStatement[] = [];
   batch.push(...await prepareUpdateFsrs(env, user.id, question.word_id, Rating.Again, guard));
-  // Claim LAST so the FSRS gate above evaluates against the pre-claim state.
+  batch.push(...prepareXpForLeitnerDunno(env, user.id, question.word_id, question.level, guard));
+  // Claim LAST so the gates above evaluate against the pre-claim state.
   batch.push(prepare(
     env,
     `UPDATE user_word_question_history
@@ -412,9 +413,7 @@ async function handleRating(
 
   const batch: D1PreparedStatement[] = [];
   batch.push(...await prepareUpdateFsrs(env, user.id, question.word_id, ratingValue, guard));
-  if (ratingValue >= Rating.Good) {
-    batch.push(...prepareXpForLeitner(env, user.id, question.word_id, question.level, true, guard));
-  }
+  batch.push(...prepareXpForLeitner(env, user.id, question.word_id, question.level, ratingValue, guard));
   // Claim LAST so the gates above evaluate against the pre-claim (NULL) state.
   batch.push(prepare(
     env,

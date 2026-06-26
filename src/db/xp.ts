@@ -1,6 +1,7 @@
 import { Env } from "../types";
 import { prepare, SqlGuard } from "./client";
 import { XP_VALUES, TIME_ZONE_OFFSET } from "../config/constants";
+import { Rating } from "../utils/fsrs";
 
 export type ActivityType = "leitner_question" | "reading_session";
 
@@ -58,34 +59,44 @@ function prepareAddXp(
 }
 
 /**
- * Prepare DB statements to award XP for a correct leitner answer based on word level.
- * @param env - The worker environment containing the D1 database binding
- * @param userId - The user receiving XP
- * @param wordId - The word ID that was answered correctly
- * @param wordLevel - The word's difficulty level (1–4)
- * @param isCorrect - Whether the user's answer was correct
- * @returns An array of D1PreparedStatements to execute in a batch (empty if incorrect)
+ * Prepare DB statements to award XP for a leitner answer based on rating and word level.
+ * Correct ratings (Good/Easy) earn level-based XP; wrong ratings (Hard/Again) earn a small flat amount.
  */
 export function prepareXpForLeitner(
   env: Env,
   userId: number,
   wordId: number,
   wordLevel: number,
-  isCorrect: boolean,
+  rating: Rating,
   guard?: SqlGuard
 ): D1PreparedStatement[] {
-  if (!isCorrect) return [];
-
   let xp = 0;
-  switch (wordLevel) {
-    case 1: xp = XP_VALUES.LEITNER_LEVEL_1; break;
-    case 2: xp = XP_VALUES.LEITNER_LEVEL_2; break;
-    case 3: xp = XP_VALUES.LEITNER_LEVEL_3; break;
-    case 4: xp = XP_VALUES.LEITNER_LEVEL_4; break;
-    default: xp = XP_VALUES.LEITNER_LEVEL_1;
+  if (rating >= Rating.Good) {
+    switch (wordLevel) {
+      case 1: xp = XP_VALUES.LEITNER_LEVEL_1; break;
+      case 2: xp = XP_VALUES.LEITNER_LEVEL_2; break;
+      case 3: xp = XP_VALUES.LEITNER_LEVEL_3; break;
+      case 4: xp = XP_VALUES.LEITNER_LEVEL_4; break;
+      default: xp = XP_VALUES.LEITNER_LEVEL_1;
+    }
+  } else {
+    xp = XP_VALUES.LEITNER_WRONG;
   }
 
-  return prepareAddXp(env, userId, xp, "leitner_question", wordId, { word_level: wordLevel }, guard);
+  return prepareAddXp(env, userId, xp, "leitner_question", wordId, { word_level: wordLevel, rating }, guard);
+}
+
+/**
+ * Prepare DB statements to award a small flat XP for a "I don't know" leitner answer.
+ */
+export function prepareXpForLeitnerDunno(
+  env: Env,
+  userId: number,
+  wordId: number,
+  wordLevel: number,
+  guard?: SqlGuard
+): D1PreparedStatement[] {
+  return prepareAddXp(env, userId, XP_VALUES.LEITNER_DUNNO, "leitner_question", wordId, { word_level: wordLevel, dunno: true }, guard);
 }
 
 /**

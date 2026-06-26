@@ -3,6 +3,8 @@ export const XP_VALUES = {
   LEITNER_LEVEL_2: 8,
   LEITNER_LEVEL_3: 12,
   LEITNER_LEVEL_4: 16,
+  LEITNER_WRONG: 1,   // جواب غلط (Hard / Again)
+  LEITNER_DUNNO: 1,   // نمیدونم
 
   READING_QUESTION: 15,
   READING_BONUS_PERFECT: 10,
