@@ -12,10 +12,11 @@ import {
   StreakType,
 } from "../../db/leaderboard";
 import { getAvatarEmoji } from "../avatars";
+import { pe, PE } from "../premium-emojis";
 
-const LB_BTN_XP = "📊 لیدربورد امتیاز (XP)";
+const LB_BTN_XP = "⭐ لیدربورد امتیاز (XP)";
 const LB_BTN_STREAK = "🔥 لیدربورد استریک";
-const LB_BTN_BACK = "⬅️ بازگشت";
+const LB_BTN_BACK = "🏠 بازگشت";
 
 function getRankEmoji(rank: number): string {
   if (rank === 1) return "🥇";
@@ -59,11 +60,11 @@ function buildLeaderboardText(
  * @returns void
  */
 export async function showLeaderboardHome(env: Env, chatId: number): Promise<void> {
-  const text = `🏆 <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
+  const text = `${pe(PE.TROPHY, "🏆")} <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success" }],
-      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu`, style: "primary" }],
+      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success", icon_custom_emoji_id: PE.STAR }],
+      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu`, style: "primary", icon_custom_emoji_id: PE.FIRE }],
     ],
   };
 
@@ -71,7 +72,7 @@ export async function showLeaderboardHome(env: Env, chatId: number): Promise<voi
 }
 
 async function showXpMenu(env: Env, chatId: number): Promise<void> {
-  const text = `📊 <b>لیدربورد امتیاز (XP)</b>\n\nدوره زمانی رو انتخاب کن:`;
+  const text = `${pe(PE.STAR, "⭐")} <b>لیدربورد امتیاز (XP)</b>\n\nدوره زمانی رو انتخاب کن:`;
   const replyMarkup = {
     inline_keyboard: [
       [
@@ -87,12 +88,12 @@ async function showXpMenu(env: Env, chatId: number): Promise<void> {
 }
 
 async function showStreakMenu(env: Env, chatId: number): Promise<void> {
-  const text = `🔥 <b>لیدربورد استریک</b>\n\nکدوم نوع رو می‌خوای ببینی؟`;
+  const text = `${pe(PE.FIRE, "🔥")} <b>لیدربورد استریک</b>\n\nکدوم نوع رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "🔥 استریک فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live`, style: "primary" },
-        { text: "🏅 رکورد تاریخی", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record`, style: "success" },
+        { text: "🔥 استریک فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live`, style: "primary", icon_custom_emoji_id: PE.FIRE },
+        { text: "🏅 رکورد تاریخی", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record`, style: "success", icon_custom_emoji_id: PE.MEDAL_GOLD },
       ],
       [{ text: LB_BTN_BACK, callback_data: `${CB_PREFIX.LEADERBOARD}:home` }],
     ],
@@ -108,9 +109,9 @@ async function showXpLeaderboard(
   period: LeaderboardPeriod
 ): Promise<void> {
   const periodLabels: Record<LeaderboardPeriod, string> = {
-    weekly: "📊 لیدربورد XP — هفتگی",
-    monthly: "📊 لیدربورد XP — ماهانه",
-    all: "📊 لیدربورد XP — همیشگی",
+    weekly: `${pe(PE.STAR, "⭐")} لیدربورد XP — هفتگی`,
+    monthly: `${pe(PE.STAR, "⭐")} لیدربورد XP — ماهانه`,
+    all: `${pe(PE.STAR, "⭐")} لیدربورد XP — همیشگی`,
   };
 
   const entries = await getLeaderboardXp(env, period);
@@ -141,8 +142,8 @@ async function showStreakLeaderboard(
   type: StreakType
 ): Promise<void> {
   const typeLabels: Record<StreakType, string> = {
-    live: "🔥 لیدربورد استریک — فعال",
-    record: "🏅 لیدربورد استریک — رکورد تاریخی",
+    live: `${pe(PE.FIRE, "🔥")} لیدربورد استریک — فعال`,
+    record: `🏅 لیدربورد استریک — رکورد تاریخی`,
   };
 
   const entries = await getLeaderboardStreak(env, type);

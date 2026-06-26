@@ -7,6 +7,7 @@ import {
   LEITNER_TEST_TYPES,
   LeitnerTestType,
 } from "../../../config/constants";
+import { PE } from "../../premium-emojis";
 
 // --- Types ---
 
@@ -141,7 +142,7 @@ export function exitConfirmText(mode: ReviewMode): string {
  * @returns An InlineKeyboardButton configured for the next question action
  */
 export function nextButton(mode: ReviewMode): InlineKeyboardButton {
-  return { text: "➡️ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}`, style: "primary" };
+  return { text: "⚡ سوال بعدی", callback_data: `${CB_PREFIX.LEITNER_NEXT}:${mode}`, style: "primary", icon_custom_emoji_id: PE.LIGHTNING };
 }
 
 /**
@@ -160,7 +161,7 @@ export function exitButton(mode: ReviewMode): InlineKeyboardButton {
  * @returns An InlineKeyboardButton configured for the ignore word action
  */
 export function ignoreButton(questionId: number, mode: ReviewMode): InlineKeyboardButton {
-  return { text: "🗑 دیگه این واژه رو نشونم نده", callback_data: `${CB_PREFIX.LEITNER_IGNORE}:${questionId}:${mode}` };
+  return { text: "🗑 نشونم نده", callback_data: `${CB_PREFIX.LEITNER_IGNORE}:${questionId}:${mode}` };
 }
 
 /**
@@ -170,7 +171,7 @@ export function ignoreButton(questionId: number, mode: ReviewMode): InlineKeyboa
  * @returns An InlineKeyboardButton configured for the unleech action
  */
 export function unleechButton(questionId: number, mode: ReviewMode): InlineKeyboardButton {
-  return { text: "🎓 یادش گرفتم (حذف از سخت‌ها)", callback_data: `${CB_PREFIX.LEITNER_UNLEECH}:${questionId}:${mode}`, style: "success" };
+  return { text: "🎓 یادش گرفتم!", callback_data: `${CB_PREFIX.LEITNER_UNLEECH}:${questionId}:${mode}`, style: "success", icon_custom_emoji_id: PE.CROWN };
 }
 
 /**
@@ -178,7 +179,7 @@ export function unleechButton(questionId: number, mode: ReviewMode): InlineKeybo
  * @returns An InlineKeyboardButton configured for the home/menu action
  */
 export function homeButton(): InlineKeyboardButton {
-  return { text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_HOME}:1` };
+  return { text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_HOME}:1`, icon_custom_emoji_id: PE.TROPHY };
 }
 
 /**

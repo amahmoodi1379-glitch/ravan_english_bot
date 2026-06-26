@@ -2,6 +2,7 @@ import { Env } from "../../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../../types";
 import { sendMessage, answerCallbackQuery } from "../../telegram-api";
 import { getOrCreateUser, DbUser } from "../../../db/users";
+import { pe, PE } from "../../premium-emojis";
 import { queryOne, prepare, SqlGuard } from "../../../db/client";
 import {
   prepareUpdateFsrs,
@@ -69,22 +70,26 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
     return;
   }
 
-  let text = "🧠 <b>سیستم مرور واژگان (FSRS)</b>\n\n";
-  text += dueCount > 0 ? `📋 <b>${dueCount}</b> واژه برای مرور امروز داری\n` : `✅ مرورهای امروز تکمیل شده!\n`;
-  text += newCount > 0 ? `🆕 <b>${newCount}</b> واژه جدید آماده یادگیری\n` : `📚 همه واژه‌ها رو شروع کردی!\n`;
+  let text = `${pe(PE.BRAIN, "🧠")} <b>سیستم مرور واژگان (FSRS)</b>\n\n`;
+  text += dueCount > 0
+    ? `📋 <b>${dueCount}</b> واژه برای مرور امروز داری\n`
+    : `${pe(PE.CHECK, "✅")} مرورهای امروز تکمیل شده!\n`;
+  text += newCount > 0
+    ? `${pe(PE.LIGHTNING, "⚡")} <b>${newCount}</b> واژه جدید آماده یادگیری\n`
+    : `📚 همه واژه‌ها رو شروع کردی!\n`;
   if (leechCount > 0) {
-    text += `🔁 <b>${leechCount}</b> واژه‌ی سخت داری که نیاز به تمرین بیشتر دارن\n`;
+    text += `${pe(PE.FIRE, "🔥")} <b>${leechCount}</b> واژه‌ی سخت نیاز به تمرین بیشتر دارن\n`;
   }
 
   const keyboard: InlineKeyboardButton[][] = [];
   if (dueCount > 0) {
-    keyboard.push([{ text: `📋 شروع مرور (${dueCount})`, callback_data: `${CB_PREFIX.LEITNER_REVIEW_LEVEL}:pick`, style: "success" }]);
+    keyboard.push([{ text: `📋 شروع مرور (${dueCount})`, callback_data: `${CB_PREFIX.LEITNER_REVIEW_LEVEL}:pick`, style: "success", icon_custom_emoji_id: PE.CHECK }]);
   }
   if (newCount > 0) {
-    keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary" }]);
+    keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary", icon_custom_emoji_id: PE.LIGHTNING }]);
   }
   if (leechCount > 0) {
-    keyboard.push([{ text: `🔁 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger" }]);
+    keyboard.push([{ text: `🔥 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger", icon_custom_emoji_id: PE.FIRE }]);
   }
   keyboard.push([homeButton()]);
 
@@ -280,9 +285,10 @@ async function handleDunno(
   const levelLabel = `سطح ${question.level}`;
 
   let replyText =
-    `🔴 جواب صحیح: گزینه <b>${correctNum}</b> (${correctText})\n` +
-    `کلمه: <b>${question.english}</b>\n` +
-    `معنی: <b>${question.persian}</b>\n` +
+    `🤔 <b>نمیدونستی؟</b> اشکال نداره!\n\n` +
+    `✅ جواب صحیح: گزینه <b>${correctNum}</b> — ${correctText}\n` +
+    `🔤 کلمه: <b>${question.english}</b>\n` +
+    `🔵 معنی: <b>${question.persian}</b>\n` +
     `📊 ${levelLabel}`;
 
   const lessonDisplayDunno = trimLessonName(question.lesson_name);
@@ -343,17 +349,18 @@ async function handleExitConfirm(
 
   const stats = await getReviewStats(env, user.id, 24);
 
-  let summaryText = "📊 <b>خلاصه امروز:</b>\n\n";
+  let summaryText = `${pe(PE.CHART, "📊")} <b>خلاصه امروز</b>\n`;
+  summaryText += `━━━━━━━━━━━━━━\n`;
   if (stats.total > 0) {
     const accuracy = Math.round((stats.correct / stats.total) * 100);
-    summaryText += `✅ درست: ${stats.correct}\n`;
-    summaryText += `❌ غلط: ${stats.incorrect}\n`;
-    summaryText += `📈 دقت: ${accuracy}%\n`;
-    summaryText += `📝 کل: ${stats.total} سوال\n`;
+    summaryText += `✅ درست: <b>${stats.correct}</b>\n`;
+    summaryText += `❌ غلط: <b>${stats.incorrect}</b>\n`;
+    summaryText += `📈 دقت: <b>${accuracy}٪</b>\n`;
+    summaryText += `📝 کل: <b>${stats.total}</b> سوال\n`;
   } else {
     summaryText += `هنوز سوالی جواب نداده‌ای.\n`;
   }
-  summaryText += `\nخسته نباشی! 😊`;
+  summaryText += `\n${pe(PE.MUSCLE, "💪")} خسته نباشی!`;
 
   // Restore the reply keyboard so the user can navigate again.
   await sendMessage(env, chatId, summaryText, { reply_markup: getTrainingMenuKeyboard() });
@@ -756,16 +763,16 @@ async function handleAnswer(
   let replyText: string;
   if (isCorrect) {
     replyText =
-      `✅ آفرین! جواب درسته.\n\n` +
-      `کلمه: <b>${question.english}</b>\n` +
-      `معنی: <b>${question.persian}</b>\n` +
+      `${pe(PE.SPARKLE, "✨")} <b>آفرین! جواب درسته</b> ✅\n\n` +
+      `🔤 کلمه: <b>${question.english}</b>\n` +
+      `🔵 معنی: <b>${question.persian}</b>\n` +
       `📊 ${levelLabel}`;
   } else {
     replyText =
-      `❌ جوابت درست نبود.\n\n` +
-      `جواب صحیح: گزینه <b>${correctNum}</b> (${correctText})\n` +
-      `کلمه: <b>${question.english}</b>\n` +
-      `معنی: <b>${question.persian}</b>\n` +
+      `❌ <b>جوابت درست نبود</b>\n\n` +
+      `✅ جواب صحیح: گزینه <b>${correctNum}</b> — ${correctText}\n` +
+      `🔤 کلمه: <b>${question.english}</b>\n` +
+      `🔵 معنی: <b>${question.persian}</b>\n` +
       `📊 ${levelLabel}`;
   }
 

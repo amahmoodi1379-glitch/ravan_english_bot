@@ -1,6 +1,7 @@
 import { Env } from "../../../types";
 import { InlineKeyboardButton } from "../../types";
 import { DbUser } from "../../../db/users";
+import { pe, PE } from "../../premium-emojis";
 import { queryOne } from "../../../db/client";
 import {
   pickNextReviewWord,
@@ -226,19 +227,19 @@ export async function sendLeitnerQuestion(
     ).bind(user.id, question.word_id, question.id, now).run();
 
     const messageText =
-      `❓ <b>${question.question_text}</b>\n\n` +
-      `1️⃣ ${question.option_a}\n` +
-      `2️⃣ ${question.option_b}\n` +
-      `3️⃣ ${question.option_c}\n` +
-      `4️⃣ ${question.option_d}`;
+      `${pe(PE.PENCIL, "✏️")} <b>${question.question_text}</b>\n\n` +
+      `1️⃣  ${question.option_a}\n` +
+      `2️⃣  ${question.option_b}\n` +
+      `3️⃣  ${question.option_c}\n` +
+      `4️⃣  ${question.option_d}`;
 
     const replyMarkup = {
       inline_keyboard: [
         [
-          { text: "1", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:A:${mode}` },
-          { text: "2", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:B:${mode}` },
-          { text: "3", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:C:${mode}` },
-          { text: "4", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:D:${mode}` },
+          { text: "1️⃣", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:A:${mode}`, style: "primary" },
+          { text: "2️⃣", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:B:${mode}`, style: "primary" },
+          { text: "3️⃣", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:C:${mode}`, style: "primary" },
+          { text: "4️⃣", callback_data: `${CB_PREFIX.LEITNER}:${question.id}:D:${mode}`, style: "primary" },
         ],
         [{ text: "🤔 نمیدونم", callback_data: `${CB_PREFIX.LEITNER_DUNNO}:${question.id}:${mode}` }],
         [exitButton(mode)],
@@ -271,20 +272,20 @@ export async function sendCompletionMessage(
 ): Promise<void> {
   if (mode === "review") {
     const newCount = await countNewWords(env, user.id);
-    let text = "🎉 تبریک! همه مرورهای امروز رو تموم کردی! 👏";
+    let text = `${pe(PE.PARTY, "🎉")} <b>تبریک! همه مرورهای امروز رو تموم کردی!</b> ${pe(PE.MUSCLE, "💪")}`;
     const keyboard: InlineKeyboardButton[][] = [];
     if (newCount > 0) {
-      text += `\n\n🆕 ${newCount} واژه جدید آماده یادگیری. میخوای ادامه بدی؟`;
-      keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary" }]);
+      text += `\n\n${pe(PE.LIGHTNING, "⚡")} <b>${newCount}</b> واژه جدید آماده یادگیری. میخوای ادامه بدی؟`;
+      keyboard.push([{ text: "🆕 شروع واژه‌های جدید", callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary", icon_custom_emoji_id: PE.LIGHTNING }]);
     }
-    keyboard.push([{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]);
+    keyboard.push([{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}`, icon_custom_emoji_id: PE.TROPHY }]);
     await sendMessage(env, chatId, text, { reply_markup: { inline_keyboard: keyboard } });
     return;
   }
 
   if (mode === "leech") {
-    await sendMessage(env, chatId, "🎉 تمرین واژه‌های سخت تموم شد! آفرین 👏", {
-      reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
+    await sendMessage(env, chatId, `${pe(PE.PARTY, "🎉")} <b>تمرین واژه‌های سخت تموم شد! آفرین</b> ${pe(PE.CROWN, "👑")}`, {
+      reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}`, icon_custom_emoji_id: PE.TROPHY }]] },
     });
     return;
   }
@@ -298,8 +299,8 @@ export async function sendCompletionMessage(
       const lessonName = trimLessonName(rawName);
       if (lessonName) lessonLabel = `درس «${lessonName}»`;
     }
-    await sendMessage(env, chatId, `📚 واژه‌های ${lessonLabel} رو تموم کردی! آفرین! 🌟`, {
-      reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
+    await sendMessage(env, chatId, `${pe(PE.SPARKLE, "🌟")} واژه‌های ${lessonLabel} رو تموم کردی! آفرین ${pe(PE.PARTY, "🎉")}`, {
+      reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}`, icon_custom_emoji_id: PE.TROPHY }]] },
     });
     return;
   }
@@ -307,7 +308,7 @@ export async function sendCompletionMessage(
   // Level-based mode (new, new1–4)
   const level = getLevelFromMode(mode);
   const levelText = level ? `واژه‌های سطح ${level}` : "همه واژه‌های جدید";
-  await sendMessage(env, chatId, `📚 ${levelText} رو تموم کردی! آفرین! 🌟`, {
-    reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}` }]] },
+  await sendMessage(env, chatId, `${pe(PE.SPARKLE, "🌟")} ${levelText} رو تموم کردی! آفرین ${pe(PE.PARTY, "🎉")}`, {
+    reply_markup: { inline_keyboard: [[{ text: "🏠 بازگشت به منو", callback_data: `${CB_PREFIX.LEITNER_EXIT_CONFIRM}:${mode}`, icon_custom_emoji_id: PE.TROPHY }]] },
   });
 }
