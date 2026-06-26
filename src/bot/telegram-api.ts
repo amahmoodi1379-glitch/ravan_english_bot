@@ -200,6 +200,39 @@ interface TelegramApiResponse {
   [key: string]: unknown;
 }
 
+export interface TelegramStickerInfo {
+  emoji?: string;
+  custom_emoji_id?: string;
+  type?: string;
+}
+
+interface StickerSetResponse {
+  ok: boolean;
+  result?: {
+    name: string;
+    title: string;
+    sticker_type: string;
+    stickers: TelegramStickerInfo[];
+  };
+  description?: string;
+}
+
+/**
+ * Fetch a Telegram sticker set by its short name.
+ * Returns null on network error; the caller must check .ok for API errors.
+ * @param env - The worker environment containing the bot token
+ * @param name - The sticker set short name (e.g. "AnimatedEmojies")
+ */
+export async function getStickerSet(env: Env, name: string): Promise<StickerSetResponse | null> {
+  try {
+    const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getStickerSet?name=${encodeURIComponent(name)}`;
+    const resp = await fetch(url);
+    return await resp.json() as StickerSetResponse;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchWithRetry(url: string, body: Record<string, unknown>, retries = 3): Promise<unknown> {
   for (let i = 0; i < retries; i++) {
     try {

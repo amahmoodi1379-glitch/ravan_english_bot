@@ -24,6 +24,18 @@ function norm(emoji: string): string {
   return emoji.replace(/️/g, "");
 }
 
+/**
+ * Verified custom_emoji_id values sourced from published open-source examples.
+ * These are used as fallbacks when the admin hasn't manually registered an emoji.
+ * The admin's own registered IDs (via /pe or /pe pack) always take priority.
+ * IDs are stable per Telegram API docs: "A custom emoji ID won't change when a
+ * pack is updated."
+ */
+export const SEED_IDS: Record<string, string> = {
+  "🔥": "5368324170671202286",  // from bragin0/telegram-custom-emoji-iinline-color
+  "⭐": "5453969572354878595",  // from ulugby/aiogram3-bot-template (ICON_STAR)
+};
+
 // Module-level cache (persists across requests while the isolate is warm).
 let emojiMap: Record<string, string> = {};
 let loaded = false;
@@ -84,7 +96,8 @@ export async function saveEmojiMap(env: Env, map: Record<string, string>): Promi
  * @returns Either a <tg-emoji> HTML tag or the plain emoji
  */
 export function pe(base: string): string {
-  const id = emojiMap[norm(base)];
+  const key = norm(base);
+  const id = emojiMap[key] ?? SEED_IDS[key];
   if (id) return `<tg-emoji emoji-id="${id}">${base}</tg-emoji>`;
   return base;
 }
