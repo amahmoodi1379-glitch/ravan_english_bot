@@ -6,6 +6,7 @@ import {
   getReadingTextsCount,
   getPaginatedReadingTexts,
 } from "../../db/texts";
+import { pe, PE } from "../premium-emojis";
 import {
   createReadingSession,
   getReadingSessionById,
@@ -52,20 +53,20 @@ function buildReadingInlineKeyboard(
     keyboard.push([{ text: `📄 ${t.title}`, callback_data: `${CB_PREFIX.READING_TEXT}:${t.id}` }]);
   }
 
-  // Navigation row
+  // Navigation row (◀️ = back/previous, ▶️ = forward/next)
   const navRow: InlineKeyboardButton[] = [];
   if (currentPage > 1) {
-    navRow.push({ text: "صفحه قبل ▶️", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage - 1}` });
+    navRow.push({ text: "◀️ صفحه قبل", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage - 1}` });
   }
   if (currentPage < totalPages) {
-    navRow.push({ text: "◀️ صفحه بعد", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage + 1}` });
+    navRow.push({ text: "صفحه بعد ▶️", callback_data: `${CB_PREFIX.READING_TEXT}:page_${currentPage + 1}` });
   }
   if (navRow.length > 0) {
     keyboard.push(navRow);
   }
 
   // Back button
-  keyboard.push([{ text: "⬅️ بازگشت به منوی تمرین", callback_data: `${CB_PREFIX.READING_TEXT}:back` }]);
+  keyboard.push([{ text: "🏠 بازگشت به منوی تمرین", callback_data: `${CB_PREFIX.READING_TEXT}:back` }]);
 
   return { inline_keyboard: keyboard };
 }
@@ -99,7 +100,7 @@ export async function startReadingMenuForUser(env: Env, chatId: number, page: nu
   await sendMessage(
     env,
     chatId,
-    `📚 <b>متون درک مطلب</b> (صفحه ${page} از ${totalPages})\n\nیکی از متن‌ها رو انتخاب کن:`,
+    `${pe(PE.BOOKS, "📚")} <b>متون درک مطلب</b>\n<i>صفحه ${page} از ${totalPages}</i>\n\nیکی از متن‌ها رو انتخاب کن 👇`,
     {
       reply_markup: buildReadingInlineKeyboard(textItems, page, totalPages)
     }
@@ -199,7 +200,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
         env,
         chatId,
         messageId,
-        `📚 <b>متون درک مطلب</b> (صفحه ${safePage} از ${totalPages})\n\nیکی از متن‌ها رو انتخاب کن:`,
+        `${pe(PE.BOOKS, "📚")} <b>متون درک مطلب</b>\n<i>صفحه ${safePage} از ${totalPages}</i>\n\nیکی از متن‌ها رو انتخاب کن 👇`,
         { reply_markup: buildReadingInlineKeyboard(textItems, safePage, totalPages) }
       );
       return;
@@ -232,7 +233,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
   await answerCallbackQuery(env, callbackQuery.id);
 
   // Update the text list message to indicate selection
-  await editMessageText(env, chatId, messageId, "📖 تست درک مطلب شروع شد. به سوال‌ها با دقت جواب بده ✍️");
+  await editMessageText(env, chatId, messageId, `${pe(PE.BOOK_OPEN, "📖")} <b>تست درک مطلب شروع شد</b>\nبه سوال‌ها با دقت جواب بده ✍️`);
 
   const sent = await sendNextReadingQuestion(env, user, session, chatId);
   if (!sent) {
@@ -346,12 +347,14 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
   let replyText: string;
   if (isCorrect) {
-    replyText = `آفرین! ✅ جواب درست بود.\n\n✅ گزینه صحیح: <b>${correctNum}</b>`;
+    replyText =
+      `${pe(PE.SPARKLE, "✨")} <b>آفرین! جواب درست بود</b> ✅\n\n` +
+      `✅ گزینه صحیح: <b>${correctNum}</b>`;
   } else {
     const chosenNum = optionLetterToNumber(chosenOption);
     replyText =
-      `جواب درست نبود ❌\n\n` +
-      `جواب تو: <b>${chosenNum}</b>\n` +
+      `❌ <b>جواب درست نبود</b>\n\n` +
+      `گزینه انتخابی تو: <b>${chosenNum}</b>\n` +
       `✅ جواب صحیح: <b>${correctNum}</b>`;
   }
 
@@ -399,22 +402,22 @@ async function sendNextReadingQuestion(
   }
 
   const messageText =
-    `❓ <b>${question.question_text}</b>\n\n` +
-    `1️⃣ ${question.option_a}\n` +
-    `2️⃣ ${question.option_b}\n` +
-    `3️⃣ ${question.option_c}\n` +
-    `4️⃣ ${question.option_d}`;
+    `${pe(PE.BOOK_OPEN, "📖")} <b>${question.question_text}</b>\n\n` +
+    `1️⃣  ${question.option_a}\n` +
+    `2️⃣  ${question.option_b}\n` +
+    `3️⃣  ${question.option_c}\n` +
+    `4️⃣  ${question.option_d}`;
 
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "1", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:A` },
-        { text: "2", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:B` },
-        { text: "3", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:C` },
-        { text: "4", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:D` }
+        { text: "1️⃣", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:A`, style: "primary" },
+        { text: "2️⃣", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:B`, style: "primary" },
+        { text: "3️⃣", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:C`, style: "primary" },
+        { text: "4️⃣", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:D`, style: "primary" }
       ],
       [
-        { text: "❌ انصراف و خروج", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:CANCEL` }
+        { text: "❌ انصراف و خروج", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:CANCEL`, style: "danger" }
       ]
     ]
   };
@@ -493,17 +496,18 @@ async function sendReadingSummary(
     await sendMessage(env, chatId, streakMsg);
   }
 
-  let text = `نتیجه‌ی این تست درک مطلب:\n\n`;
-  text += `✅ تعداد پاسخ‌های درست: <b>${correct}</b> از <b>${total}</b>\n`;
+  let text = `${pe(PE.CHART, "📊")} <b>نتیجه‌ی تست درک مطلب</b>\n`;
+  text += `━━━━━━━━━━━━━━\n`;
+  text += `✅ پاسخ‌های درست: <b>${correct}</b> از <b>${total}</b>\n`;
 
   if (totalXp > 0) {
-    text += `\n⭐️ XP دریافتی: <b>${totalXp}</b>\n`;
+    text += `${pe(PE.STAR, "⭐️")} XP دریافتی: <b>+${totalXp}</b>\n`;
   } else if (correct > 0) {
-    text += `\n⭐️ XP دریافتی: <b>0</b> (تکراری)\n`;
+    text += `${pe(PE.STAR, "⭐️")} XP دریافتی: <b>0</b> <i>(تکراری)</i>\n`;
   }
 
   if (rows.length > 0) {
-    text += `\nپاسخنامه:\n`;
+    text += `\n📋 <b>پاسخنامه:</b>\n`;
     rows.forEach((r, idx) => {
       const qNum = idx + 1;
       const correctOptionNum = optionLetterToNumber(r.correct_option);
@@ -515,7 +519,7 @@ async function sendReadingSummary(
 
   await sendMessage(env, chatId, text);
 
-  await sendMessage(env, chatId, "خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟", {
+  await sendMessage(env, chatId, `${pe(PE.MUSCLE, "💪")} خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟`, {
     reply_markup: getTrainingMenuKeyboard()
   });
 }

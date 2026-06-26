@@ -2,6 +2,7 @@ import { Env } from "../../types";
 import { sendMessage } from "../telegram-api";
 import { CB_PREFIX } from "../../config/constants";
 import { getUsersForInactivityReminder, setReminderStage } from "../../db/notifications";
+import { pe, PE } from "../premium-emojis";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -19,30 +20,30 @@ function targetStage(daysInactive: number, currentStage: number): number {
 function reminderText(stage: number): string {
   if (stage === 3) {
     return (
-      "🕊️ <b>دلمون برات تنگ شده!</b>\n\n" +
-      "۱۰ روزه که سری به واژه‌هات نزدی. زنجیره‌ی یادگیری با چند دقیقه تمرین دوباره جون می‌گیره 💪\n" +
-      "همین الان یه شروع کوچیک بزن 👇"
+      `${pe(PE.ROCKET, "🚀")} <b>دلمون برات تنگ شده!</b>\n\n` +
+      `۱۰ روزه که سری به واژه‌هات نزدی. زنجیره‌ی یادگیری با چند دقیقه تمرین دوباره جون می‌گیره ${pe(PE.MUSCLE, "💪")}\n` +
+      `همین الان یه شروع کوچیک بزن 👇`
     );
   }
   if (stage === 2) {
     return (
-      "🌱 <b>وقتشه برگردی!</b>\n\n" +
-      "۵ روزه ربات رو باز نکردی. واژه‌های آماده‌ی مرور منتظرتن تا فراموش نشن 🧠\n" +
-      "یه تمرین کوتاه امروز کلی فرق ایجاد می‌کنه 👇"
+      `🌱 <b>وقتشه برگردی!</b>\n\n` +
+      `۵ روزه ربات رو باز نکردی. واژه‌های آماده‌ی مرور منتظرتن تا فراموش نشن ${pe(PE.BRAIN, "🧠")}\n` +
+      `یه تمرین کوتاه امروز کلی فرق ایجاد می‌کنه 👇`
     );
   }
   return (
-    "👋 <b>سلام! کجایی؟</b>\n\n" +
-    "۲ روزه که تمرین نکردی. فقط چند دقیقه امروز کافیه تا روی فرم بمونی ✨\n" +
-    "بزن بریم 👇"
+    `${pe(PE.WAVE, "👋")} <b>سلام! کجایی؟</b>\n\n` +
+    `۲ روزه که تمرین نکردی. فقط چند دقیقه امروز کافیه تا روی فرم بمونی ${pe(PE.SPARKLE, "✨")}\n` +
+    `بزن بریم 👇`
   );
 }
 
 function reminderKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: "🧠 شروع مرور واژگان", callback_data: `${CB_PREFIX.REMINDER_OPEN}:leitner`, style: "success" }],
-      [{ text: "📖 تست درک مطلب", callback_data: `${CB_PREFIX.REMINDER_OPEN}:reading`, style: "primary" }],
+      [{ text: "🧠 شروع مرور واژگان", callback_data: `${CB_PREFIX.REMINDER_OPEN}:leitner`, style: "success", icon_custom_emoji_id: PE.BRAIN }],
+      [{ text: "📖 تست درک مطلب", callback_data: `${CB_PREFIX.REMINDER_OPEN}:reading`, style: "primary", icon_custom_emoji_id: PE.BOOK_OPEN }],
     ],
   };
 }

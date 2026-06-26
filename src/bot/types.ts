@@ -40,5 +40,7 @@ export interface InlineKeyboardButton {
   text: string;
   callback_data?: string;
   url?: string;
+  icon_custom_emoji_id?: string;
+  style?: string;
   [key: string]: unknown;
 }

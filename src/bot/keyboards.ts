@@ -1,13 +1,13 @@
-export const MAIN_MENU_BUTTON_TRAINING = "🎯 تمرین‌ها";
+export const MAIN_MENU_BUTTON_TRAINING = "🎮 تمرین‌ها";
 export const MAIN_MENU_BUTTON_PROFILE = "👤 پروفایل و آمار";
 export const MAIN_MENU_BUTTON_LEADERBOARD = "🏆 لیدربورد";
 
 export const TRAINING_MENU_BUTTON_LEITNER = "🧠 لایتنر واژگان";
 export const TRAINING_MENU_BUTTON_READING = "📖 تست درک مطلب";
-export const TRAINING_MENU_BUTTON_BACK = "⬅️ بازگشت به منوی اصلی";
+export const TRAINING_MENU_BUTTON_BACK = "🏠 بازگشت به منوی اصلی";
 
 export const PROFILE_MENU_BUTTON_SETTINGS = "⚙️ تنظیمات پروفایل";
-export const PROFILE_MENU_BUTTON_STATS = "📈 آمار فعالیت";
+export const PROFILE_MENU_BUTTON_STATS = "📊 آمار فعالیت";
 export const PROFILE_MENU_BUTTON_SUMMARY = "🪪 خلاصه پروفایل";
 
 interface ReplyKeyboardMarkup {
