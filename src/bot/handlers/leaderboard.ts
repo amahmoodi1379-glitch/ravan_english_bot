@@ -63,8 +63,8 @@ export async function showLeaderboardHome(env: Env, chatId: number): Promise<voi
   const text = `${pe(PE.TROPHY, "🏆")} <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success", icon_custom_emoji_id: PE.STAR }],
-      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu`, style: "primary", icon_custom_emoji_id: PE.FIRE }],
+      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success" }],
+      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu`, style: "primary" }],
     ],
   };
 
@@ -92,8 +92,8 @@ async function showStreakMenu(env: Env, chatId: number): Promise<void> {
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "🔥 استریک فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live`, style: "primary", icon_custom_emoji_id: PE.FIRE },
-        { text: "🏅 رکورد تاریخی", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record`, style: "success", icon_custom_emoji_id: PE.MEDAL_GOLD },
+        { text: "🔥 استریک فعال", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:live`, style: "primary" },
+        { text: "🏅 رکورد تاریخی", callback_data: `${CB_PREFIX.LEADERBOARD}:streak:record`, style: "success" },
       ],
       [{ text: LB_BTN_BACK, callback_data: `${CB_PREFIX.LEADERBOARD}:home` }],
     ],

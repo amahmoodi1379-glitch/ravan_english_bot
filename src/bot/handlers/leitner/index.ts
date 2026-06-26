@@ -83,13 +83,13 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
 
   const keyboard: InlineKeyboardButton[][] = [];
   if (dueCount > 0) {
-    keyboard.push([{ text: `📋 شروع مرور (${dueCount})`, callback_data: `${CB_PREFIX.LEITNER_REVIEW_LEVEL}:pick`, style: "success", icon_custom_emoji_id: PE.CHECK }]);
+    keyboard.push([{ text: `📋 شروع مرور (${dueCount})`, callback_data: `${CB_PREFIX.LEITNER_REVIEW_LEVEL}:pick`, style: "success" }]);
   }
   if (newCount > 0) {
-    keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary", icon_custom_emoji_id: PE.LIGHTNING }]);
+    keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary" }]);
   }
   if (leechCount > 0) {
-    keyboard.push([{ text: `🔥 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger", icon_custom_emoji_id: PE.FIRE }]);
+    keyboard.push([{ text: `🔥 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger" }]);
   }
   keyboard.push([homeButton()]);
 

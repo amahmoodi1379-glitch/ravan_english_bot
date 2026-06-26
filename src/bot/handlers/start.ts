@@ -3,6 +3,7 @@ import { TelegramUpdate } from "../types";
 import { sendMessage } from "../telegram-api";
 import { getMainMenuKeyboard } from "../keyboards";
 import { pe, PE } from "../premium-emojis";
+import { escapeHtml } from "../../utils/html";
 
 /**
  * Handle the /start command by greeting the user and showing the main menu.
@@ -18,7 +19,7 @@ export async function handleStartCommand(env: Env, update: TelegramUpdate): Prom
   const firstName = message.from?.first_name ?? "";
 
   const greeting = firstName
-    ? `سلام <b>${firstName}</b> ${pe(PE.WAVE, "👋")}`
+    ? `سلام <b>${escapeHtml(firstName)}</b> ${pe(PE.WAVE, "👋")}`
     : `سلام ${pe(PE.WAVE, "👋")}`;
 
   const welcomeText =

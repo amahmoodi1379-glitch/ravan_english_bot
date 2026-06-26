@@ -1,8 +1,12 @@
 /**
  * Premium animated emoji IDs for Telegram Premium users.
- * Used with <tg-emoji emoji-id="..."> in HTML-mode messages.
- * If an ID is unrecognized, Telegram shows the fallback emoji instead — safe to use.
- * For inline buttons, pass as icon_custom_emoji_id (silently ignored if invalid).
+ * To enable animated emoji: replace the IDs below with real ones from your emoji packs,
+ * then change pe() to return the <tg-emoji> wrapper instead of just the fallback.
+ *
+ * How to get real IDs:
+ *   1. Open @stickers bot in Telegram
+ *   2. Forward any custom emoji to @getidsbot
+ *   3. Copy the file_id (that's the custom_emoji_id)
  */
 export const PE = {
   FIRE:       "5373141332479499264",  // 🔥
@@ -27,7 +31,10 @@ export const PE = {
   PENCIL:     "5368324170671202001",  // ✏️
 };
 
-/** Wrap text in a Telegram animated premium emoji tag (HTML mode). */
-export function pe(id: string, fallback: string): string {
-  return `<tg-emoji emoji-id="${id}">${fallback}</tg-emoji>`;
+/**
+ * Returns a fallback emoji for now. Once you have verified custom emoji IDs,
+ * change this to: return `<tg-emoji emoji-id="${id}">${fallback}</tg-emoji>`;
+ */
+export function pe(_id: string, fallback: string): string {
+  return fallback;
 }

@@ -42,8 +42,8 @@ function reminderText(stage: number): string {
 function reminderKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: "🧠 شروع مرور واژگان", callback_data: `${CB_PREFIX.REMINDER_OPEN}:leitner`, style: "success", icon_custom_emoji_id: PE.BRAIN }],
-      [{ text: "📖 تست درک مطلب", callback_data: `${CB_PREFIX.REMINDER_OPEN}:reading`, style: "primary", icon_custom_emoji_id: PE.BOOK_OPEN }],
+      [{ text: "🧠 شروع مرور واژگان", callback_data: `${CB_PREFIX.REMINDER_OPEN}:leitner`, style: "success",}],
+      [{ text: "📖 تست درک مطلب", callback_data: `${CB_PREFIX.REMINDER_OPEN}:reading`, style: "primary",}],
     ],
   };
 }

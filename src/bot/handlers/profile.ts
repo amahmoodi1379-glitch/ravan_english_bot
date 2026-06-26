@@ -3,6 +3,7 @@ import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getProfileMenuKeyboard } from "../keyboards";
 import { pe, PE } from "../premium-emojis";
+import { escapeHtml } from "../../utils/html";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import {
   getUserProfile,
@@ -66,7 +67,7 @@ export async function showProfileHome(env: Env, user: DbUser, chatId: number): P
   const text =
     `${pe(PE.PERSON, "👤")} <b>پروفایل کاربری</b>\n` +
     `━━━━━━━━━━━━━━\n` +
-    `🏷 نام: <b>${displayName}</b>\n` +
+    `🏷 نام: <b>${escapeHtml(displayName)}</b>\n` +
     `${pe(PE.STAR, "⭐️")} امتیاز: <b>${xpTotal}</b> XP\n` +
     `زنجیره مطالعه: ${streakText}\n` +
     `🖼 آواتار: ${avatarEmoji}\n\n` +
@@ -99,7 +100,7 @@ export async function showProfileSettings(env: Env, user: DbUser, chatId: number
 
   const text =
     `⚙️ <b>تنظیمات پروفایل</b>\n\n` +
-    `✏️ <b>نام نمایشی:</b> ${displayName}\n` +
+    `✏️ <b>نام نمایشی:</b> ${escapeHtml(displayName)}\n` +
     `<i>(تغییرات باقی‌مانده: ${remainingChanges} از 3)</i>\n` +
     `برای تغییر نام، دستور زیر رو بفرست:\n` +
     `<code>/setname اسم_جدید</code>\n\n` +
@@ -219,7 +220,7 @@ export async function handleSetDisplayNameCommand(
   await sendMessage(
     env,
     chatId,
-    `${pe(PE.SPARKLE, "✨")} نام نمایشی به <b>${newName}</b> تغییر کرد ✅\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b>`,
+    `${pe(PE.SPARKLE, "✨")} نام نمایشی به <b>${escapeHtml(newName)}</b> تغییر کرد ✅\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b>`,
     {
       reply_markup: getProfileMenuKeyboard()
     }
@@ -352,7 +353,7 @@ export async function showProfileSummary(env: Env, user: DbUser, chatId: number)
   const text =
     `${pe(PE.CROWN, "👑")} <b>کارت شناسایی زبان‌آموز</b>\n` +
     `━━━━━━━━━━━━━━\n` +
-    `👤 نام: <b>${displayName}</b>\n` +
+    `👤 نام: <b>${escapeHtml(displayName)}</b>\n` +
     `${pe(PE.STAR, "⭐️")} امتیاز کل: <b>${xpTotal}</b> XP\n` +
     `🎭 آواتار: ${avatarEmoji}\n` +
     `📅 تاریخ عضویت: <b>${createdDateJalali}</b>`;
