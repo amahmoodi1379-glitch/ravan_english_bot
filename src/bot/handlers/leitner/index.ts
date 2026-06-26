@@ -89,7 +89,7 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
     keyboard.push([{ text: `🆕 واژه‌های جدید (${newCount})`, callback_data: `${CB_PREFIX.LEITNER_NEW_LEVEL}:pick`, style: "primary" }]);
   }
   if (leechCount > 0) {
-    keyboard.push([{ text: `🔥 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger" }]);
+    keyboard.push([{ text: `🔥 واژه‌های سخت (${leechCount})`, callback_data: `${CB_PREFIX.LEITNER_NEXT}:leech`, style: "danger", icon_custom_emoji_id: "5368324170671202286" }]);
   }
   keyboard.push([homeButton()]);
 
