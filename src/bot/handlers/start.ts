@@ -2,7 +2,8 @@ import { Env } from "../../types";
 import { TelegramUpdate } from "../types";
 import { sendMessage } from "../telegram-api";
 import { getMainMenuKeyboard } from "../keyboards";
-import { pe, PE } from "../premium-emojis";
+import { pe } from "../premium-emojis";
+import { escapeHtml } from "../../utils/html";
 
 /**
  * Handle the /start command by greeting the user and showing the main menu.
@@ -18,15 +19,15 @@ export async function handleStartCommand(env: Env, update: TelegramUpdate): Prom
   const firstName = message.from?.first_name ?? "";
 
   const greeting = firstName
-    ? `سلام <b>${firstName}</b> ${pe(PE.WAVE, "👋")}`
-    : `سلام ${pe(PE.WAVE, "👋")}`;
+    ? `سلام <b>${escapeHtml(firstName)}</b> ${pe("👋")}`
+    : `سلام ${pe("👋")}`;
 
   const welcomeText =
     `${greeting}\n\n` +
-    `${pe(PE.ROCKET, "🚀")} به ربات یادگیری زبان انگلیسی خوش اومدی!\n\n` +
-    `${pe(PE.BRAIN, "🧠")} واژه یاد بگیر\n` +
-    `${pe(PE.BOOKS, "📚")} درک مطلب تمرین کن\n` +
-    `${pe(PE.TROPHY, "🏆")} با بقیه رقابت کن\n\n` +
+    `${pe("🚀")} به ربات یادگیری زبان انگلیسی خوش اومدی!\n\n` +
+    `${pe("🧠")} واژه یاد بگیر\n` +
+    `${pe("📚")} درک مطلب تمرین کن\n` +
+    `${pe("🏆")} با بقیه رقابت کن\n\n` +
     `از منوی زیر یکی از گزینه‌ها رو انتخاب کن 👇`;
 
   await sendMessage(env, chatId, welcomeText, {

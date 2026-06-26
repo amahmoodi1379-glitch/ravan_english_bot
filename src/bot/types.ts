@@ -10,11 +10,19 @@ export interface TelegramChat {
   type: string;
 }
 
+export interface MessageEntity {
+  type: string;
+  offset: number;
+  length: number;
+  custom_emoji_id?: string;
+}
+
 export interface TelegramMessage {
   message_id: number;
   from?: TelegramUser;
   chat: TelegramChat;
   text?: string;
+  entities?: MessageEntity[];
   caption?: string;
   photo?: Array<{ file_id: string; file_size?: number; width?: number; height?: number }>;
   video?: { file_id: string; file_size?: number; width?: number; height?: number; duration?: number };
