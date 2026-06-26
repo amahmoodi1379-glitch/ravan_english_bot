@@ -1,6 +1,17 @@
 import { Env } from "../types";
+import { applyPremiumEmojiToText, applyPremiumEmojiToMarkup } from "./premium-emojis";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Apply the central premium-emoji transform to an `extra`/options object:
+ * animate registered emoji at the start of inline buttons. Returns a shallow
+ * copy so callers' objects aren't mutated.
+ */
+function withPremiumMarkup(extra?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!extra || !extra.reply_markup) return extra;
+  return { ...extra, reply_markup: applyPremiumEmojiToMarkup(extra.reply_markup) };
+}
 
 /**
  * Send a text message to a Telegram chat.
@@ -20,9 +31,9 @@ export async function sendMessage(
 
   const body: Record<string, unknown> = {
     chat_id: chatId,
-    text,
+    text: applyPremiumEmojiToText(text),
     parse_mode: "HTML",
-    ...extra
+    ...withPremiumMarkup(extra)
   };
 
   return fetchWithRetry(url, body);
@@ -49,7 +60,7 @@ export async function copyMessage(
     chat_id: toChatId,
     from_chat_id: fromChatId,
     message_id: messageId,
-    ...extra
+    ...withPremiumMarkup(extra)
   };
   await fetchWithRetry(url, body);
 }
@@ -126,9 +137,9 @@ export async function editMessageText(
   const body: Record<string, unknown> = {
     chat_id: chatId,
     message_id: messageId,
-    text,
+    text: applyPremiumEmojiToText(text),
     parse_mode: "HTML",
-    ...extra
+    ...withPremiumMarkup(extra)
   };
   return await fetchWithRetry(url, body);
 }
@@ -153,7 +164,7 @@ export async function editMessageReplyMarkup(
     message_id: messageId,
   };
   if (replyMarkup) {
-    body.reply_markup = replyMarkup;
+    body.reply_markup = applyPremiumEmojiToMarkup(replyMarkup);
   } else {
     body.reply_markup = { inline_keyboard: [] };
   }
@@ -198,39 +209,6 @@ interface TelegramApiResponse {
   ok?: boolean;
   parameters?: { retry_after?: number };
   [key: string]: unknown;
-}
-
-export interface TelegramStickerInfo {
-  emoji?: string;
-  custom_emoji_id?: string;
-  type?: string;
-}
-
-interface StickerSetResponse {
-  ok: boolean;
-  result?: {
-    name: string;
-    title: string;
-    sticker_type: string;
-    stickers: TelegramStickerInfo[];
-  };
-  description?: string;
-}
-
-/**
- * Fetch a Telegram sticker set by its short name.
- * Returns null on network error; the caller must check .ok for API errors.
- * @param env - The worker environment containing the bot token
- * @param name - The sticker set short name (e.g. "AnimatedEmojies")
- */
-export async function getStickerSet(env: Env, name: string): Promise<StickerSetResponse | null> {
-  try {
-    const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getStickerSet?name=${encodeURIComponent(name)}`;
-    const resp = await fetch(url);
-    return await resp.json() as StickerSetResponse;
-  } catch {
-    return null;
-  }
 }
 
 async function fetchWithRetry(url: string, body: Record<string, unknown>, retries = 3): Promise<unknown> {

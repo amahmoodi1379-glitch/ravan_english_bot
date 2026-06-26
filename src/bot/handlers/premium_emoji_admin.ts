@@ -1,40 +1,31 @@
 import { Env } from "../../types";
 import { TelegramMessage } from "../types";
-import { sendMessage, getStickerSet } from "../telegram-api";
-import { getEmojiMap, saveEmojiMap, SEED_IDS } from "../premium-emojis";
-
-/** Strip the variation selector so keys match how pe() looks them up. */
-function norm(emoji: string): string {
-  return emoji.replace(/️/g, "");
-}
-
-// The base emojis the bot actually renders via pe() — used for the status report.
-const USED_EMOJIS = [
-  "🔥", "🧠", "🏆", "⭐", "🎉", "👑", "💪", "✨", "✅",
-  "⚡", "🚀", "📖", "📚", "📊", "👋", "👤", "✏️", "🌟",
-];
-const USED_EMOJIS_SET = new Set(USED_EMOJIS.map((e) => e.replace(/️/g, "")));
+import { sendMessage } from "../telegram-api";
+import { getEmojiMap, saveEmojiMap, normEmoji, KNOWN_EMOJIS } from "../premium-emojis";
 
 const HELP_TEXT =
   "✨ <b>مدیریت اموجی پرمیوم</b>\n\n" +
-  "<b>روش ۱ — از پک استیکر (توصیه‌شده):</b>\n" +
-  "یک پک اموجی سفارشی پیدا کن در تلگرام، شناسه‌ی کوتاه پک رو از لینک <code>t.me/addemoji/SHORTNAME</code> بردار و بفرست:\n" +
-  "<code>/pe pack SHORTNAME</code>\n" +
-  "مثال: <code>/pe pack AnimatedEmojies</code>\n\n" +
-  "<b>روش ۲ — ثبت دستی:</b>\n" +
-  "یک پیام بفرست که با <code>/pe</code> شروع بشه و بعدش اموجی‌های پرمیوم (متحرک) رو از کیبورد پرمیوم تلگرام اضافه کن:\n" +
-  "<code>/pe 🔥🧠🏆⭐🎉👑💪✨</code>\n\n" +
-  "<b>اموجی‌هایی که ربات استفاده می‌کنه:</b>\n" +
-  USED_EMOJIS.join(" ") + "\n\n" +
-  "دستورات دیگه:\n" +
-  "• <code>/pe reset</code> — پاک کردن همه ثبت‌شده‌ها";
+  "هر اموجی رو که ثبت کنی، ربات اون رو <b>همه‌جا</b> به‌صورت خودکار متحرک می‌کنه — " +
+  "هم داخل متن پیام‌ها، هم به‌عنوان آیکون دکمه‌های اینلاین.\n\n" +
+  "<b>روش ثبت:</b>\n" +
+  "یک پیام بفرست که با <code>/pe</code> شروع بشه و بعدش نسخه‌ی <b>پرمیوم (متحرک)</b> اموجی‌ها رو از کیبورد پرمیوم تلگرام بذاری:\n" +
+  "<code>/pe</code> 🔥🧠🏆⭐🎉👑💪✨\n\n" +
+  "ربات custom_emoji_id رو از پیام درمیاره و ذخیره می‌کنه. هر تعداد بخوای می‌تونی یک‌جا یا چندبار بفرستی.\n\n" +
+  "<b>دستورات:</b>\n" +
+  "• <code>/pe</code> — همین راهنما + وضعیت\n" +
+  "• <code>/pe list</code> — لیست کامل اموجی‌های ربات و وضعیت هرکدوم\n" +
+  "• <code>/pe del</code> 🔥 — حذف ثبت یک اموجی (اموجی معمولی بذار)\n" +
+  "• <code>/pe reset</code> — پاک کردن همه";
 
 /**
  * Handle the admin `/pe` command for registering premium custom emoji.
  * - `/pe` (no emoji): shows help + current registration status.
+ * - `/pe list`: shows the full known-emoji list with per-emoji status.
  * - `/pe reset`: clears all registered premium emoji.
+ * - `/pe del <emoji>`: removes the registration for the given base emoji(s).
  * - `/pe <premium emojis>`: reads custom_emoji_id from the message entities and
- *   stores a base-emoji → id mapping so pe() can render the animated versions.
+ *   stores a base-emoji → id mapping. The central send-time transform then makes
+ *   those emoji animated everywhere (messages + inline buttons).
  * @param env - The worker environment containing the D1 database binding
  * @param message - The incoming Telegram message (must contain the entities)
  * @returns void
@@ -50,46 +41,25 @@ export async function handlePremiumEmojiCommand(env: Env, message: TelegramMessa
     return;
   }
 
-  // /pe pack <shortName> — auto-register from a public custom emoji sticker pack.
-  if (arg.startsWith("pack ")) {
-    const packName = arg.slice(5).trim();
-    if (!packName) {
-      await sendMessage(env, chatId, "❌ نام پک رو بنویس. مثال: <code>/pe pack AnimatedEmojies</code>");
-      return;
-    }
-    await sendMessage(env, chatId, `⏳ در حال دریافت اطلاعات پک <b>${packName}</b>...`);
-    const stickerSet = await getStickerSet(env, packName);
-    if (!stickerSet || !stickerSet.ok || !stickerSet.result) {
-      const desc = stickerSet?.description ?? "خطای شبکه";
-      await sendMessage(env, chatId, `❌ پک پیدا نشد: <code>${desc}</code>\n\nمطمئن شو نام کوتاه پک رو درست نوشتی.`);
-      return;
-    }
-    if (stickerSet.result.sticker_type !== "custom_emoji") {
-      await sendMessage(
-        env, chatId,
-        `⚠️ پک <b>${packName}</b> از نوع <b>${stickerSet.result.sticker_type}</b> هست، نه custom_emoji.\n` +
-        "برای ثبت اموجی، پکی که در تلگرام به عنوان «اموجی سفارشی» نمایش داده می‌شه لازمه."
-      );
-      return;
-    }
+  if (arg === "list") {
+    await sendMessage(env, chatId, buildFullList());
+    return;
+  }
+
+  // /pe del <emoji ...> — unregister specific base emoji (plain emoji, not premium).
+  if (arg.startsWith("del")) {
+    const rest = arg.slice(3).trim();
     const map = { ...getEmojiMap() };
-    let added = 0;
-    let matched = 0;
-    for (const sticker of stickerSet.result.stickers) {
-      if (!sticker.emoji || !sticker.custom_emoji_id) continue;
-      matched++;
-      const key = norm(sticker.emoji);
-      if (USED_EMOJIS_SET.has(key) || USED_EMOJIS_SET.has(sticker.emoji)) {
-        map[key] = sticker.custom_emoji_id;
-        added++;
+    let removed = 0;
+    // Match any registered key that appears in the rest of the message.
+    for (const key of Object.keys(map)) {
+      if (rest.includes(key)) {
+        delete map[key];
+        removed++;
       }
     }
     await saveEmojiMap(env, map);
-    await sendMessage(
-      env, chatId,
-      `✅ از پک <b>${stickerSet.result.title}</b> — ${matched} اموجی بررسی شد، <b>${added}</b> اموجی مرتبط ثبت شد!\n\n` +
-      buildStatus()
-    );
+    await sendMessage(env, chatId, `🗑 <b>${removed}</b> اموجی از حالت پرمیوم خارج شد.\n\n` + buildStatus());
     return;
   }
 
@@ -111,7 +81,7 @@ export async function handlePremiumEmojiCommand(env: Env, message: TelegramMessa
   for (const e of customs) {
     const base = text.substring(e.offset, e.offset + e.length);
     if (base) {
-      map[norm(base)] = e.custom_emoji_id as string;
+      map[normEmoji(base)] = e.custom_emoji_id as string;
       added++;
     }
   }
@@ -120,26 +90,38 @@ export async function handlePremiumEmojiCommand(env: Env, message: TelegramMessa
   await sendMessage(
     env,
     chatId,
-    `✅ <b>${added}</b> اموجی پرمیوم ثبت شد!\n\n` + buildStatus()
+    `✅ <b>${added}</b> اموجی پرمیوم ثبت شد! حالا همه‌جای ربات متحرکن.\n\n` + buildStatus()
   );
 }
 
-/** Build a status line showing which of the bot's emojis are registered. */
+/** Build a short summary of how many emoji are registered. */
 function buildStatus(): string {
-  const map = getEmojiMap();
-  const registered: string[] = [];
-  const seeded: string[] = [];
-  const missing: string[] = [];
-  for (const e of USED_EMOJIS) {
-    const key = norm(e);
-    if (map[key]) registered.push(e);
-    else if (SEED_IDS[key] || SEED_IDS[e]) seeded.push(e);
-    else missing.push(e);
-  }
-  const total = registered.length + seeded.length;
-  let s = `📊 وضعیت: <b>${total}</b> از <b>${USED_EMOJIS.length}</b> فعال\n`;
-  if (registered.length > 0) s += `\n✅ ثبت‌شده توسط شما: ${registered.join(" ")}`;
-  if (seeded.length > 0) s += `\n🌱 پیش‌فرض (seed): ${seeded.join(" ")}`;
-  if (missing.length > 0) s += `\n⬜️ هنوز ثبت نشده: ${missing.join(" ")}`;
+  const count = Object.keys(getEmojiMap()).length;
+  const registered = registeredKnownEmojis();
+  let s = `📊 درمجموع <b>${count}</b> اموجی پرمیوم ثبت شده.`;
+  if (registered.length > 0) s += `\n✅ ${registered.join(" ")}`;
+  s += `\n\nℹ️ برای دیدن لیست کامل اموجی‌های ربات: <code>/pe list</code>`;
   return s;
+}
+
+/** Build the full known-emoji list, marking each as registered or not. */
+function buildFullList(): string {
+  const map = getEmojiMap();
+  const done: string[] = [];
+  const todo: string[] = [];
+  for (const e of KNOWN_EMOJIS) {
+    if (map[normEmoji(e)]) done.push(e);
+    else todo.push(e);
+  }
+  let s = `📋 <b>اموجی‌های ربات</b> (${done.length} از ${KNOWN_EMOJIS.length} پرمیوم)\n\n`;
+  s += `✅ <b>پرمیوم‌شده:</b>\n${done.length ? done.join(" ") : "— هنوز هیچ‌کدوم —"}\n\n`;
+  s += `⬜️ <b>هنوز معمولی:</b>\n${todo.join(" ")}\n\n`;
+  s += `برای پرمیوم‌کردن هرکدوم، نسخه‌ی متحرکش رو با <code>/pe</code> بفرست.`;
+  return s;
+}
+
+/** The KNOWN_EMOJIS that currently have a registered premium id. */
+function registeredKnownEmojis(): string[] {
+  const map = getEmojiMap();
+  return KNOWN_EMOJIS.filter((e) => map[normEmoji(e)]);
 }

@@ -63,8 +63,8 @@ export async function showLeaderboardHome(env: Env, chatId: number): Promise<voi
   const text = `${pe("🏆")} <b>لیدربورد</b>\n\nکدوم بخش رو می‌خوای ببینی؟`;
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success", icon_custom_emoji_id: "5453969572354878595" }],
-      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu`, style: "primary", icon_custom_emoji_id: "5368324170671202286" }],
+      [{ text: LB_BTN_XP, callback_data: `${CB_PREFIX.LEADERBOARD}:xp_menu`, style: "success" }],
+      [{ text: LB_BTN_STREAK, callback_data: `${CB_PREFIX.LEADERBOARD}:streak_menu`, style: "primary" }],
     ],
   };
 
