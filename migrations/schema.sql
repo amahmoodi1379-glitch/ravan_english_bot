@@ -12,7 +12,7 @@
 -- • When you change the schema: add a new migration in migrations/ AND update
 --   this file to match. They must never disagree. See .kiro/steering/database.md
 --
--- Last consolidated: migration 0028 (first-answer stats).
+-- Last consolidated: migration 0030 (word-question reports).
 -- ============================================================================
 
 
@@ -132,6 +132,25 @@ CREATE TABLE IF NOT EXISTS word_questions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_word_questions_word ON word_questions(word_id);
+
+
+-- ============== USER REPORTS FOR WORD-TEST QUESTIONS (0030) ==============
+-- Users flag a buggy Leitner word-test question after answering it. The
+-- UNIQUE(question_id, user_id) constraint makes the report "counter" equal the
+-- number of distinct reporters (a single user can't inflate it). Admins reset a
+-- question's counter (after fixing) by deleting its rows here.
+CREATE TABLE IF NOT EXISTS word_question_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(question_id, user_id),
+  FOREIGN KEY (question_id) REFERENCES word_questions(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wqr_question ON word_question_reports(question_id);
+CREATE INDEX IF NOT EXISTS idx_wqr_created ON word_question_reports(created_at);
 
 
 -- ========== HISTORY OF WORD QUESTIONS SHOWN/ANSWERED PER USER ==========
