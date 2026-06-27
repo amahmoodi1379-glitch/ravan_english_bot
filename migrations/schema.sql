@@ -528,3 +528,61 @@ CREATE TABLE IF NOT EXISTS admin_bot_state (
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_bot_state_updated ON admin_bot_state(updated_at);
+
+
+-- ============================== LETTERS (نامه‌ها) ===============================
+-- Standalone anonymous letters between subscribers. A new letter fans out to up
+-- to 5 eligible recipients, each becoming an independent 1:1 thread. Recipients
+-- can reply (unlimited) or block the sender. Identity is never revealed — only
+-- the nickname snapshot stored on each message. See migrations/0031_letters.sql.
+
+-- Per-user letters settings + onboarding marker. No row = not yet onboarded.
+CREATE TABLE IF NOT EXISTS letter_users (
+  user_id               INTEGER PRIMARY KEY,        -- FK users.id (app-enforced)
+  nickname              TEXT NOT NULL,
+  notif_enabled         INTEGER NOT NULL DEFAULT 1, -- 1 = send separate notif on new letter/reply
+  receiving_disabled_at TEXT,                       -- NULL = receiving enabled; set = disabled (7-day lock from this ts)
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One row per (sender, recipient) 1:1 conversation. A new-letter fan-out makes up to 5.
+CREATE TABLE IF NOT EXISTS letter_threads (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_a_id       INTEGER NOT NULL,                 -- the original letter SENDER
+  user_b_id       INTEGER NOT NULL,                 -- the RECIPIENT
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  last_message_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_letter_threads_a ON letter_threads(user_a_id);
+CREATE INDEX IF NOT EXISTS idx_letter_threads_b ON letter_threads(user_b_id);
+
+-- One row per actual message (original letter or reply). This row IS the delivery record.
+CREATE TABLE IF NOT EXISTS letter_messages (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id         INTEGER NOT NULL,
+  sender_user_id    INTEGER NOT NULL,
+  recipient_user_id INTEGER NOT NULL,
+  sender_nickname   TEXT NOT NULL,                  -- SNAPSHOT at send time (never joined live)
+  body              TEXT NOT NULL,
+  is_reply          INTEGER NOT NULL DEFAULT 0,     -- 0 = original letter, 1 = reply
+  ref_message_id    INTEGER,                        -- the message this replies to (for quote); NULL for originals
+  is_read           INTEGER NOT NULL DEFAULT 0,
+  replied_at        TEXT,                           -- set when the recipient has replied to THIS message
+  created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_letter_msg_recipient ON letter_messages(recipient_user_id, is_reply, created_at);
+CREATE INDEX IF NOT EXISTS idx_letter_msg_thread ON letter_messages(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_letter_msg_created ON letter_messages(created_at);
+
+-- Two-way block on REAL account ids (survives nickname changes).
+CREATE TABLE IF NOT EXISTS letter_blocks (
+  blocker_user_id INTEGER NOT NULL,
+  blocked_user_id INTEGER NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (blocker_user_id, blocked_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_letter_blocks_blocked ON letter_blocks(blocked_user_id);

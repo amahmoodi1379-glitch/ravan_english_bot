@@ -89,6 +89,19 @@ export default {
         console.error("Cleanup expired quiz links error:", err);
       }
 
+      // Letters: 30-day retention. Delete old messages, then orphaned threads.
+      // (The 7-day "unanswered drops out of inbox" rule is a read-time filter,
+      // not a delete, so threads are never half-destroyed.)
+      try {
+        await execute(env, `DELETE FROM letter_messages WHERE created_at < datetime('now', '-30 days')`);
+        await execute(
+          env,
+          `DELETE FROM letter_threads WHERE id NOT IN (SELECT DISTINCT thread_id FROM letter_messages)`
+        );
+      } catch (err) {
+        console.error("Cleanup letters retention error:", err);
+      }
+
       // License expiration: deactivate users whose license has expired
       try {
         await execute(

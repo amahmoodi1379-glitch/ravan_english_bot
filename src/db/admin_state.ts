@@ -3,7 +3,7 @@ import { queryOne, execute } from "./client";
 
 const STATE_TTL_HOURS = 6;
 
-export type AdminStateScope = "admin" | "quiz";
+export type AdminStateScope = "admin" | "quiz" | "letters";
 
 export async function getAdminState<T>(
   env: Env,

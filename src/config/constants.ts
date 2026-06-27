@@ -42,7 +42,30 @@ export const CB_PREFIX = {
   LEITNER_LESSON_STOP: "lls",
   JOIN_CHECK: "jck",
   REMINDER_OPEN: "rmo",
+  LETTERS_HOME: "lt",
+  LETTER_INBOX: "lti",
+  LETTER_OPEN: "lto",
+  LETTER_REPLY: "ltr",
+  LETTER_BLOCK: "ltb",
+  LETTER_BLOCK_CONFIRM: "ltbc",
+  LETTER_SETTINGS: "lts",
+  LETTER_NOTIF_TOGGLE: "ltnt",
+  LETTER_DISABLE: "ltd",
+  LETTER_OPEN_PROACTIVE: "ltp",
 };
+
+/** Letters (نامه‌ها) feature limits and retention windows. */
+export const LETTERS = {
+  NICKNAME_MAX: 32,
+  BODY_MIN: 100,
+  BODY_MAX: 4096,
+  DAILY_NEW_LIMIT: 2,
+  FANOUT: 5,
+  INBOX_EXPIRY_DAYS: 7,
+  RETENTION_DAYS: 30,
+  DISABLE_LOCK_DAYS: 7,
+  QUOTE_CHARS: 80,
+} as const;
 
 export const LESSON_PICKER_PAGE_SIZE = 20;
 
