@@ -95,6 +95,18 @@ export async function showLettersMenu(env: Env, user: DbUser, chatId: number): P
       unreadLine,
     { reply_markup: getLettersMenuKeyboard() }
   );
+  // The glassy "you have mail" button the spec's P.S. asked for: an inline
+  // button carrying the live unread count + emoji, shown only when there's
+  // something new (reply keyboards can't show a live count, so this lives here).
+  if (unread > 0) {
+    await sendMessage(env, chatId, `👀 یه نگاه به صندوقت بنداز:`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `📬 نامه‌های رسیده (${faNum(unread)}) 🟢`, callback_data: `${CB_PREFIX.LETTER_INBOX}:1` }],
+        ],
+      },
+    });
+  }
 }
 
 /** Start the write-new-letter flow (validates quota & receiving state first). */
@@ -151,16 +163,32 @@ export async function showInbox(env: Env, user: DbUser, chatId: number): Promise
     return;
   }
 
-  const rows: InlineKeyboardButton[][] = items.map((m) => {
-    const tag = m.is_reply === 1 ? "💬 پاسخ" : "💌 نامه";
-    const unread = m.is_read === 0 ? "🟢 " : "";
-    const label = `${unread}${tag} از «${m.sender_nickname}»`;
-    return [{ text: label.slice(0, 60), callback_data: `${CB_PREFIX.LETTER_OPEN}:${m.id}` }];
-  });
+  // The three groups the spec asks for: unseen new letters, seen-but-unanswered
+  // letters, and new replies. (getInbox already drops answered items and letters
+  // older than 7 days, so each item falls into exactly one of these.)
+  const unseen = items.filter((m) => m.is_reply === 0 && m.is_read === 0);
+  const pending = items.filter((m) => m.is_reply === 0 && m.is_read === 1);
+  const replies = items.filter((m) => m.is_reply === 1);
 
-  await sendMessage(env, chatId, `📬 <b>نامه‌های رسیده</b>\n\nروی هرکدوم بزن تا بازش کنی 👇`, {
-    reply_markup: { inline_keyboard: rows },
-  });
+  const lines: string[] = [`📬 <b>نامه‌های رسیده</b>`, ``];
+  if (unseen.length) lines.push(`💌 نخونده: <b>${faNum(unseen.length)}</b>`);
+  if (pending.length) lines.push(`📭 دیده ولی بی‌پاسخ: <b>${faNum(pending.length)}</b>`);
+  if (replies.length) lines.push(`💬 پاسخ‌های جدید: <b>${faNum(replies.length)}</b>`);
+  lines.push(``, `روی هرکدوم بزن تا بازش کنی 👇`);
+
+  const rows: InlineKeyboardButton[][] = [];
+  const pushGroup = (group: typeof items, tag: string) => {
+    for (const m of group) {
+      const dot = m.is_read === 0 ? "🟢 " : "";
+      const label = `${dot}${tag} از «${m.sender_nickname}»`;
+      rows.push([{ text: label.slice(0, 60), callback_data: `${CB_PREFIX.LETTER_OPEN}:${m.id}` }]);
+    }
+  };
+  pushGroup(unseen, "💌 نامه");
+  pushGroup(pending, "💌 نامه");
+  pushGroup(replies, "💬 پاسخ");
+
+  await sendMessage(env, chatId, lines.join("\n"), { reply_markup: { inline_keyboard: rows } });
 }
 
 /** Render an opened message (letter or reply) with reply/block/back actions. */
