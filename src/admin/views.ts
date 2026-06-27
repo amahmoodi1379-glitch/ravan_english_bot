@@ -63,6 +63,9 @@ export function renderAdminLayout(title: string, content: string, section: strin
       <a href="/admin/licenses" style="margin-right: 8px;${
         section === "licenses" ? " font-weight:bold;" : ""
       }">لایسنس‌ها</a>
+      <a href="/admin/reports" style="margin-right: 8px;${
+        section === "reports" ? " font-weight:bold;" : ""
+      }">گزارش‌ها</a>
       <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;

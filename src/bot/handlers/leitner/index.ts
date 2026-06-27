@@ -1,6 +1,6 @@
 import { Env } from "../../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../../types";
-import { sendMessage, answerCallbackQuery } from "../../telegram-api";
+import { sendMessage, answerCallbackQuery, editMessageText } from "../../telegram-api";
 import { getOrCreateUser, DbUser } from "../../../db/users";
 import { pe } from "../../premium-emojis";
 import { queryOne, prepare, SqlGuard } from "../../../db/client";
@@ -18,6 +18,7 @@ import {
 } from "../../../db/leitner";
 import { formatAnswerStatsLine } from "../../../utils/answer_stats";
 import { prepareXpForLeitner, prepareXpForLeitnerDunno, checkAndUpdateStreak } from "../../../db/xp";
+import { recordWordQuestionReport } from "../../../db/word_reports";
 import {
   CB_PREFIX,
 } from "../../../config/constants";
@@ -34,6 +35,7 @@ import {
   exitButton,
   ignoreButton,
   unleechButton,
+  reportButton,
   homeButton,
   nextAndExitRows,
   getCorrectOptionText,
@@ -155,6 +157,15 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
         return;
       case CB_PREFIX.LEITNER_UNLEECH:
         await handleUnleech(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_REPORT:
+        await handleReportRequest(env, callbackQuery, chatId, parts);
+        return;
+      case CB_PREFIX.LEITNER_REPORT_CONFIRM:
+        await handleReportConfirm(env, callbackQuery, user, chatId, messageId, parts);
+        return;
+      case CB_PREFIX.LEITNER_REPORT_CANCEL:
+        await handleReportCancel(env, callbackQuery, chatId, messageId);
         return;
       case CB_PREFIX.LEITNER_NEW_LEVEL:
         await handleNewLevel(env, callbackQuery, user, chatId, messageId, parts);
@@ -305,7 +316,7 @@ async function handleDunno(
 
   const rows: InlineKeyboardButton[][] = [];
   if (mode === "leech") rows.push([unleechButton(question.id, mode)]);
-  rows.push([ignoreButton(question.id, mode)]);
+  rows.push([ignoreButton(question.id, mode), reportButton(question.id)]);
   rows.push([nextButton(mode)]);
   rows.push([exitButton(mode)]);
 
@@ -573,6 +584,83 @@ async function handleUnleech(
   );
 }
 
+async function handleReportRequest(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  chatId: number,
+  parts: string[]
+): Promise<void> {
+  const questionId = Number(parts[1]);
+  if (!Number.isFinite(questionId)) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  await answerCallbackQuery(env, callbackQuery.id);
+
+  // Send a SEPARATE confirmation message so the answer message (and its rating
+  // buttons) stays intact — the user must still be able to rate the word.
+  await sendMessage(
+    env,
+    chatId,
+    "🚩 می‌خوای این سوال رو برای بررسی به ادمین گزارش کنی؟\n\nاگه سوال یا گزینه‌ها اشکال داره، گزارشت کمک می‌کنه اصلاحش کنیم.",
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ بله، گزارش کن", callback_data: `${CB_PREFIX.LEITNER_REPORT_CONFIRM}:${questionId}`, style: "danger" },
+            { text: "❌ نه، بیخیال", callback_data: `${CB_PREFIX.LEITNER_REPORT_CANCEL}:1` },
+          ],
+        ],
+      },
+    }
+  );
+}
+
+async function handleReportConfirm(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  user: DbUser,
+  chatId: number,
+  messageId: number,
+  parts: string[]
+): Promise<void> {
+  const questionId = Number(parts[1]);
+  if (!Number.isFinite(questionId)) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const result = await recordWordQuestionReport(env, questionId, user.id);
+
+  let toast: string;
+  let finalText: string;
+  if (result === "created") {
+    toast = "گزارش ثبت شد ✅";
+    finalText = "✅ گزارش تو ثبت شد. ممنون که به بهتر شدن سوال‌ها کمک کردی! 🙏";
+  } else if (result === "duplicate") {
+    toast = "قبلاً گزارش کرده بودی 👍";
+    finalText = "🚩 این سوال رو قبلاً گزارش کرده بودی. ممنون!";
+  } else {
+    toast = "سوال پیدا نشد";
+    finalText = "❗️ این سوال دیگه در دسترس نیست.";
+  }
+
+  await answerCallbackQuery(env, callbackQuery.id, toast);
+  // Replace the confirmation message (also removes its buttons) with the result.
+  await editMessageText(env, chatId, messageId, finalText).catch(() => {});
+}
+
+async function handleReportCancel(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery,
+  chatId: number,
+  messageId: number
+): Promise<void> {
+  await answerCallbackQuery(env, callbackQuery.id, "لغو شد");
+  await editMessageText(env, chatId, messageId, "باشه، گزارش لغو شد.").catch(() => {});
+}
+
 async function handleNewLevel(
   env: Env,
   callbackQuery: TelegramCallbackQuery,
@@ -805,7 +893,7 @@ async function handleAnswer(
 
   const rows: InlineKeyboardButton[][] = [ratingButtons];
   if (mode === "leech") rows.push([unleechButton(question.id, mode)]);
-  rows.push([ignoreButton(question.id, mode)]);
+  rows.push([ignoreButton(question.id, mode), reportButton(question.id)]);
   rows.push([exitButton(mode)]);
 
   await sendMessage(env, chatId, replyText, { reply_markup: { inline_keyboard: rows } });

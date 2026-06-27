@@ -174,6 +174,15 @@ export function unleechButton(questionId: number, mode: ReviewMode): InlineKeybo
 }
 
 /**
+ * Create the "report question" inline keyboard button (flag a buggy test).
+ * @param questionId - The ID of the current question
+ * @returns An InlineKeyboardButton configured to start the report-confirm flow
+ */
+export function reportButton(questionId: number): InlineKeyboardButton {
+  return { text: "🚩 گزارش سوال", callback_data: `${CB_PREFIX.LEITNER_REPORT}:${questionId}` };
+}
+
+/**
  * Create the "home" inline keyboard button for returning to the leitner menu.
  * @returns An InlineKeyboardButton configured for the home/menu action
  */

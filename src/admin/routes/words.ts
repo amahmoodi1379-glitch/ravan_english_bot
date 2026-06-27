@@ -231,10 +231,11 @@ export async function handleWordRoutes(request: Request, env: Env, url: URL): Pr
     const returnTo = (form.get("return_to") || "").toString().trim();
     
     if (id) {
+      await execute(env, "DELETE FROM word_question_reports WHERE question_id = ?", [id]);
       await execute(env, "DELETE FROM user_word_question_history WHERE question_id = ?", [id]);
       await execute(env, "DELETE FROM word_questions WHERE id = ?", [id]);
     }
-    
+
     return redirect(getQuestionRedirectPath("word", wordId, returnTo));
   }
 
@@ -331,6 +332,7 @@ export async function handleWordRoutes(request: Request, env: Env, url: URL): Pr
     const id = Number(form.get("id"));
 
     if (id) {
+      await execute(env, `DELETE FROM word_question_reports WHERE question_id IN (SELECT id FROM word_questions WHERE word_id = ?)`, [id]);
       await execute(env, `DELETE FROM user_word_question_history WHERE word_id = ?`, [id]);
       await execute(env, `DELETE FROM user_words_sm2 WHERE word_id = ?`, [id]);
       await execute(env, `DELETE FROM word_questions WHERE word_id = ?`, [id]);
