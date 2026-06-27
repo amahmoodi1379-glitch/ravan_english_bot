@@ -183,11 +183,11 @@ interface MutableButton {
 }
 
 // On an inline/reply button the animated icon is always placed at the start of
-// the button (the visual end of RTL Persian text). These two EN-SPACEs sit
-// between the icon and the label so the animation isn't glued to the text.
+// the button (the visual end of RTL Persian text). This EN-SPACE sits between
+// the icon and the label so the animation isn't glued to the text.
 // EN-SPACE (U+2002) is used because clients don't trim it the way they trim
 // ordinary spaces.
-const ICON_GAP = "  ";
+const ICON_GAP = " ";
 
 /** Matches a single leading emoji cluster (emoji + modifiers / ZWJ sequence). */
 const LEAD_EMOJI = "\\p{Extended_Pictographic}(?:\\u200D\\p{Extended_Pictographic}|\\uFE0F|\\p{Emoji_Modifier})*";
