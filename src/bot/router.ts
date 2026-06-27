@@ -6,12 +6,17 @@ import {
   MAIN_MENU_BUTTON_TRAINING,
   MAIN_MENU_BUTTON_PROFILE,
   MAIN_MENU_BUTTON_LEADERBOARD,
+  MAIN_MENU_BUTTON_LETTERS,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
   PROFILE_MENU_BUTTON_SETTINGS,
   PROFILE_MENU_BUTTON_STATS,
-  PROFILE_MENU_BUTTON_SUMMARY
+  PROFILE_MENU_BUTTON_SUMMARY,
+  LETTERS_MENU_BUTTON_WRITE,
+  LETTERS_MENU_BUTTON_INBOX,
+  LETTERS_MENU_BUTTON_SETTINGS,
+  LETTERS_MENU_BUTTON_BACK
 } from "./keyboards";
 import { sendMessage, answerCallbackQuery, getChatMemberStatus } from "./telegram-api";
 import { handleStartCommand } from "./handlers/start";
@@ -47,6 +52,14 @@ import {
 import {
   handleAdminCommand
 } from "./handlers/admin";
+import {
+  showLettersEntry,
+  startWriteLetter,
+  showInbox,
+  showSettings,
+  handleLettersMessage,
+  handleLettersCallback
+} from "./handlers/letters";
 import { handleNewUserLicenseFlow, handleUnapprovedUserLicenseFlow } from "./handlers/license";
 import { checkAndCancelStaleSession } from "./handlers/reading";
 import { handlePremiumEmojiCommand } from "./handlers/premium_emoji_admin";
@@ -134,6 +147,19 @@ const leitnerPrefixes = new Set([
   CB_PREFIX.LEITNER_LESSON_STOP,
 ]);
 
+const lettersPrefixes = new Set([
+  CB_PREFIX.LETTERS_HOME,
+  CB_PREFIX.LETTER_INBOX,
+  CB_PREFIX.LETTER_OPEN,
+  CB_PREFIX.LETTER_REPLY,
+  CB_PREFIX.LETTER_BLOCK,
+  CB_PREFIX.LETTER_BLOCK_CONFIRM,
+  CB_PREFIX.LETTER_SETTINGS,
+  CB_PREFIX.LETTER_NOTIF_TOGGLE,
+  CB_PREFIX.LETTER_DISABLE,
+  CB_PREFIX.LETTER_OPEN_PROACTIVE,
+]);
+
 async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
   const data = callbackQuery.data ?? "";
   const prefix = data.split(":")[0];
@@ -195,6 +221,11 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
       return;
     }
     await handleQuizUserCallback(env, callbackQuery);
+    return;
+  }
+
+  if (lettersPrefixes.has(prefix)) {
+    await handleLettersCallback(env, callbackQuery);
     return;
   }
 
@@ -321,6 +352,11 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
+  // Letters free-text flows (nickname / letter body / reply body). Runs before
+  // nav matching so an in-progress letter body isn't mistaken for a menu tap.
+  // A tap on a registered menu button cancels the flow and falls through here.
+  if (await handleLettersMessage(env, user, update)) return;
+
   // A reply-keyboard button we animated arrives emoji-stripped; map it back to
   // its canonical label so the matching below keeps working. Non-menu text is
   // returned unchanged.
@@ -342,6 +378,28 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
   if (navText === MAIN_MENU_BUTTON_LEADERBOARD) {
     await showLeaderboardHome(env, chatId);
+    return;
+  }
+
+  if (navText === MAIN_MENU_BUTTON_LETTERS) {
+    await showLettersEntry(env, user, chatId);
+    return;
+  }
+
+  if (navText === LETTERS_MENU_BUTTON_WRITE) {
+    await startWriteLetter(env, user, chatId);
+    return;
+  }
+  if (navText === LETTERS_MENU_BUTTON_INBOX) {
+    await showInbox(env, user, chatId);
+    return;
+  }
+  if (navText === LETTERS_MENU_BUTTON_SETTINGS) {
+    await showSettings(env, user, chatId);
+    return;
+  }
+  if (navText === LETTERS_MENU_BUTTON_BACK) {
+    await sendMessage(env, chatId, "به منوی اصلی برگشتی 👇", { reply_markup: getMainMenuKeyboard() });
     return;
   }
 

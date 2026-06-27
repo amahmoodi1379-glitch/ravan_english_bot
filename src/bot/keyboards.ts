@@ -3,6 +3,7 @@ import { registerUserMenuLabels } from "./premium-emojis";
 export const MAIN_MENU_BUTTON_TRAINING = "🎮 تمرین‌ها";
 export const MAIN_MENU_BUTTON_PROFILE = "👤 پروفایل و آمار";
 export const MAIN_MENU_BUTTON_LEADERBOARD = "🏆 لیدربورد";
+export const MAIN_MENU_BUTTON_LETTERS = "💌 نامه‌ها";
 
 export const TRAINING_MENU_BUTTON_LEITNER = "🧠 لایتنر واژگان";
 export const TRAINING_MENU_BUTTON_READING = "📖 تست درک مطلب";
@@ -12,6 +13,11 @@ export const PROFILE_MENU_BUTTON_SETTINGS = "⚙️ تنظیمات پروفای�
 export const PROFILE_MENU_BUTTON_STATS = "📊 آمار فعالیت";
 export const PROFILE_MENU_BUTTON_SUMMARY = "🪪 خلاصه پروفایل";
 
+export const LETTERS_MENU_BUTTON_WRITE = "✍️ نوشتن نامه";
+export const LETTERS_MENU_BUTTON_INBOX = "📬 نامه‌های رسیده";
+export const LETTERS_MENU_BUTTON_SETTINGS = "⚙️ تنظیمات نامه‌ها";
+export const LETTERS_MENU_BUTTON_BACK = "🔙 بازگشت";
+
 // Animate (and canonicalise) only these user-facing reply-keyboard buttons.
 // Admin keyboards are intentionally excluded so their exact-text matching is
 // never affected by the premium-emoji transform.
@@ -19,12 +25,17 @@ registerUserMenuLabels([
   MAIN_MENU_BUTTON_TRAINING,
   MAIN_MENU_BUTTON_PROFILE,
   MAIN_MENU_BUTTON_LEADERBOARD,
+  MAIN_MENU_BUTTON_LETTERS,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
   PROFILE_MENU_BUTTON_SETTINGS,
   PROFILE_MENU_BUTTON_STATS,
   PROFILE_MENU_BUTTON_SUMMARY,
+  LETTERS_MENU_BUTTON_WRITE,
+  LETTERS_MENU_BUTTON_INBOX,
+  LETTERS_MENU_BUTTON_SETTINGS,
+  LETTERS_MENU_BUTTON_BACK,
 ]);
 
 interface ReplyKeyboardMarkup {
@@ -44,11 +55,28 @@ interface AdminReplyKeyboardMarkup {
  * @returns A Telegram ReplyKeyboardMarkup object for the main menu
  */
 export function getMainMenuKeyboard(): ReplyKeyboardMarkup {
+  // Two rows of two. Styles alternate so no two adjacent buttons (horizontally
+  // or vertically) share a colour: row1 success|primary, row2 primary|success.
   return {
     keyboard: [
-      [{ text: MAIN_MENU_BUTTON_TRAINING, style: "success" }],
-      [{ text: MAIN_MENU_BUTTON_LEADERBOARD, style: "primary" }],
-      [{ text: MAIN_MENU_BUTTON_PROFILE, style: "success" }]
+      [{ text: MAIN_MENU_BUTTON_TRAINING, style: "success" }, { text: MAIN_MENU_BUTTON_LEADERBOARD, style: "primary" }],
+      [{ text: MAIN_MENU_BUTTON_PROFILE, style: "primary" }, { text: MAIN_MENU_BUTTON_LETTERS, style: "success" }]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false
+  };
+}
+
+/**
+ * Build the letters sub-menu reply keyboard (write / inbox / settings / back).
+ * @returns A Telegram ReplyKeyboardMarkup object for the letters section
+ */
+export function getLettersMenuKeyboard(): ReplyKeyboardMarkup {
+  return {
+    keyboard: [
+      [{ text: LETTERS_MENU_BUTTON_WRITE, style: "success" }, { text: LETTERS_MENU_BUTTON_INBOX, style: "primary" }],
+      [{ text: LETTERS_MENU_BUTTON_SETTINGS }],
+      [{ text: LETTERS_MENU_BUTTON_BACK }]
     ],
     resize_keyboard: true,
     one_time_keyboard: false
