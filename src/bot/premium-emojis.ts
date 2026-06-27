@@ -182,38 +182,121 @@ interface MutableButton {
   [key: string]: unknown;
 }
 
+// On an inline/reply button the animated icon is always placed at the start of
+// the button (the visual end of RTL Persian text). These two EN-SPACEs sit
+// between the icon and the label so the animation isn't glued to the text.
+// EN-SPACE (U+2002) is used because clients don't trim it the way they trim
+// ordinary spaces.
+const ICON_GAP = "  ";
+
+/** Matches a single leading emoji cluster (emoji + modifiers / ZWJ sequence). */
+const LEAD_EMOJI = "\\p{Extended_Pictographic}(?:\\u200D\\p{Extended_Pictographic}|\\uFE0F|\\p{Emoji_Modifier})*";
+
 /**
- * For an inline keyboard, give each button whose text STARTS with a registered
- * emoji an animated `icon_custom_emoji_id`, stripping that leading emoji from
- * the text so it isn't shown twice. Buttons that already have an icon, or whose
- * leading emoji isn't registered, are left as-is. Reply keyboards are never
- * touched (their text is matched by the router).
+ * Normalise a button label for router matching: trim, drop a single leading
+ * emoji cluster (and the spaces around it), trim again. So "🎮 تمرین‌ها",
+ * "تمرین‌ها" and "تمرین‌ها  " all map to the same key.
+ */
+export function normalizeMenu(label: string): string {
+  let t = label.trim();
+  const m = t.match(new RegExp(`^(?:${LEAD_EMOJI})\\s*`, "u"));
+  if (m) t = t.slice(m[0].length);
+  return t.trim();
+}
+
+// Reply-keyboard labels that are safe to animate (the user-facing menus only).
+// Admin / dynamic keyboards are deliberately excluded so the router's exact
+// text matching for those never breaks. Populated by keyboards.ts at load time.
+const userMenuByNorm: Record<string, string> = {};
+
+/**
+ * Register the user-facing reply-keyboard button labels so they can be animated
+ * and canonicalised. Called once from keyboards.ts.
+ * @param labels - The full button label strings (with their emoji)
+ */
+export function registerUserMenuLabels(labels: string[]): void {
+  for (const l of labels) userMenuByNorm[normalizeMenu(l)] = l;
+}
+
+/**
+ * Map an incoming reply-keyboard tap back to its canonical label. A tapped
+ * button may arrive emoji-stripped (when we animated it) or full; either way
+ * this returns the original constant so the router's `text === CONSTANT` checks
+ * keep working. Non-menu text is returned unchanged.
+ * @param text - The incoming message text
+ * @returns The canonical menu label, or the text unchanged
+ */
+export function canonicalizeUserMenu(text: string): string {
+  return userMenuByNorm[normalizeMenu(text)] ?? text;
+}
+
+/** Strip a leading emoji of given length and add the icon/text gap. */
+function stripAndGap(label: string, emojiLen: number): string {
+  return label.slice(emojiLen).replace(/^\s+/, "") + ICON_GAP;
+}
+
+/**
+ * Animate keyboard buttons whose label STARTS with a registered emoji by moving
+ * that emoji into `icon_custom_emoji_id` (and stripping it from the text so it
+ * isn't shown twice):
+ *   - inline keyboards: every such button (safe — they use callback_data);
+ *   - reply keyboards: only the registered user-facing menu buttons, so the
+ *     router's exact-text matching for admin/dynamic keyboards is never touched.
  * @param replyMarkup - The reply_markup object (any shape)
- * @returns The same object, with inline buttons enriched in place
+ * @returns The same object, mutated in place
  */
 export function applyPremiumEmojiToMarkup<T>(replyMarkup: T): T {
   const re = buildEmojiRegex();
   if (!re) return replyMarkup;
 
-  const markup = replyMarkup as { inline_keyboard?: MutableButton[][] } | null | undefined;
-  const rows = markup?.inline_keyboard;
-  if (!Array.isArray(rows)) return replyMarkup;
-
-  // Anchored copy of the regex to test only the start of a button label.
+  // Anchored regex matching a registered emoji at the start of a label.
   const leadRe = new RegExp(`^(?:${re.source})`, "u");
+  const markup = replyMarkup as {
+    inline_keyboard?: MutableButton[][];
+    keyboard?: (MutableButton | string)[][];
+  } | null | undefined;
 
-  for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    for (const btn of row) {
-      if (!btn || typeof btn.text !== "string" || btn.icon_custom_emoji_id) continue;
-      const m = btn.text.match(leadRe);
-      if (!m) continue;
-      const id = emojiMap[normEmoji(m[0])];
-      if (!id) continue;
-      btn.icon_custom_emoji_id = id;
-      // Strip the leading emoji and a single following space.
-      btn.text = btn.text.slice(m[0].length).replace(/^\s/, "");
+  // Inline keyboards — animate any button starting with a registered emoji.
+  if (Array.isArray(markup?.inline_keyboard)) {
+    for (const row of markup.inline_keyboard) {
+      if (!Array.isArray(row)) continue;
+      for (const btn of row) {
+        if (!btn || typeof btn.text !== "string" || btn.icon_custom_emoji_id) continue;
+        const m = btn.text.match(leadRe);
+        if (!m) continue;
+        const id = emojiMap[normEmoji(m[0])];
+        if (!id) continue;
+        btn.icon_custom_emoji_id = id;
+        btn.text = stripAndGap(btn.text, m[0].length);
+      }
     }
   }
+
+  // Reply keyboards — only the known user-facing menu buttons.
+  if (Array.isArray(markup?.keyboard)) {
+    for (const row of markup.keyboard) {
+      if (!Array.isArray(row)) continue;
+      for (let j = 0; j < row.length; j++) {
+        const btn = row[j];
+        const label = typeof btn === "string"
+          ? btn
+          : (btn && typeof btn.text === "string" ? btn.text : null);
+        if (label === null) continue;
+        if (!(normalizeMenu(label) in userMenuByNorm)) continue;
+        const m = label.match(leadRe);
+        if (!m) continue;
+        const id = emojiMap[normEmoji(m[0])];
+        if (!id) continue;
+        const newText = stripAndGap(label, m[0].length);
+        if (typeof btn === "string") {
+          row[j] = { text: newText, icon_custom_emoji_id: id };
+        } else {
+          btn.text = newText;
+          btn.icon_custom_emoji_id = id;
+        }
+      }
+    }
+  }
+
   return replyMarkup;
 }

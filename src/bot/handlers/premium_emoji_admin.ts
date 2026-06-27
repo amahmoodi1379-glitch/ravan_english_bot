@@ -5,12 +5,13 @@ import { getEmojiMap, saveEmojiMap, normEmoji, KNOWN_EMOJIS } from "../premium-e
 
 const HELP_TEXT =
   "✨ <b>مدیریت اموجی پرمیوم</b>\n\n" +
-  "هر اموجی رو که ثبت کنی، ربات اون رو <b>همه‌جا</b> به‌صورت خودکار متحرک می‌کنه — " +
-  "هم داخل متن پیام‌ها، هم به‌عنوان آیکون دکمه‌های اینلاین.\n\n" +
-  "<b>روش ثبت:</b>\n" +
-  "یک پیام بفرست که با <code>/pe</code> شروع بشه و بعدش نسخه‌ی <b>پرمیوم (متحرک)</b> اموجی‌ها رو از کیبورد پرمیوم تلگرام بذاری:\n" +
-  "<code>/pe</code> 🔥🧠🏆⭐🎉👑💪✨\n\n" +
-  "ربات custom_emoji_id رو از پیام درمیاره و ذخیره می‌کنه. هر تعداد بخوای می‌تونی یک‌جا یا چندبار بفرستی.\n\n" +
+  "هر اموجی رو که ثبت کنی، ربات اون رو <b>همه‌جا</b> خودکار متحرک می‌کنه — " +
+  "هم داخل متن پیام‌ها، هم آیکون دکمه‌های اینلاین، هم منوی اصلی.\n\n" +
+  "<b>روش ثبت (مبدا → مقصد):</b>\n" +
+  "هر اموجیِ معمولیِ ربات رو بنویس و <b>بلافاصله</b> بعدش نسخه‌ی <b>پرمیوم (متحرک)</b> دلخواهت رو از کیبورد پرمیوم بذار:\n" +
+  "<code>/pe</code> 🔥<i>«پرمیوم»</i> ⭐<i>«پرمیوم»</i>\n\n" +
+  "یعنی «🔥 فعلی ربات رو با این اموجی متحرک جایگزین کن». هر تعداد جفت که بخوای پشت‌سرهم.\n\n" +
+  "<i>نکته:</i> اموجیِ مبدا رو از روی لیست ربات بردار (<code>/pe list</code>) تا دقیقاً همونی که توی رباته جایگزین شه.\n\n" +
   "<b>دستورات:</b>\n" +
   "• <code>/pe</code> — همین راهنما + وضعیت\n" +
   "• <code>/pe list</code> — لیست کامل اموجی‌های ربات و وضعیت هرکدوم\n" +
@@ -63,34 +64,55 @@ export async function handlePremiumEmojiCommand(env: Env, message: TelegramMessa
     return;
   }
 
-  // Extract custom_emoji entities (the premium emoji the admin just sent).
-  const customs = (message.entities ?? []).filter(
-    (e) => e.type === "custom_emoji" && e.custom_emoji_id
-  );
+  // Parse the message into an ordered list of source (plain) emoji and target
+  // (premium custom_emoji) tokens, then pair each source with the premium emoji
+  // that follows it: "/pe 🔥<prem> ⭐<prem>" → 🔥→premium, ⭐→premium.
+  const customs = (message.entities ?? [])
+    .filter((e) => e.type === "custom_emoji" && e.custom_emoji_id)
+    .sort((a, b) => a.offset - b.offset);
 
   if (customs.length === 0) {
     await sendMessage(env, chatId, HELP_TEXT + "\n\n" + buildStatus());
     return;
   }
 
-  // Merge new mappings. entity offset/length are UTF-16 code units, which is
-  // exactly what String.prototype.substring uses — so this extracts the base
-  // emoji that the premium emoji falls back to.
   const map = { ...getEmojiMap() };
   let added = 0;
-  for (const e of customs) {
-    const base = text.substring(e.offset, e.offset + e.length);
-    if (base) {
-      map[normEmoji(base)] = e.custom_emoji_id as string;
-      added++;
+  let pendingSource: string | null = null;
+  // Sticky regex matching one plain emoji cluster at the current position.
+  const srcRe = /\p{Extended_Pictographic}(?:‍\p{Extended_Pictographic}|️|\p{Emoji_Modifier})*/uy;
+
+  let i = 0;
+  while (i < text.length) {
+    const cust = customs.find((e) => i >= e.offset && i < e.offset + e.length);
+    if (cust) {
+      // Target premium emoji: pair it with the most recent plain source emoji.
+      // If none precedes it, fall back to its own base emoji (self-mapping).
+      const fallback = text.substring(cust.offset, cust.offset + cust.length);
+      const source = pendingSource ?? fallback;
+      if (source) {
+        map[normEmoji(source)] = cust.custom_emoji_id as string;
+        added++;
+      }
+      pendingSource = null;
+      i = cust.offset + cust.length;
+      continue;
     }
+    srcRe.lastIndex = i;
+    const m = srcRe.exec(text);
+    if (m && m.index === i) {
+      pendingSource = m[0];
+      i += m[0].length;
+      continue;
+    }
+    i++;
   }
 
   await saveEmojiMap(env, map);
   await sendMessage(
     env,
     chatId,
-    `✅ <b>${added}</b> اموجی پرمیوم ثبت شد! حالا همه‌جای ربات متحرکن.\n\n` + buildStatus()
+    `✅ <b>${added}</b> جایگزینی ثبت شد! حالا همه‌جای ربات متحرکن.\n\n` + buildStatus()
   );
 }
 
