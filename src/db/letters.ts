@@ -39,7 +39,6 @@ export interface LetterMessage {
 export interface EligibleRecipient {
   id: number;
   telegram_id: number;
-  nickname: string;
   notif_enabled: number;
   received_count: number;
 }
@@ -201,16 +200,20 @@ export async function countNewLettersToday(env: Env, userId: number): Promise<nu
 /**
  * Pick up to FANOUT eligible recipients for a new letter, prioritising those who
  * have received the fewest letters (ties broken randomly). Eligible = active
- * subscriber, not banned, receiving enabled, not blocked either way, not self.
+ * subscriber, not banned, receiving not disabled, not blocked either way, not
+ * self. Onboarding into Letters is NOT required to receive — a missing
+ * letter_users row means receiving is enabled and notifications are on
+ * (the LEFT JOIN + COALESCE below), matching the opt-out design of "disable
+ * receiving". A recipient picks a nickname later, the first time they reply.
  */
 export async function pickRecipients(env: Env, senderId: number): Promise<EligibleRecipient[]> {
   return await queryAll<EligibleRecipient>(
     env,
-    `SELECT u.id, u.telegram_id, lu.nickname, lu.notif_enabled,
+    `SELECT u.id, u.telegram_id, COALESCE(lu.notif_enabled, 1) AS notif_enabled,
             (SELECT COUNT(*) FROM letter_messages lm
                WHERE lm.recipient_user_id = u.id AND lm.is_reply = 0) AS received_count
      FROM users u
-     JOIN letter_users lu ON lu.user_id = u.id
+     LEFT JOIN letter_users lu ON lu.user_id = u.id
      WHERE u.is_approved = 1
        AND COALESCE(u.is_banned, 0) = 0
        AND u.id <> ?

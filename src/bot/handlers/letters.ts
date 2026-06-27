@@ -322,8 +322,18 @@ export async function handleLettersMessage(env: Env, user: DbUser, update: Teleg
       } else {
         await updateNickname(env, user.id, res.value);
       }
-      await deleteAdminState(env, user.telegram_id, "letters");
       await sendMessage(env, chatId, `اسم مستعارت ثبت شد: «${escapeHtml(res.value)}» ✅`);
+      // If the user was mid-reply (received a letter before ever onboarding),
+      // continue straight into writing that reply instead of dumping the menu.
+      if (state.refMessageId != null) {
+        await setAdminState<LettersState>(env, user.telegram_id, "letters", {
+          action: "await_reply_body",
+          refMessageId: state.refMessageId,
+        });
+        await sendMessage(env, chatId, `✍️ حالا پاسخت رو بنویس و بفرست:`);
+        return true;
+      }
+      await deleteAdminState(env, user.telegram_id, "letters");
       await showLettersMenu(env, user, chatId);
       return true;
     }
@@ -465,11 +475,26 @@ export async function handleLettersCallback(env: Env, cb: TelegramCallbackQuery)
         return;
       }
       await answerCallbackQuery(env, cb.id);
+      // A recipient may never have onboarded into Letters (they just received a
+      // letter). Ask for a nickname first, carrying the reply target along.
+      const lu = await getLetterUser(env, user.id);
+      if (!lu) {
+        await setAdminState<LettersState>(env, user.telegram_id, "letters", {
+          action: "await_nickname",
+          refMessageId: id,
+        });
+        await sendMessage(
+          env,
+          chatId,
+          `قبل از پاسخ، یه اسم مستعار برای خودت انتخاب کن (همین رو طرف مقابل می‌بینه، نه اسم واقعیت):`
+        );
+        return;
+      }
       await setAdminState<LettersState>(env, user.telegram_id, "letters", {
         action: "await_reply_body",
         refMessageId: id,
       });
-      await sendMessage(env, chatId, `✍️ پاسختت رو بنویس و بفرست:`);
+      await sendMessage(env, chatId, `✍️ پاسخت رو بنویس و بفرست:`);
       return;
     }
 
