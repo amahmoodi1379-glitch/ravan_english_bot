@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, queryAll, execute } from "./client";
+import { queryOne, queryAll, execute, prepare } from "./client";
 import { LETTERS, TIME_ZONE_OFFSET } from "../config/constants";
 
 /**
@@ -244,34 +244,35 @@ export async function sendNewLetter(
   body: string
 ): Promise<LetterDelivery[]> {
   const recipients = await pickRecipients(env, senderId);
-  const deliveries: LetterDelivery[] = [];
+  if (recipients.length === 0) return [];
 
-  for (const r of recipients) {
-    const threadRes = await execute(
-      env,
-      "INSERT INTO letter_threads (user_a_id, user_b_id) VALUES (?, ?)",
-      [senderId, r.id]
-    );
-    const threadId = lastRowId(threadRes);
+  // Batch 1: create one thread per recipient (no inter-dependencies).
+  const threadResults = await env.DB.batch(
+    recipients.map((r) =>
+      prepare(env, "INSERT INTO letter_threads (user_a_id, user_b_id) VALUES (?, ?)", [senderId, r.id])
+    )
+  );
+  const threadIds = threadResults.map((res) => lastRowId(res));
 
-    const msgRes = await execute(
-      env,
-      `INSERT INTO letter_messages
-         (thread_id, sender_user_id, recipient_user_id, sender_nickname, body, is_reply, ref_message_id)
-       VALUES (?, ?, ?, ?, ?, 0, NULL)`,
-      [threadId, senderId, r.id, senderNickname, body]
-    );
-    const messageId = lastRowId(msgRes);
+  // Batch 2: one original message per thread (each is its own delivery record).
+  const msgResults = await env.DB.batch(
+    recipients.map((r, i) =>
+      prepare(
+        env,
+        `INSERT INTO letter_messages
+           (thread_id, sender_user_id, recipient_user_id, sender_nickname, body, is_reply, ref_message_id)
+         VALUES (?, ?, ?, ?, ?, 0, NULL)`,
+        [threadIds[i], senderId, r.id, senderNickname, body]
+      )
+    )
+  );
 
-    deliveries.push({
-      recipientUserId: r.id,
-      telegramId: r.telegram_id,
-      messageId,
-      notifEnabled: r.notif_enabled === 1,
-    });
-  }
-
-  return deliveries;
+  return recipients.map((r, i) => ({
+    recipientUserId: r.id,
+    telegramId: r.telegram_id,
+    messageId: lastRowId(msgResults[i]),
+    notifEnabled: r.notif_enabled === 1,
+  }));
 }
 
 /**

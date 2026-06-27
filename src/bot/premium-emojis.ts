@@ -230,6 +230,18 @@ export function canonicalizeUserMenu(text: string): string {
   return userMenuByNorm[normalizeMenu(text)] ?? text;
 }
 
+/**
+ * Whether an incoming message is a registered user-facing reply-keyboard button
+ * (whether it arrived emoji-stripped or full). Use this — not
+ * `canonicalizeUserMenu(text) !== text` — to detect a menu tap, because a full
+ * canonical label canonicalises to itself and would be missed by that check.
+ * @param text - The incoming message text
+ * @returns True if the text maps to a registered menu button
+ */
+export function isUserMenuLabel(text: string): boolean {
+  return Object.prototype.hasOwnProperty.call(userMenuByNorm, normalizeMenu(text));
+}
+
 /** Strip a leading emoji of given length and add the icon/text gap. */
 function stripAndGap(label: string, emojiLen: number): string {
   return label.slice(emojiLen).replace(/^\s+/, "") + ICON_GAP;

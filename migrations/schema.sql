@@ -574,6 +574,7 @@ CREATE TABLE IF NOT EXISTS letter_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_letter_msg_recipient ON letter_messages(recipient_user_id, is_reply, created_at);
+CREATE INDEX IF NOT EXISTS idx_letter_msg_sender ON letter_messages(sender_user_id, is_reply, created_at);
 CREATE INDEX IF NOT EXISTS idx_letter_msg_thread ON letter_messages(thread_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_letter_msg_created ON letter_messages(created_at);
 

@@ -2,7 +2,7 @@ import { Env } from "../../types";
 import { TelegramUpdate, TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getLettersMenuKeyboard, getMainMenuKeyboard } from "../keyboards";
-import { canonicalizeUserMenu } from "../premium-emojis";
+import { isUserMenuLabel } from "../premium-emojis";
 import { escapeHtml } from "../../utils/html";
 import { CB_PREFIX, LETTERS } from "../../config/constants";
 import { DbUser, getUserByTelegramId } from "../../db/users";
@@ -301,8 +301,10 @@ export async function handleLettersMessage(env: Env, user: DbUser, update: Teleg
 
   const chatId = message!.chat.id;
 
-  // A reply-keyboard button tap cancels the in-progress flow; let the router handle it.
-  if (canonicalizeUserMenu(text) !== text) {
+  // A reply-keyboard button tap cancels the in-progress flow; let the router
+  // handle it. Detect via isUserMenuLabel (not canonicalize-equality), since a
+  // full canonical label canonicalises to itself and would otherwise be missed.
+  if (isUserMenuLabel(text)) {
     await deleteAdminState(env, user.telegram_id, "letters");
     return false;
   }
@@ -362,10 +364,11 @@ export async function handleLettersMessage(env: Env, user: DbUser, update: Teleg
         return true;
       }
 
-      await notifyNewLetters(env, deliveries);
+      // Confirm to the sender first for instant feedback, then fan out notifs.
       await sendMessage(env, chatId, `نامه‌ات فرستاده شد 💌\nاگه کسی جواب بده، همین‌جا بهت خبر می‌دم.`, {
         reply_markup: getLettersMenuKeyboard(),
       });
+      await notifyNewLetters(env, deliveries);
       return true;
     }
 
@@ -395,8 +398,9 @@ export async function handleLettersMessage(env: Env, user: DbUser, update: Teleg
         return true;
       }
 
-      await notifyReply(env, delivery, ref ? snippet(ref.body) : "—");
+      // Confirm to the replier first for instant feedback, then notify.
       await sendMessage(env, chatId, `پاسخت فرستاده شد 💬`, { reply_markup: getLettersMenuKeyboard() });
+      await notifyReply(env, delivery, ref ? snippet(ref.body) : "—");
       return true;
     }
   }
