@@ -50,7 +50,7 @@ import {
 import { handleNewUserLicenseFlow, handleUnapprovedUserLicenseFlow } from "./handlers/license";
 import { checkAndCancelStaleSession } from "./handlers/reading";
 import { handlePremiumEmojiCommand } from "./handlers/premium_emoji_admin";
-import { loadEmojiMap } from "./premium-emojis";
+import { loadEmojiMap, canonicalizeUserMenu } from "./premium-emojis";
 import { isAdmin } from "../db/admin";
 import { CB_PREFIX, REQUIRED_CHANNEL } from "../config/constants";
 import { getUserByTelegramId, getOrCreateUser, touchExistingUser } from "../db/users";
@@ -318,7 +318,12 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  if (text === MAIN_MENU_BUTTON_TRAINING) {
+  // A reply-keyboard button we animated arrives emoji-stripped; map it back to
+  // its canonical label so the matching below keeps working. Non-menu text is
+  // returned unchanged.
+  const navText = canonicalizeUserMenu(text);
+
+  if (navText === MAIN_MENU_BUTTON_TRAINING) {
     await sendMessage(
       env,
       chatId,
@@ -327,27 +332,27 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     );
     return;
   }
-  if (text === MAIN_MENU_BUTTON_PROFILE) {
+  if (navText === MAIN_MENU_BUTTON_PROFILE) {
     await showProfileHome(env, user, chatId);
     return;
   }
 
-  if (text === MAIN_MENU_BUTTON_LEADERBOARD) {
+  if (navText === MAIN_MENU_BUTTON_LEADERBOARD) {
     await showLeaderboardHome(env, chatId);
     return;
   }
 
-  if (text === TRAINING_MENU_BUTTON_LEITNER) {
+  if (navText === TRAINING_MENU_BUTTON_LEITNER) {
     await startLeitnerForUser(env, user, chatId);
     return;
   }
 
-  if (text === TRAINING_MENU_BUTTON_READING) {
+  if (navText === TRAINING_MENU_BUTTON_READING) {
     await startReadingMenuForUser(env, chatId, 1);
     return;
   }
 
-  if (text === TRAINING_MENU_BUTTON_BACK) {
+  if (navText === TRAINING_MENU_BUTTON_BACK) {
     await sendMessage(
       env,
       chatId,
@@ -357,15 +362,15 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  if (text === PROFILE_MENU_BUTTON_SETTINGS) {
+  if (navText === PROFILE_MENU_BUTTON_SETTINGS) {
     await showProfileSettings(env, user, chatId);
     return;
   }
-  if (text === PROFILE_MENU_BUTTON_STATS) {
+  if (navText === PROFILE_MENU_BUTTON_STATS) {
     await startProfileStats(env, chatId);
     return;
   }
-  if (text === PROFILE_MENU_BUTTON_SUMMARY) {
+  if (navText === PROFILE_MENU_BUTTON_SUMMARY) {
     await showProfileSummary(env, user, chatId);
     return;
   }
