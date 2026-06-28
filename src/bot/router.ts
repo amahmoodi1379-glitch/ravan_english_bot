@@ -19,6 +19,7 @@ import {
   LETTERS_MENU_BUTTON_BACK
 } from "./keyboards";
 import { sendMessage, answerCallbackQuery, getChatMemberStatus } from "./telegram-api";
+import { toJalaliString } from "../utils/jalali";
 import { handleStartCommand } from "./handlers/start";
 import {
   startLeitnerForUser,
@@ -324,7 +325,7 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
   if (user.is_banned) {
     const banMessage = user.banned_until
-      ? `🚫 حساب کاربری شما مسدود شده است.\nتاریخ رفع مسدودیت: ${new Date(user.banned_until).toLocaleDateString('fa-IR')}`
+      ? `🚫 حساب کاربری شما مسدود شده است.\nتاریخ رفع مسدودیت: ${toJalaliString(user.banned_until)}`
       : "🚫 حساب کاربری شما به طور دائمی مسدود شده است.";
 
     await sendMessage(env, chatId, banMessage);

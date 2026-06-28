@@ -55,16 +55,39 @@ export function toJalaliParts(date: Date): [number, number, number] {
 }
 
 /**
+ * Parse a date input to a Date with consistent UTC semantics.
+ *
+ * SQLite's datetime('now') yields "YYYY-MM-DD HH:MM:SS" with no timezone marker;
+ * `new Date()` would parse that as *local* time, which produces off-by-one days on
+ * non-UTC hosts (developer machines, CI). Normalize such strings to explicit UTC
+ * (replace the space with 'T' and append 'Z') so parsing is identical everywhere.
+ * Strings that already carry timezone info (trailing 'Z' or ±HH:MM, e.g. ISO from
+ * toISOString()) and Date objects are passed through unchanged.
+ */
+function parseToUtcDate(dateInput: string | Date): Date {
+  if (typeof dateInput !== 'string') return dateInput;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(dateInput)) {
+    return new Date(dateInput.replace(' ', 'T') + 'Z');
+  }
+  return new Date(dateInput);
+}
+
+/**
  * Convert an ISO date string (or Date) to a formatted Jalali date string.
  * @param dateInput - The date to convert (ISO string or Date object)
  * @param format - Output format: 'short' for "۱۴۰۳/۰۹/۱۵" or 'long' for "۱۵ آذر ۱۴۰۳" (defaults to 'long')
  * @returns The formatted Jalali date string, or '-' if the date is invalid
  */
 export function toJalaliString(dateInput: string | Date, format: 'short' | 'long' = 'long'): string {
-  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  const date = parseToUtcDate(dateInput);
   if (isNaN(date.getTime())) return '-';
 
-  const [jy, jm, jd] = gregorianToJalali(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  // Timestamps are stored in UTC. Shift to Iran wall-clock (UTC+3:30) and read the
+  // UTC fields, exactly like toJalaliParts — so the displayed Jalali day matches the
+  // Iran-local date used everywhere else in the app (reports, streaks, quotas) and
+  // does not depend on the host runtime's timezone (Cloudflare Workers runs in UTC).
+  const iran = new Date(date.getTime() + 3.5 * 60 * 60 * 1000);
+  const [jy, jm, jd] = gregorianToJalali(iran.getUTCFullYear(), iran.getUTCMonth() + 1, iran.getUTCDate());
 
   if (format === 'short') {
     const mm = jm < 10 ? `0${jm}` : `${jm}`;

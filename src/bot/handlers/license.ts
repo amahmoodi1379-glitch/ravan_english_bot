@@ -3,6 +3,7 @@ import { TelegramUser } from "../types";
 import { sendMessage } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import { queryOne, execute } from "../../db/client";
+import { toJalaliString } from "../../utils/jalali";
 
 /**
  * Extract the license code from user text, stripping the /start prefix if present.
@@ -47,7 +48,7 @@ export async function applyLicenseCode(
   let expireMessage = "";
   if (licenseInfo.expiration_days && licenseInfo.expiration_days > 0) {
     const expireDate = new Date(Date.now() + licenseInfo.expiration_days * 24 * 60 * 60 * 1000);
-    expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${expireDate.toLocaleDateString('fa-IR')})`;
+    expireMessage = `\n⏰ اعتبار لایسنس: ${licenseInfo.expiration_days} روز (تا ${toJalaliString(expireDate)})`;
   }
 
   await execute(env, `UPDATE users SET is_approved = 1 WHERE id = ?`, [user.id]);
