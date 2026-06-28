@@ -1,17 +1,24 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare, SqlGuard } from "./client";
 import { schedule, Rating, CardState, FsrsCard } from "../utils/fsrs";
-import { TIME_ZONE_OFFSET, LEITNER_LEECH_THRESHOLD } from "../config/constants";
+import { LEITNER_LEECH_THRESHOLD } from "../config/constants";
 
 /**
- * Produces an ISO 8601 formatted "now" expression for SQLite that matches
- * the format stored in next_review_date (from JS Date.toISOString()).
- * This allows sargable index-backed comparisons without wrapping the column.
+ * Produces an ISO 8601 formatted "now" expression for SQLite that matches both
+ * the format AND the time basis of next_review_date.
+ *
+ * next_review_date is always written in real UTC (JS `new Date().toISOString()`
+ * for new cards, and `addDaysToIso()` on a real-UTC instant for reviewed cards),
+ * so the due check is an instant-vs-instant comparison and must use real UTC too.
+ * No timezone offset is applied here: this is not a civil-day bucketing query, it
+ * compares the scheduled review instant against the current instant. (Applying an
+ * Iran offset would surface cards ~3.5h before their scheduled time.)
  *
  * Result format: 2024-01-15T10:30:00.000Z
- * SQLite strftime('%Y-%m-%dT%H:%M:%fZ', ...) produces this exact format.
+ * SQLite strftime('%Y-%m-%dT%H:%M:%fZ', 'now') produces this exact format, which
+ * allows sargable index-backed comparisons without wrapping the column.
  */
-const NOW_ISO = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '${TIME_ZONE_OFFSET}')`;
+const NOW_ISO = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 
 
 export interface DbWord {

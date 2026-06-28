@@ -64,7 +64,12 @@ export function toJalaliString(dateInput: string | Date, format: 'short' | 'long
   const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
   if (isNaN(date.getTime())) return '-';
 
-  const [jy, jm, jd] = gregorianToJalali(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  // Timestamps are stored in UTC. Shift to Iran wall-clock (UTC+3:30) and read the
+  // UTC fields, exactly like toJalaliParts — so the displayed Jalali day matches the
+  // Iran-local date used everywhere else in the app (reports, streaks, quotas) and
+  // does not depend on the host runtime's timezone (Cloudflare Workers runs in UTC).
+  const iran = new Date(date.getTime() + 3.5 * 60 * 60 * 1000);
+  const [jy, jm, jd] = gregorianToJalali(iran.getUTCFullYear(), iran.getUTCMonth() + 1, iran.getUTCDate());
 
   if (format === 'short') {
     const mm = jm < 10 ? `0${jm}` : `${jm}`;
