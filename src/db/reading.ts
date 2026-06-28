@@ -45,6 +45,22 @@ export async function getTextQuestionAnswerStats(
   return row ?? { correct: 0, incorrect: 0, total: 0 };
 }
 
+/**
+ * Count how many questions exist for a reading text.
+ * Used to size an exam session so that ALL of a text's questions are asked.
+ * @param env - The worker environment containing the D1 database binding
+ * @param textId - The reading text ID
+ * @returns The number of questions registered for the text
+ */
+export async function getTextQuestionCount(env: Env, textId: number): Promise<number> {
+  const row = await queryOne<{ cnt: number }>(
+    env,
+    `SELECT COUNT(*) AS cnt FROM text_questions WHERE text_id = ?`,
+    [textId]
+  );
+  return row?.cnt ?? 0;
+}
+
 export interface ReadingSession {
   id: number;
   user_id: number;
