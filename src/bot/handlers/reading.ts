@@ -1,6 +1,6 @@
 import { Env } from "../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
-import { sendMessage, answerCallbackQuery, editMessageText } from "../telegram-api";
+import { sendMessage, answerCallbackQuery, editMessageText, editMessageReplyMarkup } from "../telegram-api";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import {
   getReadingTextsCount,
@@ -15,14 +15,13 @@ import {
   getSessionStats,
   prepareUpdateSessionXp,
   getNewCorrectCount,
-  getTextQuestionAnswerStats,
+  getTextQuestionCount,
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
-import { formatAnswerStatsLine } from "../../utils/answer_stats";
 import { queryAll, queryOne, execute, prepare, SqlGuard } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
-import { CB_PREFIX, GAME_CONFIG, STALE_SESSION_HOURS } from "../../config/constants";
+import { CB_PREFIX, STALE_SESSION_HOURS } from "../../config/constants";
 import { getMainMenuKeyboard, getTrainingMenuKeyboard } from "../keyboards";
 import { optionLetterToNumber } from "../../utils/options";
 
@@ -33,6 +32,7 @@ interface SummaryQuestionRow {
   option_c: string;
   option_d: string;
   correct_option: string;
+  explanation_text: string | null;
   is_correct: number | null;
 }
 
@@ -209,38 +209,95 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
     return;
   }
 
-  // Handle text selection: numeric text ID
+  // Handle "start_<id>": user confirmed the prompt and wants to begin the exam.
+  if (value.startsWith("start_")) {
+    const startTextId = Number(value.replace("start_", ""));
+    if (!Number.isFinite(startTextId)) {
+      await answerCallbackQuery(env, callbackQuery.id);
+      return;
+    }
+
+    const user = await getOrCreateUser(env, callbackQuery.from);
+
+    // Cancel any existing active reading session for this user
+    const activeSession = await queryOne<ReadingSession>(
+      env,
+      `SELECT * FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
+      [user.id]
+    );
+    if (activeSession) {
+      await env.DB.prepare(`UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`).bind(activeSession.id).run();
+    }
+
+    // Size the session to the FULL set of questions for this text, so the user
+    // is asked every question (in random order), exam-style.
+    const questionCount = await getTextQuestionCount(env, startTextId);
+    if (questionCount === 0) {
+      await answerCallbackQuery(env, callbackQuery.id);
+      await editMessageText(env, chatId, messageId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
+      await sendMessage(env, chatId, "به منوی تمرین‌ها برمی‌گردی 👇", {
+        reply_markup: getTrainingMenuKeyboard()
+      });
+      return;
+    }
+
+    const session = await createReadingSession(env, user.id, startTextId, questionCount);
+
+    await answerCallbackQuery(env, callbackQuery.id, "آزمون شروع شد ✏️");
+
+    await editMessageText(
+      env,
+      chatId,
+      messageId,
+      `${pe("📖")} <b>آزمون درک مطلب شروع شد</b>\n` +
+        `این آزمون <b>${questionCount}</b> سوال داره.\n` +
+        `وسط آزمون درست/غلط رو نمی‌گیم؛ آخرش نتیجه و پاسخنامه‌ی کامل رو می‌بینی. موفق باشی ✍️`
+    );
+
+    const sent = await sendNextReadingQuestion(env, user, session, chatId);
+    if (!sent) {
+      await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️\nبه منوی تمرین‌ها برمی‌گردی 👇", {
+        reply_markup: getTrainingMenuKeyboard()
+      });
+    }
+    return;
+  }
+
+  // Handle text selection: numeric text ID -> show a "ready to start?" prompt.
   const textId = Number(value);
   if (!Number.isFinite(textId)) {
     await answerCallbackQuery(env, callbackQuery.id);
     return;
   }
 
-  const user = await getOrCreateUser(env, callbackQuery.from);
-
-  // Cancel any existing active reading session for this user
-  const activeSession = await queryOne<ReadingSession>(
-    env,
-    `SELECT * FROM reading_sessions WHERE user_id = ? AND status = 'in_progress'`,
-    [user.id]
-  );
-  if (activeSession) {
-    await env.DB.prepare(`UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`).bind(activeSession.id).run();
-  }
-
-  const session = await createReadingSession(env, user.id, textId, GAME_CONFIG.READING_QUESTION_COUNT);
-
+  const questionCount = await getTextQuestionCount(env, textId);
   await answerCallbackQuery(env, callbackQuery.id);
 
-  // Update the text list message to indicate selection
-  await editMessageText(env, chatId, messageId, `${pe("📖")} <b>تست درک مطلب شروع شد</b>\nبه سوال‌ها با دقت جواب بده ✍️`);
-
-  const sent = await sendNextReadingQuestion(env, user, session, chatId);
-  if (!sent) {
-    await sendMessage(env, chatId, "برای این متن هنوز سوالی ثبت نشده است ❗️\nبه منوی تمرین‌ها برمی‌گردی 👇", {
+  if (questionCount === 0) {
+    await editMessageText(env, chatId, messageId, "برای این متن هنوز سوالی ثبت نشده است ❗️");
+    await sendMessage(env, chatId, "به منوی تمرین‌ها برمی‌گردی 👇", {
       reply_markup: getTrainingMenuKeyboard()
     });
+    return;
   }
+
+  await editMessageText(
+    env,
+    chatId,
+    messageId,
+    `${pe("📖")} <b>تست درک مطلب</b>\n\n` +
+      `این متن <b>${questionCount}</b> سوال داره.\n` +
+      `سوال‌ها به‌صورت رندوم پشت‌سرهم میان و وسط آزمون جواب درست/غلط رو نشون نمی‌دیم؛ ` +
+      `آخرش نتیجه و پاسخنامه‌ی کامل رو می‌گیری.\n\nآماده‌ای شروع کنی؟ 👇`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ شروع آزمون", callback_data: `${CB_PREFIX.READING_TEXT}:start_${textId}` }],
+          [{ text: "◀️ بازگشت به منوی تمرین", callback_data: `${CB_PREFIX.READING_TEXT}:back` }]
+        ]
+      }
+    }
+  );
 }
 
 /**
@@ -341,27 +398,10 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     ).bind(session.id).run();
   }
 
-  await answerCallbackQuery(env, callbackQuery.id);
-
-  const correctNum = optionLetterToNumber(question.correct_option);
-
-  let replyText: string;
-  if (isCorrect) {
-    replyText =
-      `${pe("✨")} <b>آفرین! جواب درست بود</b> ✅\n\n` +
-      `✅ گزینه صحیح: <b>${correctNum}</b>`;
-  } else {
-    const chosenNum = optionLetterToNumber(chosenOption);
-    replyText =
-      `❌ <b>جواب درست نبود</b>\n\n` +
-      `گزینه انتخابی تو: <b>${chosenNum}</b>\n` +
-      `✅ جواب صحیح: <b>${correctNum}</b>`;
-  }
-
-  const answerStats = await getTextQuestionAnswerStats(env, question.id);
-  replyText += formatAnswerStatsLine(answerStats);
-
-  await sendMessage(env, chatId, replyText);
+  // Exam-style: no per-question feedback. Just confirm the answer was recorded
+  // and disable this question's buttons so it can't be answered again.
+  await answerCallbackQuery(env, callbackQuery.id, "✅ پاسخت ثبت شد");
+  await editMessageReplyMarkup(env, chatId, message.message_id);
 
   const freshSession = await getReadingSessionById(env, sessionId);
   if (!freshSession) {
@@ -370,15 +410,8 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
   const sent = await sendNextReadingQuestion(env, user, freshSession, chatId);
   if (!sent) {
-    const stats = await getSessionStats(env, freshSession.id);
-    const limit = freshSession.num_questions || 3;
-
-    if (stats.total >= limit) {
-      await sendReadingSummary(env, user, freshSession, chatId);
-    } else {
-      await sendMessage(env, chatId, "✅ تست به پایان رسید. نتیجه رو ببین 👇");
-      await sendReadingSummary(env, user, freshSession, chatId);
-    }
+    // All questions answered -> show the results and full answer key.
+    await sendReadingSummary(env, user, freshSession, chatId);
   }
 }
 
@@ -401,8 +434,14 @@ async function sendNextReadingQuestion(
     return false;
   }
 
+  // Progress indicator ("سوال X از N"). After recordQuestionShown, the history
+  // row count equals the index of the question we're about to show.
+  const shown = await getSessionStats(env, session.id);
+  const totalQuestions = session.num_questions || shown.total;
+  const progress = `<i>سوال ${shown.total} از ${totalQuestions}</i>`;
+
   const messageText =
-    `${pe("📖")} <b>${question.question_text}</b>\n\n` +
+    `${progress}\n${pe("📖")} <b>${question.question_text}</b>\n\n` +
     `1️⃣  ${question.option_a}\n` +
     `2️⃣  ${question.option_b}\n` +
     `3️⃣  ${question.option_c}\n` +
@@ -447,6 +486,7 @@ async function sendReadingSummary(
       q.option_c,
       q.option_d,
       q.correct_option,
+      q.explanation_text,
       h.is_correct
     FROM user_text_question_history h
     JOIN text_questions q ON q.id = h.question_id
@@ -506,18 +546,40 @@ async function sendReadingSummary(
     text += `${pe("⭐️")} XP دریافتی: <b>0</b> <i>(تکراری)</i>\n`;
   }
 
+  await sendMessage(env, chatId, text);
+
+  // Answer key (پاسخنامه): for each question show whether the user got it right,
+  // the correct option, and the descriptive explanation when the question has one.
+  // Sent in chunks because a full-text exam can have many questions and long
+  // explanations that exceed Telegram's per-message size limit.
   if (rows.length > 0) {
-    text += `\n📋 <b>پاسخنامه:</b>\n`;
-    rows.forEach((r, idx) => {
+    const blocks = rows.map((r, idx) => {
       const qNum = idx + 1;
       const correctOptionNum = optionLetterToNumber(r.correct_option);
       const correctText = getOptionTextForRow(r, r.correct_option);
       const status = r.is_correct === 1 ? "✅" : "❌";
-      text += `\n${qNum}) ${status} گزینه ${correctOptionNum}: <b>${correctText}</b>`;
+      let block = `${qNum}) ${status} گزینه ${correctOptionNum}: <b>${correctText}</b>`;
+      const explanation = (r.explanation_text ?? "").trim();
+      if (explanation) {
+        block += `\n   📝 ${explanation}`;
+      }
+      return block;
     });
-  }
 
-  await sendMessage(env, chatId, text);
+    const MAX_LEN = 3500;
+    let chunk = `📋 <b>پاسخنامه:</b>\n`;
+    for (const block of blocks) {
+      const piece = `\n${block}\n`;
+      if (chunk.length + piece.length > MAX_LEN) {
+        await sendMessage(env, chatId, chunk);
+        chunk = "";
+      }
+      chunk += piece;
+    }
+    if (chunk.trim().length > 0) {
+      await sendMessage(env, chatId, chunk);
+    }
+  }
 
   await sendMessage(env, chatId, `${pe("💪")} خسته نباشی! چه کار دیگه‌ای می‌خوای انجام بدی؟`, {
     reply_markup: getTrainingMenuKeyboard()

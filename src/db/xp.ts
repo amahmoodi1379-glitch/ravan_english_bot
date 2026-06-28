@@ -119,10 +119,15 @@ export function calculateAndPrepareXpForReading(
   const xpPerQuestion = XP_VALUES.READING_QUESTION;
   const baseXp = correct * xpPerQuestion;
 
+  // Bonus scales by accuracy ratio so it works for any number of questions
+  // (an exam now asks ALL of a text's questions, not a fixed 3).
+  // 100% correct -> perfect bonus; >= ~2/3 correct -> good bonus.
+  // This preserves the previous behaviour for the old 3-question exams
+  // (3/3 perfect, 2/3 good).
   let bonus = 0;
-  if (total === 3) {
-    if (correct === 3) bonus = XP_VALUES.READING_BONUS_PERFECT;
-    else if (correct === 2) bonus = XP_VALUES.READING_BONUS_GOOD;
+  if (total > 0) {
+    if (correct === total) bonus = XP_VALUES.READING_BONUS_PERFECT;
+    else if (correct / total >= 2 / 3) bonus = XP_VALUES.READING_BONUS_GOOD;
   }
 
   const totalXp = baseXp + bonus;
