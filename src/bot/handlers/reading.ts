@@ -341,6 +341,44 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     return;
   }
 
+  // Skip: the user chose to leave this question unanswered and move on.
+  // We mark the history row as processed (answered_at set) but keep is_correct
+  // NULL so it counts as "بدون پاسخ" in the summary, never as correct/wrong.
+  // No extra reads/writes beyond the single guarded UPDATE the answer path uses.
+  if (chosenOption === 'SKIP') {
+    const skipUser = await getOrCreateUser(env, callbackQuery.from);
+    const skipSession = await getReadingSessionById(env, sessionId);
+    if (!skipSession) {
+      await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.");
+      return;
+    }
+
+    const skipResult = await env.DB.prepare(
+      `UPDATE user_text_question_history
+       SET answered_at = ?
+       WHERE reading_session_id = ?
+         AND user_id = ?
+         AND question_id = ?
+         AND answered_at IS NULL`
+    )
+      .bind(new Date().toISOString(), skipSession.id, skipUser.id, questionId)
+      .run();
+
+    if (skipResult.meta.changes === 0) {
+      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً به این سوال رسیدگی شده!");
+      return;
+    }
+
+    await answerCallbackQuery(env, callbackQuery.id, "⏭ بدون پاسخ رد شد");
+    await editMessageReplyMarkup(env, chatId, message.message_id);
+
+    const sent = await sendNextReadingQuestion(env, skipUser, skipSession, chatId);
+    if (!sent) {
+      await sendReadingSummary(env, skipUser, skipSession, chatId);
+    }
+    return;
+  }
+
   const user = await getOrCreateUser(env, callbackQuery.from);
   const session = await getReadingSessionById(env, sessionId);
   if (!session) {
@@ -456,6 +494,9 @@ async function sendNextReadingQuestion(
         { text: "4️⃣", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:D`, style: "primary" }
       ],
       [
+        { text: "⏭ بی‌جواب رد کن", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:SKIP` }
+      ],
+      [
         { text: "❌ انصراف و خروج", callback_data: `${CB_PREFIX.READING_ANSWER}:${session.id}:${question.id}:CANCEL`, style: "danger" }
       ]
     ]
@@ -536,9 +577,15 @@ async function sendReadingSummary(
     await sendMessage(env, chatId, streakMsg);
   }
 
+  // Skipped = processed history rows the user chose to leave blank (is_correct NULL).
+  const skipped = rows.filter((r) => r.is_correct === null).length;
+
   let text = `${pe("📊")} <b>نتیجه‌ی تست درک مطلب</b>\n`;
   text += `━━━━━━━━━━━━━━\n`;
   text += `✅ پاسخ‌های درست: <b>${correct}</b> از <b>${total}</b>\n`;
+  if (skipped > 0) {
+    text += `⬜️ بدون پاسخ: <b>${skipped}</b>\n`;
+  }
 
   if (totalXp > 0) {
     text += `${pe("⭐️")} XP دریافتی: <b>+${totalXp}</b>\n`;
@@ -557,7 +604,7 @@ async function sendReadingSummary(
       const qNum = idx + 1;
       const correctOptionNum = optionLetterToNumber(r.correct_option);
       const correctText = getOptionTextForRow(r, r.correct_option);
-      const status = r.is_correct === 1 ? "✅" : "❌";
+      const status = r.is_correct === 1 ? "✅" : r.is_correct === 0 ? "❌" : "⬜️";
       let block = `${qNum}) ${status} گزینه ${correctOptionNum}: <b>${correctText}</b>`;
       const explanation = (r.explanation_text ?? "").trim();
       if (explanation) {
