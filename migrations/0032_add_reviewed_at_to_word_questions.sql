@@ -4,7 +4,7 @@
 -- hand it to a Claude chat for scientific review (multiple correct options, a
 -- wrong answer key marked correct, the target word/meaning missing from the
 -- options, etc.), then paste the corrections back to be applied in place.
---
+-- 
 -- This column tracks which questions have already been pulled into a review
 -- batch so each download returns only not-yet-reviewed rows (WHERE reviewed_at
 -- IS NULL), avoiding re-reviewing the same questions. It is set at download
