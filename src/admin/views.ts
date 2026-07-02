@@ -1,4 +1,5 @@
 import { escapeHtml } from "../utils/response";
+import { ReviewStats, ApplyCorrectionsResult } from "../db/word_questions";
 
 /** Row shape for word form rendering. */
 export interface WordFormRow {
@@ -66,6 +67,9 @@ export function renderAdminLayout(title: string, content: string, section: strin
       <a href="/admin/reports" style="margin-right: 8px;${
         section === "reports" ? " font-weight:bold;" : ""
       }">گزارش‌ها</a>
+      <a href="/admin/review" style="margin-right: 8px;${
+        section === "review" ? " font-weight:bold;" : ""
+      }">بازبینی کیفی</a>
       <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;
@@ -521,5 +525,171 @@ export function renderUserForm(user: UserFormRow, heading: string): string {
         <a href="/admin/users"><button type="button" class="secondary">انصراف</button></a>
       </div>
     </form>
+  `;
+}
+
+/**
+ * The English review prompt handed to a Claude chat. It explains the exported
+ * file format, the vocabulary-question styles, the scientific issues to look
+ * for, and the EXACT corrections-JSON shape the site re-imports.
+ */
+const WORD_REVIEW_PROMPT = `You are an expert ESL vocabulary-test reviewer. You will receive a JSON array of multiple-choice vocabulary test questions from a Persian-speaking learners' English app. Your job is to find questions that have a SCIENTIFIC/CORRECTNESS problem and return corrected versions of ONLY those questions.
+
+INPUT FORMAT
+Each item looks like this:
+{
+  "id": 123,                       // stable database id — you MUST echo it back unchanged
+  "word": "seed",                  // the target English word (ground truth)
+  "meaning": "دانه",               // the target Persian meaning (ground truth)
+  "synonyms": "...", "antonyms": "...",  // may be empty
+  "style": "en_to_fa",             // question style, see below
+  "question": "…",                 // the question stem shown to the learner
+  "options": { "A": "…", "B": "…", "C": "…", "D": "…" },
+  "correct": "A",                  // the letter currently marked correct
+  "explanation": "…"
+}
+
+QUESTION STYLES (what "correct" should be)
+- "en_to_fa": the English word is given; the correct option is its Persian meaning.
+- "fa_to_en": the Persian meaning is given; the correct option is the English word.
+- "definition_to_word": an English definition is given; the correct option is the word it defines.
+- "word_to_definition": the word is given; the correct option is its correct definition.
+- "cloze": a sentence with a blank; the correct option is the word/meaning that fits.
+
+WHAT COUNTS AS A PROBLEM (flag and fix)
+1. Wrong answer key: the option marked "correct" is not actually the right answer for this word/meaning.
+2. Multiple correct options: two or more options are acceptable answers (distractors that are true synonyms / equally correct).
+3. Missing correct answer: the correct English word (or its Persian meaning) required by the style is NOT present in any option, even though the question stem is fine.
+4. Duplicate options: two options are identical or mean the same thing.
+5. Style mismatch: the options do not match the declared style (e.g. an "en_to_fa" item whose options are English words).
+6. Nonsense / broken stem or an explanation that contradicts the marked answer.
+
+HOW TO FIX
+- Keep the question testing the SAME target word and the SAME style whenever possible.
+- Prefer the smallest change that makes the item correct and unambiguous: fix the answer key, replace a bad distractor, insert the missing correct option, or reword a broken stem.
+- Keep exactly 4 options. Keep them plausible, same part of speech, A2–B1 difficulty. Distractors must be clearly wrong.
+- IMPORTANT: keep the option order and A–D labels as given unless you must change an option's text. "correct" is the letter of the right option AFTER your edits. Do not shuffle just to shuffle.
+
+OUTPUT FORMAT (the website re-imports this automatically — follow EXACTLY)
+- Return ONLY a valid JSON array. No prose, no markdown, NO code fences.
+- Include ONLY the questions you changed. If a question is already fine, DO NOT include it.
+- If NOTHING needs fixing, return exactly: []
+- Each object must contain "id" plus ONLY the fields you changed. Allowed keys:
+  - "id" (integer, required — copy it from the input, unchanged)
+  - "question" (string, optional) — corrected stem
+  - "options" (object, optional) — MUST include all four keys "A","B","C","D" with non-empty strings if present
+  - "correct" (string, optional) — one of "A","B","C","D"
+  - "explanation" (string, optional)
+  - "style" (string, optional) — only if the declared style was wrong; one of en_to_fa, fa_to_en, definition_to_word, word_to_definition, cloze
+- Use straight double quotes. No trailing commas. Make sure "correct" points to the truly correct option after your edits.
+
+Example output:
+[
+  { "id": 123, "correct": "B", "explanation": "'seed' means دانه, which is option B." },
+  { "id": 145, "options": { "A": "کتاب", "B": "دانه", "C": "میز", "D": "درخت" }, "correct": "B" }
+]
+
+Here is the batch to review:
+`;
+
+/**
+ * Render the "بازبینی کیفی" (quality-control) admin page: batch stats, a
+ * download form, the copyable review prompt, the corrections paste/apply form,
+ * and a reset control.
+ * @param stats - Aggregate review counts
+ * @returns HTML for the review page body
+ */
+export function renderReviewPage(stats: ReviewStats): string {
+  const encodedPrompt = escapeHtml(WORD_REVIEW_PROMPT);
+  return `
+    <h2>بازبینی کیفی تست‌های واژه</h2>
+    <div style="background:#eff6ff; border:1px solid #bfdbfe; padding:12px; border-radius:8px; margin-bottom:16px; font-size:13px; line-height:1.9;">
+      کل تست‌ها: <b>${stats.total}</b> &nbsp;|&nbsp;
+      بازبینی‌شده: <b style="color:#166534;">${stats.reviewed}</b> &nbsp;|&nbsp;
+      باقی‌مانده: <b style="color:#b91c1c;">${stats.unreviewed}</b>
+    </div>
+
+    <div class="q-box" style="border:2px solid #2563eb; background:#eff6ff;">
+      <h3 style="margin-top:0;">۱) دانلود دسته برای بازبینی</h3>
+      <p style="font-size:12px; color:#555;">فایل JSON شامل تست‌های بازبینی‌نشده (به‌همراه واژه، معنی و پاسخ درست) دانلود می‌شود. با دانلود، همین تست‌ها «بازبینی‌شده» علامت می‌خورند تا در نوبت بعد تکرار نشوند.</p>
+      <form method="get" action="/admin/review/export" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <label style="margin:0;">اندازه‌ی دسته:</label>
+        <select name="size" style="width:auto; margin:0;">
+          <option value="500">۵۰۰</option>
+          <option value="750">۷۵۰</option>
+          <option value="1000">۱۰۰۰</option>
+        </select>
+        <button type="submit" style="background:#059669; color:white;" ${stats.unreviewed === 0 ? "disabled" : ""}>📥 دانلود فایل بازبینی</button>
+        ${stats.unreviewed === 0 ? '<span style="font-size:12px; color:#b91c1c;">همه‌ی تست‌ها بازبینی‌شده‌اند.</span>' : ""}
+      </form>
+    </div>
+
+    <div class="q-box" style="border:2px solid #0d9488; background:#f0fdfa;">
+      <h3 style="margin-top:0;">۲) پرامپت بازبینی برای Claude</h3>
+      <p style="font-size:12px; color:#555;">این پرامپت را کپی کن، بعد محتوای فایل دانلودشده را زیر آن در چت Claude پیست کن. خروجی JSON اصلاحی را در بخش ۳ پیست کن.</p>
+      <button type="button" id="btn-copy-review-prompt" style="background:#0d9488; color:white;">کپی پرامپت بازبینی</button>
+    </div>
+    <script type="text/template" id="tpl-review-prompt">${encodedPrompt}</script>
+    <script>
+    (function(){
+      function decode(id){
+        var el=document.getElementById(id);
+        if(!el)return '';
+        var d=document.createElement('textarea');
+        d.innerHTML=el.innerHTML;
+        return d.value;
+      }
+      function flash(btn){
+        var o=btn.textContent;
+        btn.textContent=decodeURIComponent('%E2%9C%85%20%DA%A9%D9%BE%DB%8C%20%D8%B4%D8%AF!');
+        setTimeout(function(){btn.textContent=o;},2000);
+      }
+      document.getElementById('btn-copy-review-prompt').addEventListener('click',function(){
+        var self=this;
+        navigator.clipboard.writeText(decode('tpl-review-prompt')).then(function(){flash(self);});
+      });
+    })();
+    </script>
+
+    <div class="q-box" style="border:2px solid #059669; background:#f0fdf4;">
+      <h3 style="margin-top:0;">۳) اعمال اصلاحات</h3>
+      <p style="font-size:12px; color:#555;">آرایه‌ی JSON اصلاحی که Claude برگردانده را اینجا پیست کن. فقط تست‌هایی که در آن آمده‌اند و id معتبر دارند به‌روزرسانی می‌شوند (بدون بُر خوردن گزینه‌ها).</p>
+      <form method="post" action="/admin/review/apply">
+        <textarea name="corrections_json" style="min-height:220px; width:100%; font-family:monospace; direction:ltr;" placeholder="[ { &quot;id&quot;: 123, &quot;correct&quot;: &quot;B&quot; } ]"></textarea>
+        <button type="submit" style="background:#059669; color:white; margin-top:10px;">✅ اعمال اصلاحات</button>
+      </form>
+    </div>
+
+    <div class="q-box" style="border-style:dashed;">
+      <h3 style="margin-top:0;">ریست وضعیت بازبینی</h3>
+      <p style="font-size:12px; color:#555;">اگر می‌خواهی همه‌ی تست‌ها دوباره قابل دانلود شوند (مثلاً فایل قبلی گم شد)، وضعیت «بازبینی‌شده» را پاک کن.</p>
+      <form method="post" action="/admin/review/reset" onsubmit="return confirm('وضعیت بازبینی همه‌ی تست‌ها پاک می‌شود و همه دوباره در صف دانلود قرار می‌گیرند. مطمئنی؟');">
+        <button type="submit" class="danger">پاک‌کردن وضعیت بازبینی همه</button>
+      </form>
+    </div>
+  `;
+}
+
+/**
+ * Render the result summary after applying corrections.
+ * @param result - The apply-corrections outcome
+ * @returns HTML for the result page body
+ */
+export function renderReviewResult(result: ApplyCorrectionsResult): string {
+  const invalidHtml = result.invalid.length
+    ? `<div style="margin-top:12px;"><b style="color:#b91c1c;">موارد رد‌شده (${result.invalid.length}):</b><ul style="font-size:12px; color:#b91c1c;">${result.invalid.map((m) => `<li>${escapeHtml(m)}</li>`).join("")}</ul></div>`
+    : "";
+  const notFoundHtml = result.notFoundIds.length
+    ? `<div style="margin-top:8px; font-size:12px; color:#92400e;">idهای یافت‌نشده: ${result.notFoundIds.join(", ")}</div>`
+    : "";
+  return `
+    <h2>نتیجه‌ی اعمال اصلاحات</h2>
+    <div style="background:#dcfce7; color:#166534; padding:12px; border-radius:8px; font-size:14px;">
+      ✅ ${result.updated} تست با موفقیت اصلاح شد.
+    </div>
+    ${result.updatedIds.length ? `<div style="margin-top:8px; font-size:12px; color:#166534;">idهای اصلاح‌شده: ${result.updatedIds.join(", ")}</div>` : ""}
+    ${notFoundHtml}
+    ${invalidHtml}
+    <div style="margin-top:16px;"><a href="/admin/review"><button type="button" class="secondary">← بازگشت به بازبینی کیفی</button></a></div>
   `;
 }
