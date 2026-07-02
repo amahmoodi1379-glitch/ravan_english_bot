@@ -128,10 +128,12 @@ CREATE TABLE IF NOT EXISTS word_questions (
   explanation_text TEXT,
   source TEXT NOT NULL DEFAULT 'ai',           -- ai / manual / seed
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  reviewed_at TEXT,                            -- set when pulled into a QC review batch; NULL = not yet reviewed (0032)
   FOREIGN KEY (word_id) REFERENCES words(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_word_questions_word ON word_questions(word_id);
+CREATE INDEX IF NOT EXISTS idx_word_questions_reviewed_at ON word_questions(reviewed_at, id);
 
 
 -- ============== USER REPORTS FOR WORD-TEST QUESTIONS (0030) ==============
