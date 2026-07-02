@@ -34,6 +34,13 @@ function makeFakeEnv(rows: Row[]): { env: Env; store: Map<number, Row> } {
         const id = Number(params[0]);
         return store.get(id) ?? null;
       },
+      async all() {
+        // SELECT ... WHERE id IN (?, ?, ...): each bound param is an id.
+        const results = params
+          .map((p) => store.get(Number(p)))
+          .filter((r): r is Row => r !== undefined);
+        return { results };
+      },
       async run() {
         return { meta: { changes: 1 } };
       },
@@ -146,6 +153,42 @@ describe("applyWordQuestionCorrections", () => {
     const res = await applyWordQuestionCorrections(env, [{ correct: "B" } as unknown]);
     expect(res.updated).toBe(0);
     expect(res.invalid.length).toBe(1);
+  });
+
+  it("does not crash on null / non-object entries and reports them as invalid", async () => {
+    const { env, store } = makeFakeEnv([baseRow(1)]);
+    const res = await applyWordQuestionCorrections(env, [
+      null as unknown,
+      "oops" as unknown,
+      [1, 2, 3] as unknown,
+      { id: 1, correct: "B" }
+    ]);
+    expect(res.updated).toBe(1);
+    expect(res.invalid.length).toBe(3);
+    expect(store.get(1)!.correct_option).toBe("B");
+  });
+
+  it("rejects a boolean id instead of coercing true to 1", async () => {
+    const { env, store } = makeFakeEnv([baseRow(1)]);
+    const res = await applyWordQuestionCorrections(env, [{ id: true, correct: "B" } as unknown]);
+    expect(res.updated).toBe(0);
+    expect(res.invalid.length).toBe(1);
+    expect(store.get(1)!.correct_option).toBe("A"); // id 1 untouched
+  });
+
+  it("accepts a numeric-string id", async () => {
+    const { env, store } = makeFakeEnv([baseRow(1)]);
+    const res = await applyWordQuestionCorrections(env, [{ id: "1", correct: "B" } as unknown]);
+    expect(res.updated).toBe(1);
+    expect(store.get(1)!.correct_option).toBe("B");
+  });
+
+  it("rejects a non-string 'correct' (e.g. an array) instead of coercing it", async () => {
+    const { env, store } = makeFakeEnv([baseRow(1)]);
+    const res = await applyWordQuestionCorrections(env, [{ id: 1, correct: ["A"] } as unknown]);
+    expect(res.updated).toBe(0);
+    expect(res.invalid.length).toBe(1);
+    expect(store.get(1)!.correct_option).toBe("A");
   });
 
   it("rejects an unknown style but keeps a valid one", async () => {

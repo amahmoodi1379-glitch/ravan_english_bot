@@ -56,6 +56,36 @@ export interface WordQuestionCorrection {
   style?: string;
 }
 
+/** Existing word-question fields needed to overlay a correction. */
+interface ExistingWordQuestionRow {
+  id: number;
+  option_a: string;
+  option_b: string;
+  option_c: string;
+  option_d: string;
+  correct_option: string;
+  question_text: string;
+  explanation_text: string | null;
+  question_style: string;
+}
+
+/**
+ * Coerce a correction's `id` to a positive integer, rejecting booleans, floats,
+ * and non-numeric strings (so e.g. `true` never becomes id 1).
+ * @param v - The raw id value from parsed JSON
+ * @returns The positive integer id, or null if invalid
+ */
+function parseQuestionId(v: unknown): number | null {
+  if (typeof v === "number") {
+    return Number.isInteger(v) && v > 0 ? v : null;
+  }
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+    const n = Number(v.trim());
+    return n > 0 ? n : null;
+  }
+  return null;
+}
+
 /** Outcome of applying a batch of corrections. */
 export interface ApplyCorrectionsResult {
   updated: number;
@@ -225,29 +255,42 @@ export async function applyWordQuestionCorrections(
   const statements: D1PreparedStatement[] = [];
   const stagedIds: number[] = [];
 
+  // Phase 1: validate the shape of each entry (skip null / non-object / bad id)
+  // and collect the ids so existing rows can be fetched in bulk.
+  const valid: Array<{ id: number; entry: Record<string, unknown> }> = [];
   for (const raw of corrections) {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      result.invalid.push(`ورودی نامعتبر (باید یک آبجکت باشد) رد شد: ${JSON.stringify(raw).slice(0, 80)}`);
+      continue;
+    }
     const entry = raw as Record<string, unknown>;
-    const id = Number(entry.id);
-    if (!Number.isInteger(id) || id <= 0) {
+    const id = parseQuestionId(entry.id);
+    if (id === null) {
       result.invalid.push(`ورودی بدون id معتبر رد شد: ${JSON.stringify(raw).slice(0, 80)}`);
       continue;
     }
+    valid.push({ id, entry });
+  }
 
-    const existing = await queryOne<{
-      option_a: string;
-      option_b: string;
-      option_c: string;
-      option_d: string;
-      correct_option: string;
-      question_text: string;
-      explanation_text: string | null;
-      question_style: string;
-    }>(
+  // Phase 2: fetch all referenced rows in chunks of REVIEW_BATCH_CHUNK using an
+  // IN (...) list, avoiding one round-trip per correction (N+1).
+  const existingById = new Map<number, ExistingWordQuestionRow>();
+  const uniqueIds = [...new Set(valid.map((v) => v.id))];
+  for (let i = 0; i < uniqueIds.length; i += REVIEW_BATCH_CHUNK) {
+    const chunk = uniqueIds.slice(i, i + REVIEW_BATCH_CHUNK);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = await queryAll<ExistingWordQuestionRow>(
       env,
-      `SELECT option_a, option_b, option_c, option_d, correct_option, question_text, explanation_text, question_style
-       FROM word_questions WHERE id = ?`,
-      [id]
+      `SELECT id, option_a, option_b, option_c, option_d, correct_option, question_text, explanation_text, question_style
+       FROM word_questions WHERE id IN (${placeholders})`,
+      chunk
     );
+    for (const r of rows) existingById.set(r.id, r);
+  }
+
+  // Phase 3: overlay each correction onto its existing row and stage an UPDATE.
+  for (const { id, entry } of valid) {
+    const existing = existingById.get(id);
     if (!existing) {
       result.notFoundIds.push(id);
       continue;
@@ -288,7 +331,7 @@ export async function applyWordQuestionCorrections(
     }
 
     if (!entryInvalid && entry.correct !== undefined) {
-      const letter = String(entry.correct).trim().toUpperCase();
+      const letter = typeof entry.correct === "string" ? entry.correct.trim().toUpperCase() : "";
       if (["A", "B", "C", "D"].includes(letter)) {
         correct = letter;
       } else {
@@ -297,7 +340,7 @@ export async function applyWordQuestionCorrections(
     }
 
     if (!entryInvalid && entry.style !== undefined) {
-      const s = String(entry.style).trim();
+      const s = typeof entry.style === "string" ? entry.style.trim() : "";
       if (ALLOWED_WORD_QUESTION_STYLES.includes(s)) {
         style = s;
       } else {
