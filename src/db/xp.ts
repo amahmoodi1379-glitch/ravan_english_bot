@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { prepare, SqlGuard } from "./client";
+import { prepare, SqlGuard, queryOne, execute } from "./client";
 import { XP_VALUES, TIME_ZONE_OFFSET } from "../config/constants";
 import { Rating } from "../utils/fsrs";
 
@@ -153,8 +153,16 @@ export async function checkAndUpdateStreak(env: Env, userId: number): Promise<st
   const TARGET_DAILY_TESTS = 5;
   const TIME_MODIFIER = TIME_ZONE_OFFSET;
 
-  const combined = await env.DB.prepare(`
-    SELECT
+  const combined = await queryOne<{
+    today_tests: number;
+    streak_count: number;
+    last_streak_date: string;
+    max_streak_record: number;
+    today_local: string;
+    yesterday_local: string;
+  }>(
+    env,
+    `SELECT
       (SELECT COUNT(*) FROM user_word_question_history
        WHERE user_id = ? AND context = 'leitner'
        AND date(answered_at, ?) = date('now', ?)) as today_tests,
@@ -164,8 +172,9 @@ export async function checkAndUpdateStreak(env: Env, userId: number): Promise<st
       date('now', ?) as today_local,
       date('now', ?, '-1 day') as yesterday_local
     FROM users u
-    WHERE u.id = ?
-  `).bind(userId, TIME_MODIFIER, TIME_MODIFIER, TIME_MODIFIER, TIME_MODIFIER, userId).first();
+    WHERE u.id = ?`,
+    [userId, TIME_MODIFIER, TIME_MODIFIER, TIME_MODIFIER, TIME_MODIFIER, userId]
+  );
 
   if (!combined) return null;
 
@@ -195,13 +204,15 @@ export async function checkAndUpdateStreak(env: Env, userId: number): Promise<st
 
   const newMaxStreak = Math.max(maxStreakRecord, newStreak);
 
-  await env.DB.prepare(`
-    UPDATE users
+  await execute(
+    env,
+    `UPDATE users
     SET streak_count = ?,
         last_streak_date = ?,
         max_streak_record = ?
-    WHERE id = ?
-  `).bind(newStreak, todayLocal, newMaxStreak, userId).run();
+    WHERE id = ?`,
+    [newStreak, todayLocal, newMaxStreak, userId]
+  );
 
   return message;
 }

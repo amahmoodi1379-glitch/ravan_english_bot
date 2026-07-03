@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, queryAll } from "./client";
+import { queryOne, queryAll, execute } from "./client";
 
 export type ReportResult = "created" | "duplicate" | "not_found";
 
@@ -28,9 +28,11 @@ export async function recordWordQuestionReport(
   );
   if (!question) return "not_found";
 
-  const res = await env.DB.prepare(
-    `INSERT OR IGNORE INTO word_question_reports (question_id, user_id) VALUES (?, ?)`
-  ).bind(questionId, userId).run();
+  const res = await execute(
+    env,
+    `INSERT OR IGNORE INTO word_question_reports (question_id, user_id) VALUES (?, ?)`,
+    [questionId, userId]
+  );
 
   return res.meta.changes > 0 ? "created" : "duplicate";
 }
@@ -113,8 +115,10 @@ export async function getPaginatedReportedQuestions(
  * @returns The number of report rows removed
  */
 export async function resetWordQuestionReports(env: Env, questionId: number): Promise<number> {
-  const res = await env.DB.prepare(
-    `DELETE FROM word_question_reports WHERE question_id = ?`
-  ).bind(questionId).run();
+  const res = await execute(
+    env,
+    `DELETE FROM word_question_reports WHERE question_id = ?`,
+    [questionId]
+  );
   return res.meta.changes || 0;
 }

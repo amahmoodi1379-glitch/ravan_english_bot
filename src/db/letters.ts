@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryOne, queryAll, execute, prepare } from "./client";
+import { queryOne, queryAll, execute, prepare, batch } from "./client";
 import { LETTERS, TIME_ZONE_OFFSET } from "../config/constants";
 
 /**
@@ -250,7 +250,7 @@ export async function sendNewLetter(
   if (recipients.length === 0) return [];
 
   // Batch 1: create one thread per recipient (no inter-dependencies).
-  const threadResults = await env.DB.batch(
+  const threadResults = await batch(env, 
     recipients.map((r) =>
       prepare(env, "INSERT INTO letter_threads (user_a_id, user_b_id) VALUES (?, ?)", [senderId, r.id])
     )
@@ -258,7 +258,7 @@ export async function sendNewLetter(
   const threadIds = threadResults.map((res) => lastRowId(res));
 
   // Batch 2: one original message per thread (each is its own delivery record).
-  const msgResults = await env.DB.batch(
+  const msgResults = await batch(env, 
     recipients.map((r, i) =>
       prepare(
         env,

@@ -44,7 +44,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * re-run — the reads and single-statement writes going through these wrappers
  * are idempotent from D1's perspective when the first attempt never landed.
  */
-async function withD1Retry<T>(op: () => Promise<T>, attempts = 3): Promise<T> {
+export async function withD1Retry<T>(op: () => Promise<T>, attempts = 3): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
@@ -110,6 +110,19 @@ export async function execute(
 ): Promise<D1Result> {
   const stmt = env.DB.prepare(sql).bind(...params);
   return await withD1Retry(() => stmt.run());
+}
+
+/**
+ * Execute a set of prepared statements as one atomic D1 batch, retrying on
+ * transient D1 errors. A D1 batch is all-or-nothing: on a transient
+ * storage-reset/connection-lost failure nothing was committed, so re-running
+ * the whole batch is safe and never double-applies.
+ * @param env - The worker environment containing the D1 database binding
+ * @param statements - The prepared statements to run together in order
+ * @returns The array of D1Results, one per statement
+ */
+export async function batch(env: Env, statements: D1PreparedStatement[]): Promise<D1Result[]> {
+  return await withD1Retry(() => env.DB.batch(statements));
 }
 
 /**

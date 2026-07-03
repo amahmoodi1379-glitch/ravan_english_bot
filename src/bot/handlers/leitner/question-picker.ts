@@ -2,7 +2,7 @@ import { Env } from "../../../types";
 import { InlineKeyboardButton } from "../../types";
 import { DbUser } from "../../../db/users";
 import { pe } from "../../premium-emojis";
-import { queryOne } from "../../../db/client";
+import { queryOne, withD1Retry } from "../../../db/client";
 import {
   pickNextReviewWord,
   pickNextNewWord,
@@ -218,13 +218,13 @@ export async function sendLeitnerQuestion(
 
     // Record that the user has seen this question (reset answered state so they can answer again).
     const now = new Date().toISOString();
-    await env.DB.prepare(
+    await withD1Retry(() => env.DB.prepare(
       `INSERT INTO user_word_question_history
         (user_id, word_id, question_id, context, shown_at)
        VALUES (?, ?, ?, 'leitner', ?)
        ON CONFLICT(user_id, question_id, context)
        DO UPDATE SET shown_at = excluded.shown_at, answered_at = NULL, is_correct = NULL`
-    ).bind(user.id, question.word_id, question.id, now).run();
+    ).bind(user.id, question.word_id, question.id, now).run());
 
     const messageText =
       `${pe("✏️")} <b>${question.question_text}</b>\n\n` +

@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryAll, queryOne, prepare } from "./client";
+import { queryAll, queryOne, prepare, batch } from "./client";
 
 /** Allowed reading-comprehension question types stored in text_questions.question_type. */
 const ALLOWED_TEXT_QUESTION_TYPES = [
@@ -132,7 +132,7 @@ export async function insertTextQuestions(
   }
 
   if (statements.length > 0) {
-    await env.DB.batch(statements);
+    await batch(env, statements);
   }
   return statements.length;
 }

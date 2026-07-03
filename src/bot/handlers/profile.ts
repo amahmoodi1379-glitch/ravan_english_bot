@@ -5,6 +5,7 @@ import { getProfileMenuKeyboard } from "../keyboards";
 import { pe } from "../premium-emojis";
 import { escapeHtml } from "../../utils/html";
 import { getOrCreateUser, DbUser } from "../../db/users";
+import { queryOne } from "../../db/client";
 import {
   getUserProfile,
   updateDisplayName,
@@ -18,7 +19,11 @@ import { AVATARS, getAvatarEmoji, getAvatarLabel } from "../avatars";
 import { toJalaliString } from "../../utils/jalali";
 
 async function getStreakInfo(env: Env, userId: number): Promise<number> {
-  const row = await env.DB.prepare(`SELECT streak_count, last_streak_date FROM users WHERE id = ?`).bind(userId).first();
+  const row = await queryOne<{ streak_count: number; last_streak_date: string }>(
+    env,
+    `SELECT streak_count, last_streak_date FROM users WHERE id = ?`,
+    [userId]
+  );
   if (!row) return 0;
 
   const count = (row.streak_count as number) || 0;
@@ -26,11 +31,13 @@ async function getStreakInfo(env: Env, userId: number): Promise<number> {
 
   if (count === 0) return 0;
 
-  const dateCheck = await env.DB.prepare(`
-    SELECT 
+  const dateCheck = await queryOne<{ today_local: string; yesterday_local: string }>(
+    env,
+    `SELECT
       date('now', ?) as today_local,
-      date('now', ?, '-1 day') as yesterday_local
-  `).bind(TIME_ZONE_OFFSET, TIME_ZONE_OFFSET).first();
+      date('now', ?, '-1 day') as yesterday_local`,
+    [TIME_ZONE_OFFSET, TIME_ZONE_OFFSET]
+  );
 
   const todayStr = dateCheck?.today_local as string;
   const yesterdayStr = dateCheck?.yesterday_local as string;

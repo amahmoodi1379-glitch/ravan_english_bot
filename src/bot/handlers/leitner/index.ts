@@ -3,7 +3,7 @@ import { TelegramCallbackQuery, InlineKeyboardButton } from "../../types";
 import { sendMessage, answerCallbackQuery, editMessageText } from "../../telegram-api";
 import { getOrCreateUser, DbUser } from "../../../db/users";
 import { pe } from "../../premium-emojis";
-import { queryOne, prepare, SqlGuard } from "../../../db/client";
+import { queryOne, prepare, SqlGuard, batch as runBatch, withD1Retry } from "../../../db/client";
 import {
   prepareUpdateFsrs,
   markWordAsIgnored,
@@ -280,7 +280,7 @@ async function handleDunno(
     [now, user.id, question.id]
   ));
 
-  const results = await env.DB.batch(batch);
+  const results = await runBatch(env, batch);
   const claimResult = results[results.length - 1];
   if (!claimResult || claimResult.meta.changes === 0) {
     await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
@@ -442,7 +442,7 @@ async function handleRating(
     [ratedAt, user.id, questionId]
   ));
 
-  const results = await env.DB.batch(batch);
+  const results = await runBatch(env, batch);
   const claimResult = results[results.length - 1];
   if (!claimResult || claimResult.meta.changes === 0) {
     // Lost the race / already rated — nothing was applied by this request.
@@ -832,11 +832,11 @@ async function handleAnswer(
   await removeInlineKeyboard(env, chatId, messageId);
 
   // Atomically mark as answered — if another request already answered, changes=0
-  const answerResult = await env.DB.prepare(
+  const answerResult = await withD1Retry(() => env.DB.prepare(
     `UPDATE user_word_question_history
      SET is_correct = ?, answered_at = ?, first_is_correct = COALESCE(first_is_correct, ?)
      WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`
-  ).bind(isCorrect ? 1 : 0, now, isCorrect ? 1 : 0, user.id, question.id).run();
+  ).bind(isCorrect ? 1 : 0, now, isCorrect ? 1 : 0, user.id, question.id).run());
 
   if (answerResult.meta.changes === 0) {
     // Already answered by a concurrent request — silently stop
