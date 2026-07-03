@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { withD1Retry } from "../db/client";
+import { queryOne, execute } from "../db/client";
 
 /**
  * Premium animated emoji support.
@@ -70,9 +70,11 @@ let loaded = false;
 export async function loadEmojiMap(env: Env): Promise<void> {
   if (loaded) return;
   try {
-    const row = await withD1Retry(() => env.DB.prepare(
-      "SELECT value FROM system_settings WHERE key = ?"
-    ).bind(SETTING_KEY).first<{ value: string }>());
+    const row = await queryOne<{ value: string }>(
+      env,
+      "SELECT value FROM system_settings WHERE key = ?",
+      [SETTING_KEY]
+    );
     if (row?.value) {
       emojiMap = JSON.parse(row.value) as Record<string, string>;
     }
@@ -93,18 +95,21 @@ export function getEmojiMap(): Record<string, string> {
  * @param map - The full map to store (replaces the previous one)
  */
 export async function saveEmojiMap(env: Env, map: Record<string, string>): Promise<void> {
-  await withD1Retry(() => env.DB.prepare(
+  await execute(
+    env,
     `CREATE TABLE IF NOT EXISTS system_settings (
        key TEXT PRIMARY KEY,
        value TEXT NOT NULL,
        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
      )`
-  ).run());
-  await withD1Retry(() => env.DB.prepare(
+  );
+  await execute(
+    env,
     `INSERT INTO system_settings (key, value, updated_at)
      VALUES (?, ?, datetime('now'))
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-  ).bind(SETTING_KEY, JSON.stringify(map)).run());
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    [SETTING_KEY, JSON.stringify(map)]
+  );
   emojiMap = map;
   loaded = true;
 }
