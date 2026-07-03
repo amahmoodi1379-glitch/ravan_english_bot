@@ -14,6 +14,53 @@ export interface SqlGuard {
 }
 
 /**
+ * Cloudflare D1 occasionally throws transient, infrastructure-level errors that
+ * are safe to retry: the underlying storage object gets reset (e.g. when the
+ * backing Durable Object is relocated or its code is updated) or the network
+ * connection to it is briefly lost. These surface as `D1_ERROR: ...` messages
+ * and are NOT caused by our SQL — a plain retry a few hundred ms later succeeds.
+ * Matching on the message text is the only signal D1 gives us here.
+ */
+const TRANSIENT_D1_PATTERNS = [
+  "caused object to be reset",
+  "internal error while starting up d1",
+  "network connection lost",
+  "storage caused object to be reset"
+];
+
+function isTransientD1Error(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const lower = message.toLowerCase();
+  return TRANSIENT_D1_PATTERNS.some((p) => lower.includes(p));
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Run a D1 operation, retrying a few times on transient D1 errors with a short
+ * exponential backoff. Non-transient errors (real SQL/constraint failures) are
+ * rethrown immediately so we never mask genuine bugs or silently double-apply a
+ * write that actually succeeded. Only use this for operations that are safe to
+ * re-run — the reads and single-statement writes going through these wrappers
+ * are idempotent from D1's perspective when the first attempt never landed.
+ */
+async function withD1Retry<T>(op: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await op();
+    } catch (err) {
+      if (!isTransientD1Error(err) || attempt === attempts - 1) throw err;
+      lastErr = err;
+      // 100ms, 200ms, 400ms, ...
+      await sleep(100 * 2 ** attempt);
+    }
+  }
+  // Unreachable: the loop either returns or throws, but satisfies the type checker.
+  throw lastErr;
+}
+
+/**
  * Execute a SQL query and return the first matching row, or null if none found.
  * @param env - The worker environment containing the D1 database binding
  * @param sql - The SQL query string to execute
@@ -26,7 +73,7 @@ export async function queryOne<T>(
   params: unknown[] = []
 ): Promise<T | null> {
   const stmt = env.DB.prepare(sql);
-  const res = await stmt.bind(...params).first();
+  const res = await withD1Retry(() => stmt.bind(...params).first());
   if (!res) return null;
   return res as unknown as T;
 }
@@ -44,7 +91,7 @@ export async function queryAll<T>(
   params: unknown[] = []
 ): Promise<T[]> {
   const stmt = env.DB.prepare(sql);
-  const res = await stmt.bind(...params).all();
+  const res = await withD1Retry(() => stmt.bind(...params).all());
   const rows = (res?.results ?? []) as unknown as T[];
   return rows;
 }
@@ -62,7 +109,7 @@ export async function execute(
   params: unknown[] = []
 ): Promise<D1Result> {
   const stmt = env.DB.prepare(sql).bind(...params);
-  return await stmt.run();
+  return await withD1Retry(() => stmt.run());
 }
 
 /**
