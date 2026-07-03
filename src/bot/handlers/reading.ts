@@ -19,7 +19,7 @@ import {
   DbTextQuestion,
   ReadingSession
 } from "../../db/reading";
-import { queryAll, queryOne, execute, prepare, SqlGuard } from "../../db/client";
+import { queryAll, queryOne, execute, prepare, SqlGuard, batch } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
 import { CB_PREFIX, STALE_SESSION_HOURS } from "../../config/constants";
 import { getMainMenuKeyboard, getTrainingMenuKeyboard } from "../keyboards";
@@ -226,7 +226,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
       [user.id]
     );
     if (activeSession) {
-      await env.DB.prepare(`UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`).bind(activeSession.id).run();
+      await execute(env, `UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?`, [activeSession.id]);
     }
 
     // Size the session to the FULL set of questions for this text, so the user
@@ -333,7 +333,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   if (chosenOption === 'CANCEL') {
     await answerCallbackQuery(env, callbackQuery.id, "آزمون لغو شد 🚫");
 
-    await env.DB.prepare("UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?").bind(sessionId).run();
+    await execute(env, "UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?", [sessionId]);
 
     await sendMessage(env, chatId, "تست متوقف شد. به منوی تمرین‌ها برگشتی 👇", {
       reply_markup: getTrainingMenuKeyboard()
@@ -353,16 +353,16 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
       return;
     }
 
-    const skipResult = await env.DB.prepare(
+    const skipResult = await execute(
+      env,
       `UPDATE user_text_question_history
        SET answered_at = ?
        WHERE reading_session_id = ?
          AND user_id = ?
          AND question_id = ?
-         AND answered_at IS NULL`
-    )
-      .bind(new Date().toISOString(), skipSession.id, skipUser.id, questionId)
-      .run();
+         AND answered_at IS NULL`,
+      [new Date().toISOString(), skipSession.id, skipUser.id, questionId]
+    );
 
     if (skipResult.meta.changes === 0) {
       await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً به این سوال رسیدگی شده!");
@@ -414,16 +414,16 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
 
   const now = new Date().toISOString();
 
-  const updateResult = await env.DB.prepare(
+  const updateResult = await execute(
+    env,
     `UPDATE user_text_question_history
      SET is_correct = ?, answered_at = ?
      WHERE reading_session_id = ?
        AND user_id = ?
        AND question_id = ?
-       AND answered_at IS NULL`
-  )
-    .bind(isCorrect ? 1 : 0, now, session.id, user.id, questionId)
-    .run();
+       AND answered_at IS NULL`,
+    [isCorrect ? 1 : 0, now, session.id, user.id, questionId]
+  );
 
   if (updateResult.meta.changes === 0) {
     await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
@@ -431,9 +431,11 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   }
 
   if (isCorrect) {
-    await env.DB.prepare(
-      `UPDATE reading_sessions SET num_correct = num_correct + 1 WHERE id = ?`
-    ).bind(session.id).run();
+    await execute(
+      env,
+      `UPDATE reading_sessions SET num_correct = num_correct + 1 WHERE id = ?`,
+      [session.id]
+    );
   }
 
   // Exam-style: no per-question feedback. Just confirm the answer was recorded
@@ -565,7 +567,7 @@ async function sendReadingSummary(
     [completedAt, session.id]
   ));
 
-  const results = await env.DB.batch(batchStatements);
+  const results = await batch(env, batchStatements);
   const completionResult = results[results.length - 1];
   if (!completionResult || completionResult.meta.changes === 0) {
     // Already completed by a concurrent/duplicate finish — XP not double-awarded.

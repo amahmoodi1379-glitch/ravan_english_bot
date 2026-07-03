@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { execute, queryAll, queryOne, prepare } from "./client";
+import { execute, queryAll, queryOne, prepare, batch } from "./client";
 import { LEITNER_TEST_TYPES } from "../config/constants";
 
 export interface NewWordQuestionRow {
@@ -217,7 +217,7 @@ export async function markWordQuestionsReviewed(env: Env, ids: number[]): Promis
         chunk
       )
     ];
-    await env.DB.batch(statements);
+    await batch(env, statements);
   }
 }
 
@@ -371,7 +371,7 @@ export async function applyWordQuestionCorrections(
   }
 
   for (let i = 0; i < statements.length; i += REVIEW_BATCH_CHUNK) {
-    await env.DB.batch(statements.slice(i, i + REVIEW_BATCH_CHUNK));
+    await batch(env, statements.slice(i, i + REVIEW_BATCH_CHUNK));
   }
 
   result.updated = stagedIds.length;

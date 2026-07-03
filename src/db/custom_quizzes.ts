@@ -56,9 +56,11 @@ export async function createQuiz(
   title: string,
   totalTimeMinutes: number
 ): Promise<number> {
-  const result = await env.DB.prepare(
-    `INSERT INTO custom_quizzes (admin_id, title, total_time_minutes, status) VALUES (?, ?, ?, 'draft')`
-  ).bind(adminId, title, totalTimeMinutes).run();
+  const result = await execute(
+    env,
+    `INSERT INTO custom_quizzes (admin_id, title, total_time_minutes, status) VALUES (?, ?, ?, 'draft')`,
+    [adminId, title, totalTimeMinutes]
+  );
   // D1 meta.last_row_id is not in official types but is returned at runtime
   return (result.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
 }
@@ -228,10 +230,12 @@ export async function addQuizQuestion(
   correctOption: string,
   explanation?: string
 ): Promise<number> {
-  const result = await env.DB.prepare(
+  const result = await execute(
+    env,
     `INSERT INTO custom_quiz_questions (quiz_id, question_index, question_text, option_a, option_b, option_c, option_d, correct_option, explanation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(quizId, questionIndex, questionText, optionA, optionB, optionC, optionD, correctOption, explanation || null).run();
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [quizId, questionIndex, questionText, optionA, optionB, optionC, optionD, correctOption, explanation || null]
+  );
   // D1 meta.last_row_id is not in official types but is returned at runtime
   return (result.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
 }
@@ -383,9 +387,11 @@ export async function createAttempt(
   userId: number,
   chatId?: number
 ): Promise<number> {
-  const result = await env.DB.prepare(
-    `INSERT INTO custom_quiz_attempts (quiz_id, user_id, chat_id, status) VALUES (?, ?, ?, 'in_progress')`
-  ).bind(quizId, userId, chatId ?? null).run();
+  const result = await execute(
+    env,
+    `INSERT INTO custom_quiz_attempts (quiz_id, user_id, chat_id, status) VALUES (?, ?, ?, 'in_progress')`,
+    [quizId, userId, chatId ?? null]
+  );
   // D1 meta.last_row_id is not in official types but is returned at runtime
   return (result.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
 }
