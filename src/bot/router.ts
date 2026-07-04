@@ -7,6 +7,8 @@ import {
   MAIN_MENU_BUTTON_PROFILE,
   MAIN_MENU_BUTTON_LEADERBOARD,
   MAIN_MENU_BUTTON_LETTERS,
+  MAIN_MENU_BUTTON_TOURNAMENT,
+  MAIN_MENU_BUTTON_LEAGUE,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
@@ -38,6 +40,8 @@ import {
   handleQuizStart,
   handleQuizUserCallback
 } from "./handlers/custom_quiz_user";
+import { showTournamentEntry } from "./handlers/tournament";
+import { showLeagueHome } from "./handlers/league";
 import {
   handleQuizAdminCallback
 } from "./handlers/custom_quiz_admin";
@@ -379,6 +383,16 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
   if (navText === MAIN_MENU_BUTTON_LEADERBOARD) {
     await showLeaderboardHome(env, chatId);
+    return;
+  }
+
+  if (navText === MAIN_MENU_BUTTON_TOURNAMENT) {
+    await showTournamentEntry(env, user, chatId);
+    return;
+  }
+
+  if (navText === MAIN_MENU_BUTTON_LEAGUE) {
+    await showLeagueHome(env, user, chatId);
     return;
   }
 

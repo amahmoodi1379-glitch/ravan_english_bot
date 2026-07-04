@@ -460,10 +460,20 @@ CREATE TABLE IF NOT EXISTS custom_quizzes (
   admin_id INTEGER NOT NULL,
   title TEXT NOT NULL,
   total_time_minutes INTEGER NOT NULL DEFAULT 30,
-  status TEXT NOT NULL DEFAULT 'draft',           -- draft / active / completed
+  status TEXT NOT NULL DEFAULT 'draft',           -- draft / active / published / completed
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- daily tournament support (0033): a tournament is a custom_quizzes row with
+  -- kind='tournament' and a scheduling window; kind='custom' = admin-built quiz.
+  kind TEXT NOT NULL DEFAULT 'custom',            -- 'custom' | 'tournament'
+  opens_at TEXT,                                  -- UTC 'YYYY-MM-DD HH:MM:SS' window open (tournament only)
+  closes_at TEXT,                                 -- UTC hard close (tournament only)
+  tournament_date TEXT,                           -- Iran-local 'YYYY-MM-DD' identity (tournament only)
   FOREIGN KEY (admin_id) REFERENCES admins(id)
 );
+
+-- At most one tournament per Iran-local day; makes the "open" cron idempotent.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cq_tournament_date
+  ON custom_quizzes(tournament_date) WHERE kind = 'tournament';
 
 CREATE TABLE IF NOT EXISTS custom_quiz_questions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -517,6 +527,67 @@ CREATE INDEX IF NOT EXISTS idx_cq_attempts_quiz_user ON custom_quiz_attempts(qui
 CREATE INDEX IF NOT EXISTS idx_cq_attempts_user ON custom_quiz_attempts(user_id);
 CREATE INDEX IF NOT EXISTS idx_cq_answers_attempt ON custom_quiz_answers(attempt_id);
 CREATE INDEX IF NOT EXISTS idx_cq_answers_question ON custom_quiz_answers(question_id);
+
+
+-- ========================= WEEKLY LEAGUES (0033) =========================
+-- Duolingo-style divisions. Standings are computed from activity_log over a
+-- fixed Iran-calendar week [Saturday 00:00, next Saturday 00:00); they are NOT
+-- a live counter, so activity in the final Friday-night hours counts fully for
+-- that week (no gap). Settlement (promote/demote + next-week divisions) runs at
+-- the Saturday-00:00 cron tick; results are announced Saturday morning.
+CREATE TABLE IF NOT EXISTS league_seasons (
+  week_start TEXT PRIMARY KEY,                    -- Iran-local 'YYYY-MM-DD' (Saturday)
+  week_end   TEXT NOT NULL,                       -- Iran-local 'YYYY-MM-DD' (next Saturday, exclusive)
+  status     TEXT NOT NULL DEFAULT 'active',      -- active | settled
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  settled_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS league_divisions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  week_start      TEXT NOT NULL,                  -- FK league_seasons.week_start (app-enforced)
+  tier            INTEGER NOT NULL,               -- 1..N (1 = lowest / bronze)
+  division_number INTEGER NOT NULL,               -- 1-based within (week_start, tier)
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_league_divisions_week
+  ON league_divisions(week_start, tier, division_number);
+
+CREATE TABLE IF NOT EXISTS league_members (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  week_start  TEXT NOT NULL,
+  user_id     INTEGER NOT NULL,
+  division_id INTEGER NOT NULL,
+  tier        INTEGER NOT NULL,
+  joined_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (division_id) REFERENCES league_divisions(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_league_members_week_user
+  ON league_members(week_start, user_id);
+CREATE INDEX IF NOT EXISTS idx_league_members_division
+  ON league_members(division_id);
+
+CREATE TABLE IF NOT EXISTS league_results (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  week_start       TEXT NOT NULL,
+  user_id          INTEGER NOT NULL,
+  tier             INTEGER NOT NULL,
+  division_id      INTEGER NOT NULL,
+  rank_in_division INTEGER NOT NULL,
+  weekly_xp        INTEGER NOT NULL,
+  outcome          TEXT NOT NULL,                  -- promote | demote | stay | removed | champion
+  new_tier         INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_league_results_week_user
+  ON league_results(week_start, user_id);
+CREATE INDEX IF NOT EXISTS idx_league_results_week
+  ON league_results(week_start);
 
 
 -- ========================= ADMIN BOT CONVERSATION STATE =========================

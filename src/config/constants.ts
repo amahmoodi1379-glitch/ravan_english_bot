@@ -9,11 +9,43 @@ export const XP_VALUES = {
   READING_QUESTION: 15,
   READING_BONUS_PERFECT: 10,
   READING_BONUS_GOOD: 5,
+
+  // Daily tournament (0033): awarded once, at settlement. Flows through
+  // activity_log so it also counts toward the weekly league (integrated scoring).
+  TOURNAMENT_PARTICIPATE: 5,   // for anyone who finished/auto-ended an attempt
+  TOURNAMENT_CORRECT: 6,       // per correct answer
 };
 
 export const GAME_CONFIG = {
   READING_QUESTION_COUNT: 3,
 };
+
+/**
+ * Daily tournament configuration. The tournament is a time-windowed quiz opened
+ * once a night and settled at close. OPEN_HOUR is expected to match the daily
+ * progress-report hour (21) so its call-to-action can piggyback on that report
+ * instead of a second 500-user broadcast.
+ */
+export const TOURNAMENT_CONFIG = {
+  OPEN_HOUR: 21,             // Iran-local hour the tournament opens (matches daily report)
+  CLOSE_HOUR: 22,            // Iran-local hour it closes AND settles
+  QUESTION_COUNT: 10,        // number of questions auto-picked from word_questions
+  DURATION_MINUTES: 10,      // per-user time limit once started (capped by CLOSE_HOUR)
+  RANK_BONUS_XP: [50, 30, 20], // extra XP for 1st / 2nd / 3rd at settlement
+} as const;
+
+/**
+ * Weekly league configuration. Tiers ascend from index 0 (lowest). The week is
+ * the Iran calendar week (Saturday → Friday); settlement runs Saturday 00:00 and
+ * results are announced at ANNOUNCE_HOUR the same morning.
+ */
+export const LEAGUE_CONFIG = {
+  ANNOUNCE_HOUR: 10,         // Iran-local Saturday hour to announce last week's results
+  DIVISION_SIZE: 30,         // max users per division
+  PROMOTE_COUNT: 7,          // top N of each division promote to the next tier
+  DEMOTE_COUNT: 7,           // bottom N (with XP > 0) demote to the previous tier
+  TIERS: ["برنز", "نقره", "طلا", "یاقوت", "الماس"], // tier 1..5 display names
+} as const;
 
 export const CB_PREFIX = {
   LEITNER: "l",
@@ -37,6 +69,8 @@ export const CB_PREFIX = {
   STATS: "st",
   LEADERBOARD: "lb",
   QUIZ: "qz",
+  TOURNAMENT: "tn",
+  LEAGUE: "lg",
   LEITNER_LESSON_PICK: "llp",
   LEITNER_LESSON_CONT: "llc",
   LEITNER_LESSON_STOP: "lls",

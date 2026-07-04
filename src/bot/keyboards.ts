@@ -4,6 +4,8 @@ export const MAIN_MENU_BUTTON_TRAINING = "🎮 تمرین‌ها";
 export const MAIN_MENU_BUTTON_PROFILE = "👤 پروفایل و آمار";
 export const MAIN_MENU_BUTTON_LEADERBOARD = "🏆 لیدربورد";
 export const MAIN_MENU_BUTTON_LETTERS = "💌 نامه‌ها";
+export const MAIN_MENU_BUTTON_TOURNAMENT = "🎯 مسابقه";
+export const MAIN_MENU_BUTTON_LEAGUE = "🏅 لیگ";
 
 export const TRAINING_MENU_BUTTON_LEITNER = "🧠 لایتنر واژگان";
 export const TRAINING_MENU_BUTTON_READING = "📖 تست درک مطلب";
@@ -26,6 +28,8 @@ registerUserMenuLabels([
   MAIN_MENU_BUTTON_PROFILE,
   MAIN_MENU_BUTTON_LEADERBOARD,
   MAIN_MENU_BUTTON_LETTERS,
+  MAIN_MENU_BUTTON_TOURNAMENT,
+  MAIN_MENU_BUTTON_LEAGUE,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
@@ -60,6 +64,7 @@ export function getMainMenuKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: MAIN_MENU_BUTTON_TRAINING, style: "success" }, { text: MAIN_MENU_BUTTON_LEADERBOARD, style: "primary" }],
+      [{ text: MAIN_MENU_BUTTON_TOURNAMENT, style: "primary" }, { text: MAIN_MENU_BUTTON_LEAGUE, style: "success" }],
       [{ text: MAIN_MENU_BUTTON_PROFILE, style: "primary" }, { text: MAIN_MENU_BUTTON_LETTERS, style: "success" }]
     ],
     resize_keyboard: true,

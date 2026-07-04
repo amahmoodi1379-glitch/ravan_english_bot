@@ -8,6 +8,11 @@ export interface CustomQuiz {
   total_time_minutes: number;
   status: string;
   created_at: string;
+  // Daily-tournament fields (0033). Null/'custom' for admin-built quizzes.
+  kind?: string;                 // 'custom' | 'tournament'
+  opens_at?: string | null;      // UTC 'YYYY-MM-DD HH:MM:SS'
+  closes_at?: string | null;     // UTC hard close
+  tournament_date?: string | null; // Iran-local 'YYYY-MM-DD'
 }
 
 export interface CustomQuizQuestion {

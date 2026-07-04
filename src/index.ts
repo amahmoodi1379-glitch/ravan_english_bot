@@ -6,6 +6,13 @@ import { handleAdminRequest } from "./admin/router";
 import { sendInactivityReminders } from "./bot/handlers/reminders";
 import { sendProgressReports } from "./bot/handlers/reports";
 import { toJalaliParts } from "./utils/jalali";
+import { createDailyTournament, settleTournament } from "./db/tournaments";
+import { announceTournamentResults } from "./bot/handlers/tournament";
+import { settleLeague } from "./db/leagues";
+import { announceLeagueResults } from "./bot/handlers/league";
+import { iranDateStr, utcStamp } from "./utils/iran_time";
+import { TOURNAMENT_CONFIG, LEAGUE_CONFIG } from "./config/constants";
+import { MAIN_MENU_BUTTON_TOURNAMENT } from "./bot/keyboards";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -139,10 +146,34 @@ export default {
       }
 
       // Progress reports — at 21:00 Iran. Daily every day; weekly on Friday;
-      // monthly on the last day of the Jalali month.
+      // monthly on the last day of the Jalali month. Also opens tonight's
+      // tournament (OPEN_HOUR is expected to equal 21) and folds its call-to-
+      // action into the daily report so it reaches active users without a second
+      // 500-user broadcast.
       if (iranHour === 21) {
+        let tournamentCta: string | undefined;
+        if (iranHour === TOURNAMENT_CONFIG.OPEN_HOUR) {
+          try {
+            const openGapMs =
+              (TOURNAMENT_CONFIG.CLOSE_HOUR - TOURNAMENT_CONFIG.OPEN_HOUR) * 60 * 60 * 1000;
+            const quizId = await createDailyTournament(
+              env,
+              iranDateStr(),
+              utcStamp(),
+              utcStamp(Date.now() + openGapMs)
+            );
+            if (quizId) {
+              tournamentCta =
+                `\n\n🎯 <b>مسابقه‌ی امشب شروع شد!</b>\n` +
+                `تا ساعت ${TOURNAMENT_CONFIG.CLOSE_HOUR} فرصت داری. از دکمه‌ی «${MAIN_MENU_BUTTON_TOURNAMENT}» توی منو شرکت کن و با بقیه رقابت کن! 🏆`;
+            }
+          } catch (err) {
+            console.error("Tournament open error:", err);
+          }
+        }
+
         try {
-          await sendProgressReports(env, "daily");
+          await sendProgressReports(env, "daily", tournamentCta);
         } catch (err) {
           console.error("Daily progress report error:", err);
         }
@@ -165,6 +196,40 @@ export default {
           } catch (err) {
             console.error("Monthly progress report error:", err);
           }
+        }
+      }
+
+      // Close & settle tonight's tournament, then push placements to participants.
+      // Idempotent: settleTournament returns null once the quiz is 'completed'.
+      if (iranHour === TOURNAMENT_CONFIG.CLOSE_HOUR) {
+        try {
+          const settled = await settleTournament(env, iranDateStr());
+          if (settled) {
+            await announceTournamentResults(env, settled.quizId, settled.ranking);
+          }
+        } catch (err) {
+          console.error("Tournament settle error:", err);
+        }
+      }
+
+      // League settlement at Iran Saturday 00:00 (the true week boundary, so
+      // Friday-night activity counts fully). Idempotent per week.
+      if (iranNow.getUTCDay() === 6 && iranHour === 0) {
+        try {
+          await settleLeague(env);
+        } catch (err) {
+          console.error("League settle error:", err);
+        }
+      }
+
+      // League results announcement on Saturday morning. settleLeague first is a
+      // catch-up in case the 00:00 tick was missed (idempotent).
+      if (iranNow.getUTCDay() === 6 && iranHour === LEAGUE_CONFIG.ANNOUNCE_HOUR) {
+        try {
+          await settleLeague(env);
+          await announceLeagueResults(env);
+        } catch (err) {
+          console.error("League announce error:", err);
         }
       }
 
