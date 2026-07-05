@@ -1,6 +1,7 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare, batch } from "./client";
 import { LEAGUE_CONFIG } from "../config/constants";
+import { awardLeagueBadges, LeagueBadgeEntry } from "./badges";
 import {
   iranWeekStartDate,
   shiftDateStr,
@@ -257,6 +258,7 @@ export async function settleLeague(env: Env, nowMs: number = Date.now()): Promis
   const top = maxTier();
   const resultStmts: D1PreparedStatement[] = [];
   const nextTierByUser = new Map<number, number>();
+  const badgeEntries: LeagueBadgeEntry[] = [];
 
   for (const div of divisions) {
     const standings = await getDivisionStandings(env, endedWeek, div.id);
@@ -268,9 +270,15 @@ export async function settleLeague(env: Env, nowMs: number = Date.now()): Promis
       let newTier: number;
 
       if (s.weekly_xp <= 0) {
-        // Inactive: drop out of the league; rejoins bronze lazily on return.
-        outcome = "removed";
-        newTier = tier;
+        // Inactive (gentle rule): drop one tier and stay enrolled; bronze is the
+        // floor. Never dropped straight to bronze, never removed.
+        if (tier > 1) {
+          outcome = "demote";
+          newTier = tier - 1;
+        } else {
+          outcome = "stay";
+          newTier = 1;
+        }
       } else if (rank <= LEAGUE_CONFIG.PROMOTE_COUNT && tier < top) {
         outcome = "promote";
         newTier = tier + 1;
@@ -294,13 +302,18 @@ export async function settleLeague(env: Env, nowMs: number = Date.now()): Promis
           [endedWeek, s.user_id, tier, div.id, rank, s.weekly_xp, outcome, newTier]
         )
       );
-      if (outcome !== "removed") nextTierByUser.set(s.user_id, newTier);
+      // Gentle rule: everyone stays enrolled for next week.
+      nextTierByUser.set(s.user_id, newTier);
+      badgeEntries.push({ userId: s.user_id, newTier, outcome });
     });
   }
 
   for (let i = 0; i < resultStmts.length; i += LEAGUE_BATCH_CHUNK) {
     await batch(env, resultStmts.slice(i, i + LEAGUE_BATCH_CHUNK));
   }
+
+  // Award league medals (tier reached + champion). Idempotent.
+  await awardLeagueBadges(env, endedWeek, badgeEntries);
 
   // Form next week's divisions from surviving members (only once).
   await ensureSeason(env, thisWeek);

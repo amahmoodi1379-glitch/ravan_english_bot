@@ -31,6 +31,11 @@ export const TOURNAMENT_CONFIG = {
   CLOSE_HOUR: 22,            // Iran-local hour it closes AND settles
   QUESTION_COUNT: 10,        // number of questions auto-picked from word_questions
   DURATION_MINUTES: 10,      // per-user time limit once started (capped by CLOSE_HOUR)
+  // Latest a NEW attempt may START, as minutes after OPEN_HOUR. Separating the
+  // join window from the play duration guarantees a late joiner still gets the
+  // full DURATION before settlement — nobody is cut off mid-attempt.
+  // INVARIANT: JOIN_WINDOW_MINUTES + DURATION_MINUTES <= (CLOSE_HOUR-OPEN_HOUR)*60.
+  JOIN_WINDOW_MINUTES: 45,   // 45 + 10 = 55 <= 60 → 5-min margin before the 22:00 tick
   RANK_BONUS_XP: [50, 30, 20], // extra XP for 1st / 2nd / 3rd at settlement
 } as const;
 
@@ -40,7 +45,7 @@ export const TOURNAMENT_CONFIG = {
  * results are announced at ANNOUNCE_HOUR the same morning.
  */
 export const LEAGUE_CONFIG = {
-  ANNOUNCE_HOUR: 10,         // Iran-local Saturday hour to announce last week's results
+  ANNOUNCE_HOUR: 11,         // Iran-local Saturday hour to announce (11, not 10, to avoid stacking with 10:00 inactivity reminders)
   DIVISION_SIZE: 30,         // max users per division
   PROMOTE_COUNT: 7,          // top N of each division promote to the next tier
   DEMOTE_COUNT: 7,           // bottom N (with XP > 0) demote to the previous tier

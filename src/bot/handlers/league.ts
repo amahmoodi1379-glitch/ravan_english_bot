@@ -68,17 +68,20 @@ function buildResultText(r: LeagueAnnounceRow): string {
   const fromTier = tierName(r.tier);
   const toTier = tierName(r.new_tier);
   let head: string;
+  let medalLine = "";
   if (r.outcome === "promote") {
     head = `🎉 <b>صعود کردی!</b>\nاز لیگ ${fromTier} به لیگ ${toTier} رفتی!`;
+    medalLine = `\n🏅 مدال «لیگ ${toTier}» رو گرفتی!`;
   } else if (r.outcome === "champion") {
     head = `👑 <b>قهرمان لیگ ${fromTier} شدی!</b>\nهفته‌ای فوق‌العاده داشتی!`;
+    medalLine = `\n🏅 مدال «قهرمان لیگ» رو گرفتی!`;
   } else if (r.outcome === "demote") {
     head = `📉 به لیگ ${toTier} منتقل شدی.\nهفته‌ی بعد جبران کن! 💪`;
   } else {
     head = `✅ در لیگ ${fromTier} ماندگار شدی.`;
   }
   return (
-    `${head}\n\n` +
+    `${head}${medalLine}\n\n` +
     `🏅 رتبه‌ی تو در دیویژن: ${r.rank_in_division}\n` +
     `⭐️ امتیاز این هفته: ${r.weekly_xp}\n\n` +
     `هفته‌ی جدید شروع شد — دوباره بجنگ! 🏁`

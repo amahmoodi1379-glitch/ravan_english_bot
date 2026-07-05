@@ -218,7 +218,7 @@ async function sendQuizQuestion(
   }
 }
 
-async function autoFinish(env: Env, chatId: number, userId: number, attemptId: number, quizId: number, messageId?: number): Promise<void> {
+async function autoFinish(env: Env, chatId: number, userId: number, attemptId: number, quizId: number, messageId?: number, quizKind?: string): Promise<void> {
   const attempt = await getAttempt(env, attemptId);
   if (!attempt) return;
   if (attempt.status === 'auto_ended' || attempt.status === 'finished') {
@@ -237,8 +237,12 @@ async function autoFinish(env: Env, chatId: number, userId: number, attemptId: n
   await sendMessage(env, chatId, "⏰ <b>زمان آزمون تمام شد!</b>\n\nنتایج شما:", { parse_mode: "HTML" });
   await sendResults(env, chatId, userId, quizId, attemptId);
 
-  // Push results to other finished participants
-  await pushResultsToAllFinished(env, quizId, userId);
+  // Push "results ready" to other finished participants — for admin link-quizzes
+  // only. Tournaments broadcast their own results at settlement (and have no link
+  // to re-open), so this cross-notification must not fire for them.
+  if (quizKind !== 'tournament') {
+    await pushResultsToAllFinished(env, quizId, userId);
+  }
 }
 
 async function pushResultsToAllFinished(env: Env, quizId: number, excludeUserId: number): Promise<void> {
@@ -322,7 +326,7 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: TelegramCa
   // Check time expiry
   if (isQuizExpired(attempt, quiz)) {
     await answerCallbackQuery(env, callbackQuery.id, "⏰ زمان تمام شد!");
-    await autoFinish(env, chatId, user.id, attemptId, quiz.id, messageId);
+    await autoFinish(env, chatId, user.id, attemptId, quiz.id, messageId, quiz.kind);
     return;
   }
 

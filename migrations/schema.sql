@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS users (
   last_streak_date TEXT,
   max_streak_record INTEGER NOT NULL DEFAULT 0,
   -- inactivity return-reminder stage (0027): 0=none 1=2d 2=5d 3=10d; reset on interaction
-  inactivity_reminder_stage INTEGER NOT NULL DEFAULT 0
+  inactivity_reminder_stage INTEGER NOT NULL DEFAULT 0,
+  -- daily-tournament reminder opt-in (0034): 1 = push a nightly "tournament open" ping
+  tournament_reminder INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -588,6 +590,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_league_results_week_user
   ON league_results(week_start, user_id);
 CREATE INDEX IF NOT EXISTS idx_league_results_week
   ON league_results(week_start);
+
+
+-- ========================= MEDALS / BADGES (0034) =========================
+-- Honorary (no-XP) achievements. The catalog lives in code (src/config/badges.ts);
+-- only awarded rows are stored. UNIQUE(user_id, badge_code) + INSERT OR IGNORE
+-- makes awarding idempotent.
+CREATE TABLE IF NOT EXISTS user_badges (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL,
+  badge_code TEXT NOT NULL,
+  awarded_at TEXT NOT NULL DEFAULT (datetime('now')),
+  meta_json  TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_badges_user_code ON user_badges(user_id, badge_code);
+CREATE INDEX IF NOT EXISTS idx_user_badges_user ON user_badges(user_id);
 
 
 -- ========================= ADMIN BOT CONVERSATION STATE =========================

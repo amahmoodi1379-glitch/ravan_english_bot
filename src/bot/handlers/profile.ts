@@ -17,6 +17,8 @@ import {
 import { CB_PREFIX, TIME_ZONE_OFFSET } from "../../config/constants";
 import { AVATARS, getAvatarEmoji, getAvatarLabel } from "../avatars";
 import { toJalaliString } from "../../utils/jalali";
+import { evaluateThresholdBadges } from "../../db/badges";
+import { notifyNewBadges } from "./medals";
 
 async function getStreakInfo(env: Env, userId: number): Promise<number> {
   const row = await queryOne<{ streak_count: number; last_streak_date: string }>(
@@ -83,6 +85,10 @@ export async function showProfileHome(env: Env, user: DbUser, chatId: number): P
   await sendMessage(env, chatId, text, {
     reply_markup: getProfileMenuKeyboard()
   });
+
+  // Catch-up: award any threshold medals the user has newly earned and announce them.
+  const fresh = await evaluateThresholdBadges(env, user.id);
+  await notifyNewBadges(env, chatId, fresh);
 }
 
 /**

@@ -6,10 +6,11 @@ import { handleAdminRequest } from "./admin/router";
 import { sendInactivityReminders } from "./bot/handlers/reminders";
 import { sendProgressReports } from "./bot/handlers/reports";
 import { toJalaliParts } from "./utils/jalali";
-import { createDailyTournament, settleTournament } from "./db/tournaments";
+import { createDailyTournament, settleTournament, getTournamentReminderOptIns } from "./db/tournaments";
 import { announceTournamentResults } from "./bot/handlers/tournament";
 import { settleLeague } from "./db/leagues";
 import { announceLeagueResults } from "./bot/handlers/league";
+import { broadcast } from "./bot/handlers/broadcast";
 import { iranDateStr, utcStamp } from "./utils/iran_time";
 import { TOURNAMENT_CONFIG, LEAGUE_CONFIG } from "./config/constants";
 import { MAIN_MENU_BUTTON_TOURNAMENT } from "./bot/keyboards";
@@ -166,6 +167,21 @@ export default {
               tournamentCta =
                 `\n\n🎯 <b>مسابقه‌ی امشب شروع شد!</b>\n` +
                 `تا ساعت ${TOURNAMENT_CONFIG.CLOSE_HOUR} فرصت داری. از دکمه‌ی «${MAIN_MENU_BUTTON_TOURNAMENT}» توی منو شرکت کن و با بقیه رقابت کن! 🏆`;
+
+              // Dedicated opt-in reminder push to users who tapped "🔔 یادم بنداز"
+              // (bounded to volunteers — not the whole user base).
+              try {
+                const optIns = await getTournamentReminderOptIns(env);
+                await broadcast(env, optIns, (u) => ({
+                  chatId: u.telegram_id,
+                  text:
+                    `🎯 <b>مسابقه‌ی امشب شروع شد!</b>\n` +
+                    `ورود تا ${TOURNAMENT_CONFIG.OPEN_HOUR}:۴۵ بازه و هرکس وارد بشه کل وقتش رو داره. الان بیا و با بقیه رقابت کن! 🏆`,
+                  extra: { parse_mode: "HTML" },
+                }));
+              } catch (err) {
+                console.error("Tournament reminder push error:", err);
+              }
             }
           } catch (err) {
             console.error("Tournament open error:", err);
@@ -205,7 +221,7 @@ export default {
         try {
           const settled = await settleTournament(env, iranDateStr());
           if (settled) {
-            await announceTournamentResults(env, settled.quizId, settled.ranking);
+            await announceTournamentResults(env, settled.quizId, settled.ranking, settled.newBadgesByUser);
           }
         } catch (err) {
           console.error("Tournament settle error:", err);

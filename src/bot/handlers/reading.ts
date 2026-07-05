@@ -21,6 +21,8 @@ import {
 } from "../../db/reading";
 import { queryAll, queryOne, execute, prepare, SqlGuard, batch } from "../../db/client";
 import { calculateAndPrepareXpForReading, checkAndUpdateStreak } from "../../db/xp";
+import { evaluateThresholdBadges } from "../../db/badges";
+import { notifyNewBadges } from "./medals";
 import { CB_PREFIX, STALE_SESSION_HOURS } from "../../config/constants";
 import { getMainMenuKeyboard, getTrainingMenuKeyboard } from "../keyboards";
 import { optionLetterToNumber } from "../../utils/options";
@@ -578,6 +580,10 @@ async function sendReadingSummary(
   if (streakMsg) {
     await sendMessage(env, chatId, streakMsg);
   }
+
+  // Reading session completed (runs once, guarded above) — evaluate medals.
+  const freshBadges = await evaluateThresholdBadges(env, user.id);
+  await notifyNewBadges(env, chatId, freshBadges);
 
   // Skipped = processed history rows the user chose to leave blank (is_correct NULL).
   const skipped = rows.filter((r) => r.is_correct === null).length;

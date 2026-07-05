@@ -1,7 +1,8 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare, batch } from "./client";
-import { CustomQuiz, getLeaderboardWithoutNegative, setQuizStatus } from "./custom_quizzes";
+import { CustomQuiz, getLeaderboardWithoutNegative, setQuizStatus, getQuestionCount } from "./custom_quizzes";
 import { prepareXpForTournament, prepareXpForTournamentRank } from "./xp";
+import { awardTournamentBadges, TournamentBadgeEntry } from "./badges";
 import { TOURNAMENT_CONFIG } from "../config/constants";
 
 /** Map a word_questions correct-option letter to the custom_quiz digit format. */
@@ -150,7 +151,11 @@ export async function createDailyTournament(
 export async function settleTournament(
   env: Env,
   iranDate: string
-): Promise<{ quizId: number; ranking: { rank: number; user_id: number; correct: number }[] } | null> {
+): Promise<{
+  quizId: number;
+  ranking: { rank: number; user_id: number; correct: number }[];
+  newBadgesByUser: Map<number, string[]>;
+} | null> {
   const quiz = await getTournamentByDate(env, iranDate);
   if (!quiz) return null;
   if (quiz.status === "completed") return null; // already settled
@@ -179,10 +184,68 @@ export async function settleTournament(
     await batch(env, stmts.slice(i, i + XP_BATCH_CHUNK));
   }
 
+  // Award tournament medals (participation / top3 / win / perfect / 10-count).
+  const total = await getQuestionCount(env, quiz.id);
+  const partCounts = await getTournamentParticipationCounts(env, quiz.id);
+  const entries: TournamentBadgeEntry[] = ranking.map((r) => ({
+    userId: r.user_id,
+    rank: r.rank,
+    correct: r.correct,
+    total,
+    participationCount: partCounts.get(r.user_id) ?? 1,
+  }));
+  const newBadgesByUser = await awardTournamentBadges(env, quiz.id, entries);
+
   await setQuizStatus(env, quiz.id, "completed");
 
   return {
     quizId: quiz.id,
     ranking: ranking.map((r) => ({ rank: r.rank, user_id: r.user_id, correct: r.correct })),
+    newBadgesByUser,
   };
+}
+
+/** Lifetime finished-tournament count for each participant of the given tournament. */
+async function getTournamentParticipationCounts(env: Env, quizId: number): Promise<Map<number, number>> {
+  const rows = await queryAll<{ user_id: number; cnt: number }>(
+    env,
+    `SELECT a.user_id, COUNT(*) as cnt
+     FROM custom_quiz_attempts a
+     JOIN custom_quizzes q ON q.id = a.quiz_id AND q.kind = 'tournament'
+     WHERE a.status IN ('finished', 'auto_ended')
+       AND a.user_id IN (
+         SELECT user_id FROM custom_quiz_attempts
+         WHERE quiz_id = ? AND status IN ('finished', 'auto_ended')
+       )
+     GROUP BY a.user_id`,
+    [quizId]
+  );
+  return new Map(rows.map((r) => [r.user_id, r.cnt]));
+}
+
+/** Recipients (telegram_id) who opted into the nightly tournament reminder. */
+export async function getTournamentReminderOptIns(env: Env): Promise<{ telegram_id: number }[]> {
+  return queryAll<{ telegram_id: number }>(
+    env,
+    `SELECT telegram_id FROM users
+     WHERE tournament_reminder = 1 AND is_approved = 1 AND COALESCE(is_banned, 0) = 0`
+  );
+}
+
+/** Read a user's tournament-reminder opt-in flag. */
+export async function getTournamentReminder(env: Env, userId: number): Promise<boolean> {
+  const row = await queryOne<{ tournament_reminder: number }>(
+    env,
+    `SELECT tournament_reminder FROM users WHERE id = ?`,
+    [userId]
+  );
+  return (row?.tournament_reminder ?? 0) === 1;
+}
+
+/** Toggle a user's tournament-reminder opt-in flag; returns the new state. */
+export async function toggleTournamentReminder(env: Env, userId: number): Promise<boolean> {
+  const current = await getTournamentReminder(env, userId);
+  const next = current ? 0 : 1;
+  await execute(env, `UPDATE users SET tournament_reminder = ? WHERE id = ?`, [next, userId]);
+  return next === 1;
 }

@@ -1,9 +1,15 @@
 import { Env } from "../../types";
-import { DbUser } from "../../db/users";
-import { sendMessage } from "../telegram-api";
-import { TOURNAMENT_CONFIG } from "../../config/constants";
+import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
+import { DbUser, getOrCreateUser } from "../../db/users";
+import { sendMessage, answerCallbackQuery, editMessageReplyMarkup } from "../telegram-api";
+import { TOURNAMENT_CONFIG, CB_PREFIX } from "../../config/constants";
 import { iranDateStr } from "../../utils/iran_time";
-import { getTournamentByDate } from "../../db/tournaments";
+import {
+  getTournamentByDate,
+  settleTournament,
+  getTournamentReminder,
+  toggleTournamentReminder,
+} from "../../db/tournaments";
 import {
   getAttemptByQuizAndUser,
   getLeaderboardWithoutNegative,
@@ -11,15 +17,30 @@ import {
 } from "../../db/custom_quizzes";
 import { beginOrResumeQuiz } from "./custom_quiz_user";
 import { broadcast } from "./broadcast";
+import { badgeByCode } from "../../config/badges";
 
 /** Medal/rank badge for a placement. */
 function badge(rank: number): string {
   return rank <= 3 ? ["🥇", "🥈", "🥉"][rank - 1] : `${rank}.`;
 }
 
+/** Inline keyboard with the reminder opt-in toggle. */
+function reminderKeyboard(optedIn: boolean): { inline_keyboard: InlineKeyboardButton[][] } {
+  const label = optedIn ? "🔕 خاموش کردن یادآوری" : "🔔 یادم بنداز";
+  return { inline_keyboard: [[{ text: label, callback_data: `${CB_PREFIX.TOURNAMENT}:remind` }]] };
+}
+
+/** Format an Iran-local HH:MM label for a UTC timestamp string. */
+function iranHm(utc: string): string {
+  const d = new Date(new Date(utc).getTime() + 3.5 * 60 * 60 * 1000);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
 /**
- * Entry point for the "🎯 مسابقه" menu button: opens today's tournament, resumes
- * an in-progress attempt, or shows results once it has closed.
+ * Entry point for the "🎯 مسابقه" menu button. Shows the schedule + reminder
+ * toggle before open, runs the join-window logic while open (a late joiner can
+ * still start until JOIN_WINDOW and always gets the full duration), and shows
+ * results after close (settling lazily if the cron tick was missed).
  * @param env - The worker environment containing the D1 database binding
  * @param user - The database user record
  * @param chatId - The Telegram chat ID
@@ -27,12 +48,14 @@ function badge(rank: number): string {
  */
 export async function showTournamentEntry(env: Env, user: DbUser, chatId: number): Promise<void> {
   const quiz = await getTournamentByDate(env, iranDateStr());
+  const optedIn = await getTournamentReminder(env, user.id);
+
   if (!quiz) {
     await sendMessage(
       env,
       chatId,
       `🎯 <b>مسابقه‌ی امشب</b>\n\nهنوز مسابقه‌ای فعال نیست. هر شب ساعت ${TOURNAMENT_CONFIG.OPEN_HOUR}:۰۰ یک مسابقه‌ی جدید برگزار می‌شه — منتظرت هستیم! 🏆`,
-      { parse_mode: "HTML" }
+      { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
     );
     return;
   }
@@ -40,23 +63,32 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
   const now = Date.now();
   const opensMs = quiz.opens_at ? new Date(quiz.opens_at).getTime() : 0;
   const closesMs = quiz.closes_at ? new Date(quiz.closes_at).getTime() : Number.POSITIVE_INFINITY;
-  const isClosed = quiz.status === "completed" || now >= closesMs;
+  const lastJoinMs = opensMs + TOURNAMENT_CONFIG.JOIN_WINDOW_MINUTES * 60 * 1000;
 
+  // Not started yet.
   if (opensMs && now < opensMs) {
     await sendMessage(
       env,
       chatId,
-      `🎯 <b>مسابقه‌ی امشب</b>\n\nهنوز شروع نشده! سر ساعت ${TOURNAMENT_CONFIG.OPEN_HOUR}:۰۰ برگزار می‌شه. آماده باش! ⏳`,
-      { parse_mode: "HTML" }
+      `🎯 <b>مسابقه‌ی امشب</b>\n\nسر ساعت ${TOURNAMENT_CONFIG.OPEN_HOUR}:۰۰ شروع می‌شه (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())}). آماده باش! ⏳`,
+      { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
     );
     return;
   }
 
-  if (isClosed) {
+  // Closed → settle lazily (idempotent, no broadcast) then show results.
+  if (now >= closesMs || quiz.status === "completed") {
+    if (quiz.status !== "completed") {
+      try {
+        await settleTournament(env, iranDateStr());
+      } catch (err) {
+        console.error("Lazy tournament settle error:", err);
+      }
+    }
     const attempt = await getAttemptByQuizAndUser(env, quiz.id, user.id);
     if (attempt) {
-      // beginOrResumeQuiz shows results for a finished/expired attempt (and never
-      // creates a new one because an attempt already exists).
+      // beginOrResumeQuiz shows results for a finished/expired attempt and never
+      // creates a new one because an attempt already exists.
       await beginOrResumeQuiz(env, user, chatId, quiz);
     } else {
       await sendTournamentTop(env, chatId, quiz.id);
@@ -64,8 +96,44 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
     return;
   }
 
-  // Open now → begin or resume.
-  await beginOrResumeQuiz(env, user, chatId, quiz);
+  // Window open. Resuming is always allowed; a NEW start only until lastJoin.
+  const attempt = await getAttemptByQuizAndUser(env, quiz.id, user.id);
+  if (attempt) {
+    await beginOrResumeQuiz(env, user, chatId, quiz);
+    return;
+  }
+  if (now < lastJoinMs) {
+    await beginOrResumeQuiz(env, user, chatId, quiz);
+    return;
+  }
+  // After the join window: no new attempts (so nobody is cut off mid-quiz).
+  await sendMessage(
+    env,
+    chatId,
+    `⏳ پنجره‌ی ورود به مسابقه‌ی امشب بسته شد (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())} بود).\nنتایج ساعت ${TOURNAMENT_CONFIG.CLOSE_HOUR}:۰۰ اعلام می‌شه. فردا شب زودتر بیا! 🎯`,
+    { parse_mode: "HTML" }
+  );
+}
+
+/** Toggle callback for the reminder opt-in button (CB_PREFIX.TOURNAMENT:remind). */
+export async function handleTournamentCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
+  const action = (callbackQuery.data || "").split(":")[1] || "";
+  const msg = callbackQuery.message;
+  if (action !== "remind" || !msg) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+  const user = await getOrCreateUser(env, callbackQuery.from);
+  const optedIn = await toggleTournamentReminder(env, user.id);
+  await answerCallbackQuery(
+    env,
+    callbackQuery.id,
+    optedIn ? "🔔 هر شب یادت می‌ندازم!" : "🔕 یادآوری خاموش شد.",
+    false
+  );
+  try {
+    await editMessageReplyMarkup(env, msg.chat.id, msg.message_id, reminderKeyboard(optedIn));
+  } catch {}
 }
 
 /** Send a short top-placements summary for a closed tournament. */
@@ -85,16 +153,18 @@ async function sendTournamentTop(env: Env, chatId: number, quizId: number): Prom
 
 /**
  * Broadcast final placements to every participant after settlement (participants
- * only — not the whole user base).
+ * only), including any medals they just earned.
  * @param env - The worker environment containing the D1 database binding
  * @param quizId - The settled tournament's quiz id
  * @param ranking - Final ranking (rank, user_id, correct) from settleTournament
+ * @param newBadgesByUser - Map of userId → newly-awarded badge codes
  * @returns Count of messages sent/failed
  */
 export async function announceTournamentResults(
   env: Env,
   quizId: number,
-  ranking: { rank: number; user_id: number; correct: number }[]
+  ranking: { rank: number; user_id: number; correct: number }[],
+  newBadgesByUser: Map<number, string[]> = new Map()
 ): Promise<{ sent: number; failed: number }> {
   const rankByUser = new Map(ranking.map((r) => [r.user_id, r]));
   const total = ranking.length;
@@ -116,6 +186,12 @@ export async function announceTournamentResults(
       `✅ پاسخ‌های درست: ${r.correct}`;
     if (r.rank <= 3) {
       text += `\n\n🎉 تبریک! جزو نفرات برتر شدی و امتیاز ویژه گرفتی.`;
+    }
+    const medals = (newBadgesByUser.get(a.user_id) || [])
+      .map((c) => badgeByCode(c))
+      .filter(Boolean);
+    if (medals.length) {
+      text += `\n\n🏅 <b>مدال جدید:</b> ` + medals.map((m) => `${m!.emoji} ${m!.title}`).join("، ");
     }
     text += `\n\nفردا شب دوباره منتظرت هستیم! 🎯`;
     return { chatId: a.chat_id, text, extra: { parse_mode: "HTML" } };

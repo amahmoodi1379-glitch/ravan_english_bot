@@ -15,6 +15,7 @@ import {
   PROFILE_MENU_BUTTON_SETTINGS,
   PROFILE_MENU_BUTTON_STATS,
   PROFILE_MENU_BUTTON_SUMMARY,
+  PROFILE_MENU_BUTTON_MEDALS,
   LETTERS_MENU_BUTTON_WRITE,
   LETTERS_MENU_BUTTON_INBOX,
   LETTERS_MENU_BUTTON_SETTINGS,
@@ -40,8 +41,9 @@ import {
   handleQuizStart,
   handleQuizUserCallback
 } from "./handlers/custom_quiz_user";
-import { showTournamentEntry } from "./handlers/tournament";
+import { showTournamentEntry, handleTournamentCallback } from "./handlers/tournament";
 import { showLeagueHome } from "./handlers/league";
+import { showMedals } from "./handlers/medals";
 import {
   handleQuizAdminCallback
 } from "./handlers/custom_quiz_admin";
@@ -215,6 +217,11 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
 
   if (data.startsWith(`${CB_PREFIX.LEADERBOARD}:`)) {
     await handleLeaderboardCallback(env, callbackQuery);
+    return;
+  }
+
+  if (data.startsWith(`${CB_PREFIX.TOURNAMENT}:`)) {
+    await handleTournamentCallback(env, callbackQuery);
     return;
   }
 
@@ -448,6 +455,10 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   }
   if (navText === PROFILE_MENU_BUTTON_SUMMARY) {
     await showProfileSummary(env, user, chatId);
+    return;
+  }
+  if (navText === PROFILE_MENU_BUTTON_MEDALS) {
+    await showMedals(env, user, chatId);
     return;
   }
 

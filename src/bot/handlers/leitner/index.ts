@@ -18,6 +18,8 @@ import {
 } from "../../../db/leitner";
 import { formatAnswerStatsLine } from "../../../utils/answer_stats";
 import { prepareXpForLeitner, prepareXpForLeitnerDunno, checkAndUpdateStreak } from "../../../db/xp";
+import { evaluateThresholdBadges } from "../../../db/badges";
+import { notifyNewBadges } from "../medals";
 import { recordWordQuestionReport } from "../../../db/word_reports";
 import {
   CB_PREFIX,
@@ -455,7 +457,12 @@ async function handleRating(
 
   if (ratingValue >= Rating.Good) {
     const streakMsg = await checkAndUpdateStreak(env, user.id);
-    if (streakMsg) await sendMessage(env, chatId, streakMsg);
+    if (streakMsg) {
+      await sendMessage(env, chatId, streakMsg);
+      // Streak advanced (≤once/day) — a cheap point to check for new medals.
+      const fresh = await evaluateThresholdBadges(env, user.id);
+      await notifyNewBadges(env, chatId, fresh);
+    }
   }
 
   const emoji = ratingEmoji(ratingValue);

@@ -14,6 +14,7 @@ export const TRAINING_MENU_BUTTON_BACK = "🏠 بازگشت به منوی اصل
 export const PROFILE_MENU_BUTTON_SETTINGS = "⚙️ تنظیمات پروفایل";
 export const PROFILE_MENU_BUTTON_STATS = "📊 آمار فعالیت";
 export const PROFILE_MENU_BUTTON_SUMMARY = "🪪 خلاصه پروفایل";
+export const PROFILE_MENU_BUTTON_MEDALS = "🏅 مدال‌ها";
 
 export const LETTERS_MENU_BUTTON_WRITE = "✍️ نوشتن نامه";
 export const LETTERS_MENU_BUTTON_INBOX = "📬 نامه‌های رسیده";
@@ -36,6 +37,7 @@ registerUserMenuLabels([
   PROFILE_MENU_BUTTON_SETTINGS,
   PROFILE_MENU_BUTTON_STATS,
   PROFILE_MENU_BUTTON_SUMMARY,
+  PROFILE_MENU_BUTTON_MEDALS,
   LETTERS_MENU_BUTTON_WRITE,
   LETTERS_MENU_BUTTON_INBOX,
   LETTERS_MENU_BUTTON_SETTINGS,
@@ -111,9 +113,8 @@ export function getTrainingMenuKeyboard(): ReplyKeyboardMarkup {
 export function getProfileMenuKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
-      [{ text: PROFILE_MENU_BUTTON_SETTINGS }],
-      [{ text: PROFILE_MENU_BUTTON_STATS }],
-      [{ text: PROFILE_MENU_BUTTON_SUMMARY }],
+      [{ text: PROFILE_MENU_BUTTON_STATS }, { text: PROFILE_MENU_BUTTON_MEDALS }],
+      [{ text: PROFILE_MENU_BUTTON_SUMMARY }, { text: PROFILE_MENU_BUTTON_SETTINGS }],
       [{ text: TRAINING_MENU_BUTTON_BACK }]
     ],
     resize_keyboard: true,
