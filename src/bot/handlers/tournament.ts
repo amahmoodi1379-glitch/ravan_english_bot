@@ -18,6 +18,7 @@ import {
 import { beginOrResumeQuiz } from "./custom_quiz_user";
 import { broadcast } from "./broadcast";
 import { badgeByCode } from "../../config/badges";
+import { toPersianDigits } from "../../utils/digits";
 
 /** Medal/rank badge for a placement. */
 function badge(rank: number): string {
@@ -30,11 +31,16 @@ function reminderKeyboard(optedIn: boolean): { inline_keyboard: InlineKeyboardBu
   return { inline_keyboard: [[{ text: label, callback_data: `${CB_PREFIX.TOURNAMENT}:remind` }]] };
 }
 
-/** Format an Iran-local HH:MM label for a UTC timestamp string. */
+/** Format an Iran-local HH:MM label (Persian digits) for a UTC timestamp string. */
 function iranHm(utc: string): string {
   const d = new Date(new Date(utc).getTime() + 3.5 * 60 * 60 * 1000);
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  const hm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  return toPersianDigits(hm);
 }
+
+/** The tournament's open / close hour as a Persian-digit "HH:۰۰" label. */
+const OPEN_LABEL = `${toPersianDigits(TOURNAMENT_CONFIG.OPEN_HOUR)}:۰۰`;
+const CLOSE_LABEL = `${toPersianDigits(TOURNAMENT_CONFIG.CLOSE_HOUR)}:۰۰`;
 
 /**
  * Entry point for the "🎯 مسابقه" menu button. Shows the schedule + reminder
@@ -54,7 +60,7 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
     await sendMessage(
       env,
       chatId,
-      `🎯 <b>مسابقه‌ی امشب</b>\n\nهنوز مسابقه‌ای فعال نیست. هر شب ساعت ${TOURNAMENT_CONFIG.OPEN_HOUR}:۰۰ یک مسابقه‌ی جدید برگزار می‌شه — منتظرت هستیم! 🏆`,
+      `🎯 <b>مسابقه‌ی امشب</b>\n\nهنوز مسابقه‌ای فعال نیست. هر شب ساعت ${OPEN_LABEL} یک مسابقه‌ی جدید برگزار می‌شه — منتظرت هستیم! 🏆`,
       { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
     );
     return;
@@ -70,7 +76,7 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
     await sendMessage(
       env,
       chatId,
-      `🎯 <b>مسابقه‌ی امشب</b>\n\nسر ساعت ${TOURNAMENT_CONFIG.OPEN_HOUR}:۰۰ شروع می‌شه (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())}). آماده باش! ⏳`,
+      `🎯 <b>مسابقه‌ی امشب</b>\n\nسر ساعت ${OPEN_LABEL} شروع می‌شه (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())}). آماده باش! ⏳`,
       { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
     );
     return;
@@ -110,7 +116,7 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
   await sendMessage(
     env,
     chatId,
-    `⏳ پنجره‌ی ورود به مسابقه‌ی امشب بسته شد (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())} بود).\nنتایج ساعت ${TOURNAMENT_CONFIG.CLOSE_HOUR}:۰۰ اعلام می‌شه. فردا شب زودتر بیا! 🎯`,
+    `⏳ پنجره‌ی ورود به مسابقه‌ی امشب بسته شد (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())} بود).\nنتایج ساعت ${CLOSE_LABEL} اعلام می‌شه. فردا شب زودتر بیا! 🎯`,
     { parse_mode: "HTML" }
   );
 }

@@ -3,7 +3,7 @@ import { queryOne, queryAll, execute, prepare, batch } from "./client";
 import { CustomQuiz, getLeaderboardWithoutNegative, setQuizStatus, getQuestionCount } from "./custom_quizzes";
 import { prepareXpForTournament, prepareXpForTournamentRank } from "./xp";
 import { awardTournamentBadges, TournamentBadgeEntry } from "./badges";
-import { TOURNAMENT_CONFIG } from "../config/constants";
+import { TOURNAMENT_CONFIG, TIME_ZONE_OFFSET } from "../config/constants";
 
 /** Map a word_questions correct-option letter to the custom_quiz digit format. */
 const LETTER_TO_DIGIT: Record<string, string> = { A: "1", B: "2", C: "3", D: "4" };
@@ -223,12 +223,23 @@ async function getTournamentParticipationCounts(env: Env, quizId: number): Promi
   return new Map(rows.map((r) => [r.user_id, r.cnt]));
 }
 
-/** Recipients (telegram_id) who opted into the nightly tournament reminder. */
+/**
+ * Recipients (telegram_id) for the nightly tournament reminder: opted-in, active
+ * users EXCLUDING anyone already active today. Active-today users receive the
+ * tournament call-to-action folded into their daily report, so excluding them
+ * here keeps the two channels disjoint — nobody is pinged about the tournament
+ * twice.
+ */
 export async function getTournamentReminderOptIns(env: Env): Promise<{ telegram_id: number }[]> {
   return queryAll<{ telegram_id: number }>(
     env,
-    `SELECT telegram_id FROM users
-     WHERE tournament_reminder = 1 AND is_approved = 1 AND COALESCE(is_banned, 0) = 0`
+    `SELECT u.telegram_id FROM users u
+     WHERE u.tournament_reminder = 1 AND u.is_approved = 1 AND COALESCE(u.is_banned, 0) = 0
+       AND NOT EXISTS (
+         SELECT 1 FROM activity_log a
+         WHERE a.user_id = u.id AND date(a.created_at, ?) = date('now', ?)
+       )`,
+    [TIME_ZONE_OFFSET, TIME_ZONE_OFFSET]
   );
 }
 

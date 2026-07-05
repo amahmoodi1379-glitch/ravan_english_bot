@@ -14,7 +14,7 @@ export const TRAINING_MENU_BUTTON_BACK = "🏠 بازگشت به منوی اصل
 export const PROFILE_MENU_BUTTON_SETTINGS = "⚙️ تنظیمات پروفایل";
 export const PROFILE_MENU_BUTTON_STATS = "📊 آمار فعالیت";
 export const PROFILE_MENU_BUTTON_SUMMARY = "🪪 خلاصه پروفایل";
-export const PROFILE_MENU_BUTTON_MEDALS = "🏅 مدال‌ها";
+export const PROFILE_MENU_BUTTON_MEDALS = "🎖 مدال‌ها";
 
 export const LETTERS_MENU_BUTTON_WRITE = "✍️ نوشتن نامه";
 export const LETTERS_MENU_BUTTON_INBOX = "📬 نامه‌های رسیده";
