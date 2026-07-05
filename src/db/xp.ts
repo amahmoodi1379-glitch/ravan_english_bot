@@ -3,7 +3,7 @@ import { prepare, SqlGuard, queryOne, execute } from "./client";
 import { XP_VALUES, TIME_ZONE_OFFSET } from "../config/constants";
 import { Rating } from "../utils/fsrs";
 
-export type ActivityType = "leitner_question" | "reading_session";
+export type ActivityType = "leitner_question" | "reading_session" | "tournament" | "tournament_rank";
 
 /**
  * Build the statements that award XP. When `guard` is supplied, both the
@@ -141,6 +141,57 @@ export function calculateAndPrepareXpForReading(
   }, guard);
 
   return { totalXp, stmts };
+}
+
+/**
+ * Prepare statements that award a user's tournament XP (participation + per-correct),
+ * guarded so it is awarded at most once per (user, tournament). Both statements are
+ * gated on "no existing 'tournament' activity_log row for this user+quiz", so
+ * re-running settlement (or a finish/settlement race) never double-awards.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user receiving XP
+ * @param quizId - The tournament's custom_quizzes id (stored as ref_id)
+ * @param correctCount - Number of correct answers in the attempt
+ * @returns Prepared statements to run in a DB.batch()
+ */
+export function prepareXpForTournament(
+  env: Env,
+  userId: number,
+  quizId: number,
+  correctCount: number
+): D1PreparedStatement[] {
+  const xp = XP_VALUES.TOURNAMENT_PARTICIPATE + Math.max(0, correctCount) * XP_VALUES.TOURNAMENT_CORRECT;
+  const guard: SqlGuard = {
+    sql: "NOT EXISTS (SELECT 1 FROM activity_log WHERE user_id = ? AND activity_type = 'tournament' AND ref_id = ?)",
+    params: [userId, quizId],
+  };
+  return prepareAddXp(env, userId, xp, "tournament", quizId, { correct: correctCount }, guard);
+}
+
+/**
+ * Prepare statements that award a tournament rank bonus (1st/2nd/3rd), guarded so
+ * it is awarded at most once per (user, tournament). Uses a distinct activity_type
+ * ('tournament_rank') so it coexists with the participation/correct XP row.
+ * @param env - The worker environment containing the D1 database binding
+ * @param userId - The user receiving the bonus
+ * @param quizId - The tournament's custom_quizzes id (stored as ref_id)
+ * @param bonusXp - The rank bonus amount
+ * @param rank - The user's final rank (stored in meta for audit)
+ * @returns Prepared statements to run in a DB.batch()
+ */
+export function prepareXpForTournamentRank(
+  env: Env,
+  userId: number,
+  quizId: number,
+  bonusXp: number,
+  rank: number
+): D1PreparedStatement[] {
+  if (bonusXp <= 0) return [];
+  const guard: SqlGuard = {
+    sql: "NOT EXISTS (SELECT 1 FROM activity_log WHERE user_id = ? AND activity_type = 'tournament_rank' AND ref_id = ?)",
+    params: [userId, quizId],
+  };
+  return prepareAddXp(env, userId, bonusXp, "tournament_rank", quizId, { rank }, guard);
 }
 
 /**

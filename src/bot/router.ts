@@ -7,12 +7,15 @@ import {
   MAIN_MENU_BUTTON_PROFILE,
   MAIN_MENU_BUTTON_LEADERBOARD,
   MAIN_MENU_BUTTON_LETTERS,
+  MAIN_MENU_BUTTON_TOURNAMENT,
+  MAIN_MENU_BUTTON_LEAGUE,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
   PROFILE_MENU_BUTTON_SETTINGS,
   PROFILE_MENU_BUTTON_STATS,
   PROFILE_MENU_BUTTON_SUMMARY,
+  PROFILE_MENU_BUTTON_MEDALS,
   LETTERS_MENU_BUTTON_WRITE,
   LETTERS_MENU_BUTTON_INBOX,
   LETTERS_MENU_BUTTON_SETTINGS,
@@ -38,6 +41,9 @@ import {
   handleQuizStart,
   handleQuizUserCallback
 } from "./handlers/custom_quiz_user";
+import { showTournamentEntry, handleTournamentCallback } from "./handlers/tournament";
+import { showLeagueHome } from "./handlers/league";
+import { showMedals } from "./handlers/medals";
 import {
   handleQuizAdminCallback
 } from "./handlers/custom_quiz_admin";
@@ -214,6 +220,11 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
     return;
   }
 
+  if (data.startsWith(`${CB_PREFIX.TOURNAMENT}:`)) {
+    await handleTournamentCallback(env, callbackQuery);
+    return;
+  }
+
   if (data.startsWith(`${CB_PREFIX.QUIZ}:`)) {
     const parts = data.split(":");
     const subAction = parts[1] || "";
@@ -382,6 +393,16 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
+  if (navText === MAIN_MENU_BUTTON_TOURNAMENT) {
+    await showTournamentEntry(env, user, chatId);
+    return;
+  }
+
+  if (navText === MAIN_MENU_BUTTON_LEAGUE) {
+    await showLeagueHome(env, user, chatId);
+    return;
+  }
+
   if (navText === MAIN_MENU_BUTTON_LETTERS) {
     await showLettersEntry(env, user, chatId);
     return;
@@ -434,6 +455,10 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
   }
   if (navText === PROFILE_MENU_BUTTON_SUMMARY) {
     await showProfileSummary(env, user, chatId);
+    return;
+  }
+  if (navText === PROFILE_MENU_BUTTON_MEDALS) {
+    await showMedals(env, user, chatId);
     return;
   }
 

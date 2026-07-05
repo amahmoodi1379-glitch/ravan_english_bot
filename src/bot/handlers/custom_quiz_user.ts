@@ -2,6 +2,7 @@ import { Env } from "../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, editMessageText, answerCallbackQuery } from "../telegram-api";
 import { CB_PREFIX } from "../../config/constants";
+import { parseUtcStamp } from "../../utils/iran_time";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import {
   getQuizLinkByToken, getQuizById, getQuizQuestions,
@@ -12,6 +13,7 @@ import {
   getUserRankWithNegative, getUserRankWithoutNegative,
   getFinishedAttemptsWithChatId,
   CustomQuizQuestion,
+  CustomQuiz,
 } from "../../db/custom_quizzes";
 
 function formatTime(d: Date): string {
@@ -45,6 +47,20 @@ export async function handleQuizStart(env: Env, user: DbUser, chatId: number, to
     return;
   }
 
+  await beginOrResumeQuiz(env, user, chatId, quiz);
+}
+
+/**
+ * Begin, resume, or show results for a quiz the caller has already resolved and
+ * authorised (a token link OR today's tournament). Reuses the whole quiz-taking
+ * UI. For tournaments the per-user timer is additionally capped by `closes_at`.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param chatId - The Telegram chat ID
+ * @param quiz - The resolved quiz row (custom or tournament)
+ * @returns void
+ */
+export async function beginOrResumeQuiz(env: Env, user: DbUser, chatId: number, quiz: CustomQuiz): Promise<void> {
   // Parallel: fetch questions and existing attempt together
   const [questions, existing] = await Promise.all([
     getQuizQuestions(env, quiz.id),
@@ -64,7 +80,7 @@ export async function handleQuizStart(env: Env, user: DbUser, chatId: number, to
     }
     // Resume
     const resumeIndex = existing.current_question_index || 1;
-    const endTime = new Date(new Date(existing.started_at).getTime() + quiz.total_time_minutes * 60 * 1000);
+    const endTime = new Date(attemptEndMs(quiz, parseUtcStamp(existing.started_at).getTime()));
     await sendMessage(env, chatId, `⏱️ <b>ادامه آزمون "${quiz.title}"</b>\n🕐 پایان: ${formatTime(endTime)}\n\nاز دکمه‌های زیر استفاده کن 👇`, { parse_mode: "HTML" });
     await sendQuizQuestion(env, chatId, quiz.id, existing.id, resumeIndex);
     return;
@@ -79,7 +95,7 @@ export async function handleQuizStart(env: Env, user: DbUser, chatId: number, to
 
   // Create new attempt
   const attemptId = await createAttempt(env, quiz.id, user.id, chatId);
-  const endTime = new Date(Date.now() + quiz.total_time_minutes * 60 * 1000);
+  const endTime = new Date(attemptEndMs(quiz, Date.now()));
 
   await sendMessage(env, chatId,
     `📝 <b>آزمون: ${quiz.title}</b>\n\n` +
@@ -96,10 +112,22 @@ export async function handleQuizStart(env: Env, user: DbUser, chatId: number, to
   await sendQuizQuestion(env, chatId, quiz.id, attemptId, 1);
 }
 
-function isQuizExpired(attempt: { started_at: string }, quiz: { total_time_minutes: number }): boolean {
-  const started = new Date(attempt.started_at).getTime();
-  const limitMs = quiz.total_time_minutes * 60 * 1000;
-  return Date.now() > started + limitMs;
+/**
+ * The effective end time (ms) of an attempt: start + per-user limit, but never
+ * later than the quiz's hard `closes_at` (tournaments). Custom quizzes have no
+ * closes_at, so their timing is unchanged.
+ */
+function attemptEndMs(quiz: { total_time_minutes: number; closes_at?: string | null }, startedMs: number): number {
+  let end = startedMs + quiz.total_time_minutes * 60 * 1000;
+  if (quiz.closes_at) {
+    const closeMs = parseUtcStamp(quiz.closes_at).getTime();
+    if (!Number.isNaN(closeMs) && closeMs < end) end = closeMs;
+  }
+  return end;
+}
+
+function isQuizExpired(attempt: { started_at: string }, quiz: { total_time_minutes: number; closes_at?: string | null }): boolean {
+  return Date.now() > attemptEndMs(quiz, parseUtcStamp(attempt.started_at).getTime());
 }
 
 /**
@@ -191,7 +219,7 @@ async function sendQuizQuestion(
   }
 }
 
-async function autoFinish(env: Env, chatId: number, userId: number, attemptId: number, quizId: number, messageId?: number): Promise<void> {
+async function autoFinish(env: Env, chatId: number, userId: number, attemptId: number, quizId: number, messageId?: number, quizKind?: string): Promise<void> {
   const attempt = await getAttempt(env, attemptId);
   if (!attempt) return;
   if (attempt.status === 'auto_ended' || attempt.status === 'finished') {
@@ -210,8 +238,12 @@ async function autoFinish(env: Env, chatId: number, userId: number, attemptId: n
   await sendMessage(env, chatId, "⏰ <b>زمان آزمون تمام شد!</b>\n\nنتایج شما:", { parse_mode: "HTML" });
   await sendResults(env, chatId, userId, quizId, attemptId);
 
-  // Push results to other finished participants
-  await pushResultsToAllFinished(env, quizId, userId);
+  // Push "results ready" to other finished participants — for admin link-quizzes
+  // only. Tournaments broadcast their own results at settlement (and have no link
+  // to re-open), so this cross-notification must not fire for them.
+  if (quizKind !== 'tournament') {
+    await pushResultsToAllFinished(env, quizId, userId);
+  }
 }
 
 async function pushResultsToAllFinished(env: Env, quizId: number, excludeUserId: number): Promise<void> {
@@ -295,7 +327,7 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: TelegramCa
   // Check time expiry
   if (isQuizExpired(attempt, quiz)) {
     await answerCallbackQuery(env, callbackQuery.id, "⏰ زمان تمام شد!");
-    await autoFinish(env, chatId, user.id, attemptId, quiz.id, messageId);
+    await autoFinish(env, chatId, user.id, attemptId, quiz.id, messageId, quiz.kind);
     return;
   }
 
@@ -461,7 +493,7 @@ async function handleReturnResults(env: Env, chatId: number, messageId: number, 
 
 // --- Results ---
 
-async function sendResults(env: Env, chatId: number, userId: number, quizId: number, attemptId: number): Promise<void> {
+export async function sendResults(env: Env, chatId: number, userId: number, quizId: number, attemptId: number): Promise<void> {
   // Parallel: fetch all leaderboard data at once
   const [lbNeg, userRankNeg, lbPos, userRankPos, questions] = await Promise.all([
     getLeaderboardWithNegative(env, quizId, 50),

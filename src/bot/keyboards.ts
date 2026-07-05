@@ -4,6 +4,8 @@ export const MAIN_MENU_BUTTON_TRAINING = "🎮 تمرین‌ها";
 export const MAIN_MENU_BUTTON_PROFILE = "👤 پروفایل و آمار";
 export const MAIN_MENU_BUTTON_LEADERBOARD = "🏆 لیدربورد";
 export const MAIN_MENU_BUTTON_LETTERS = "💌 نامه‌ها";
+export const MAIN_MENU_BUTTON_TOURNAMENT = "🎯 مسابقه";
+export const MAIN_MENU_BUTTON_LEAGUE = "🏅 لیگ";
 
 export const TRAINING_MENU_BUTTON_LEITNER = "🧠 لایتنر واژگان";
 export const TRAINING_MENU_BUTTON_READING = "📖 تست درک مطلب";
@@ -12,6 +14,7 @@ export const TRAINING_MENU_BUTTON_BACK = "🏠 بازگشت به منوی اصل
 export const PROFILE_MENU_BUTTON_SETTINGS = "⚙️ تنظیمات پروفایل";
 export const PROFILE_MENU_BUTTON_STATS = "📊 آمار فعالیت";
 export const PROFILE_MENU_BUTTON_SUMMARY = "🪪 خلاصه پروفایل";
+export const PROFILE_MENU_BUTTON_MEDALS = "🎖 مدال‌ها";
 
 export const LETTERS_MENU_BUTTON_WRITE = "✍️ نوشتن نامه";
 export const LETTERS_MENU_BUTTON_INBOX = "📬 نامه‌های رسیده";
@@ -26,12 +29,15 @@ registerUserMenuLabels([
   MAIN_MENU_BUTTON_PROFILE,
   MAIN_MENU_BUTTON_LEADERBOARD,
   MAIN_MENU_BUTTON_LETTERS,
+  MAIN_MENU_BUTTON_TOURNAMENT,
+  MAIN_MENU_BUTTON_LEAGUE,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
   PROFILE_MENU_BUTTON_SETTINGS,
   PROFILE_MENU_BUTTON_STATS,
   PROFILE_MENU_BUTTON_SUMMARY,
+  PROFILE_MENU_BUTTON_MEDALS,
   LETTERS_MENU_BUTTON_WRITE,
   LETTERS_MENU_BUTTON_INBOX,
   LETTERS_MENU_BUTTON_SETTINGS,
@@ -60,6 +66,7 @@ export function getMainMenuKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: MAIN_MENU_BUTTON_TRAINING, style: "success" }, { text: MAIN_MENU_BUTTON_LEADERBOARD, style: "primary" }],
+      [{ text: MAIN_MENU_BUTTON_TOURNAMENT, style: "primary" }, { text: MAIN_MENU_BUTTON_LEAGUE, style: "success" }],
       [{ text: MAIN_MENU_BUTTON_PROFILE, style: "primary" }, { text: MAIN_MENU_BUTTON_LETTERS, style: "success" }]
     ],
     resize_keyboard: true,
@@ -106,9 +113,8 @@ export function getTrainingMenuKeyboard(): ReplyKeyboardMarkup {
 export function getProfileMenuKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
-      [{ text: PROFILE_MENU_BUTTON_SETTINGS }],
-      [{ text: PROFILE_MENU_BUTTON_STATS }],
-      [{ text: PROFILE_MENU_BUTTON_SUMMARY }],
+      [{ text: PROFILE_MENU_BUTTON_STATS }, { text: PROFILE_MENU_BUTTON_MEDALS }],
+      [{ text: PROFILE_MENU_BUTTON_SUMMARY }, { text: PROFILE_MENU_BUTTON_SETTINGS }],
       [{ text: TRAINING_MENU_BUTTON_BACK }]
     ],
     resize_keyboard: true,

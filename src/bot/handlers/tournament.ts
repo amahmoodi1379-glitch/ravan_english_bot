@@ -1,0 +1,207 @@
+import { Env } from "../../types";
+import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
+import { DbUser, getOrCreateUser } from "../../db/users";
+import { sendMessage, answerCallbackQuery, editMessageReplyMarkup } from "../telegram-api";
+import { TOURNAMENT_CONFIG, CB_PREFIX } from "../../config/constants";
+import { iranDateStr, parseUtcStamp, IRAN_OFFSET_MS } from "../../utils/iran_time";
+import {
+  getTournamentByDate,
+  settleTournament,
+  getTournamentReminder,
+  toggleTournamentReminder,
+} from "../../db/tournaments";
+import {
+  getAttemptByQuizAndUser,
+  getLeaderboardWithoutNegative,
+  getFinishedAttemptsWithChatId,
+} from "../../db/custom_quizzes";
+import { beginOrResumeQuiz } from "./custom_quiz_user";
+import { broadcast } from "./broadcast";
+import { badgeByCode } from "../../config/badges";
+import { toPersianDigits } from "../../utils/digits";
+
+/** Medal/rank badge for a placement. */
+function badge(rank: number): string {
+  return rank <= 3 ? ["🥇", "🥈", "🥉"][rank - 1] : `${rank}.`;
+}
+
+/** Inline keyboard with the reminder opt-in toggle. */
+function reminderKeyboard(optedIn: boolean): { inline_keyboard: InlineKeyboardButton[][] } {
+  const label = optedIn ? "🔕 خاموش کردن یادآوری" : "🔔 یادم بنداز";
+  return { inline_keyboard: [[{ text: label, callback_data: `${CB_PREFIX.TOURNAMENT}:remind` }]] };
+}
+
+/** Format an Iran-local HH:MM label (Persian digits) for an epoch-ms instant. */
+function iranHm(ms: number): string {
+  const d = new Date(ms + IRAN_OFFSET_MS);
+  const hm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  return toPersianDigits(hm);
+}
+
+/** The tournament's open / close hour as a Persian-digit "HH:۰۰" label. */
+const OPEN_LABEL = `${toPersianDigits(TOURNAMENT_CONFIG.OPEN_HOUR)}:۰۰`;
+const CLOSE_LABEL = `${toPersianDigits(TOURNAMENT_CONFIG.CLOSE_HOUR)}:۰۰`;
+
+/**
+ * Entry point for the "🎯 مسابقه" menu button. Shows the schedule + reminder
+ * toggle before open, runs the join-window logic while open (a late joiner can
+ * still start until JOIN_WINDOW and always gets the full duration), and shows
+ * results after close (settling lazily if the cron tick was missed).
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param chatId - The Telegram chat ID
+ * @returns void
+ */
+export async function showTournamentEntry(env: Env, user: DbUser, chatId: number): Promise<void> {
+  const quiz = await getTournamentByDate(env, iranDateStr());
+  const optedIn = await getTournamentReminder(env, user.id);
+
+  if (!quiz) {
+    await sendMessage(
+      env,
+      chatId,
+      `🎯 <b>مسابقه‌ی امشب</b>\n\nهنوز مسابقه‌ای فعال نیست. هر شب ساعت ${OPEN_LABEL} یک مسابقه‌ی جدید برگزار می‌شه — منتظرت هستیم! 🏆`,
+      { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const opensMs = quiz.opens_at ? parseUtcStamp(quiz.opens_at).getTime() : 0;
+  const closesMs = quiz.closes_at ? parseUtcStamp(quiz.closes_at).getTime() : Number.POSITIVE_INFINITY;
+  const lastJoinMs = opensMs + TOURNAMENT_CONFIG.JOIN_WINDOW_MINUTES * 60 * 1000;
+
+  // Not started yet.
+  if (opensMs && now < opensMs) {
+    await sendMessage(
+      env,
+      chatId,
+      `🎯 <b>مسابقه‌ی امشب</b>\n\nسر ساعت ${OPEN_LABEL} شروع می‌شه (ورود تا ${iranHm(lastJoinMs)}). آماده باش! ⏳`,
+      { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
+    );
+    return;
+  }
+
+  // Closed → settle lazily (idempotent, no broadcast) then show results.
+  if (now >= closesMs || quiz.status === "completed") {
+    if (quiz.status !== "completed") {
+      try {
+        // Settle THIS quiz's date (not iranDateStr(), which could roll past
+        // midnight) so we never accidentally target a different day's tournament.
+        await settleTournament(env, quiz.tournament_date ?? iranDateStr());
+      } catch (err) {
+        console.error("Lazy tournament settle error:", err);
+      }
+    }
+    const attempt = await getAttemptByQuizAndUser(env, quiz.id, user.id);
+    if (attempt) {
+      // beginOrResumeQuiz shows results for a finished/expired attempt and never
+      // creates a new one because an attempt already exists.
+      await beginOrResumeQuiz(env, user, chatId, quiz);
+    } else {
+      await sendTournamentTop(env, chatId, quiz.id);
+    }
+    return;
+  }
+
+  // Window open. Resuming is always allowed; a NEW start only until lastJoin.
+  const attempt = await getAttemptByQuizAndUser(env, quiz.id, user.id);
+  if (attempt) {
+    await beginOrResumeQuiz(env, user, chatId, quiz);
+    return;
+  }
+  if (now < lastJoinMs) {
+    await beginOrResumeQuiz(env, user, chatId, quiz);
+    return;
+  }
+  // After the join window: no new attempts (so nobody is cut off mid-quiz).
+  await sendMessage(
+    env,
+    chatId,
+    `⏳ پنجره‌ی ورود به مسابقه‌ی امشب بسته شد (ورود تا ${iranHm(lastJoinMs)} بود).\nنتایج ساعت ${CLOSE_LABEL} اعلام می‌شه. فردا شب زودتر بیا! 🎯`,
+    { parse_mode: "HTML" }
+  );
+}
+
+/** Toggle callback for the reminder opt-in button (CB_PREFIX.TOURNAMENT:remind). */
+export async function handleTournamentCallback(env: Env, callbackQuery: TelegramCallbackQuery): Promise<void> {
+  const action = (callbackQuery.data || "").split(":")[1] || "";
+  const msg = callbackQuery.message;
+  if (action !== "remind" || !msg) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+  const user = await getOrCreateUser(env, callbackQuery.from);
+  const optedIn = await toggleTournamentReminder(env, user.id);
+  await answerCallbackQuery(
+    env,
+    callbackQuery.id,
+    optedIn ? "🔔 هر شب یادت می‌ندازم!" : "🔕 یادآوری خاموش شد.",
+    false
+  );
+  try {
+    await editMessageReplyMarkup(env, msg.chat.id, msg.message_id, reminderKeyboard(optedIn));
+  } catch {}
+}
+
+/** Send a short top-placements summary for a closed tournament. */
+async function sendTournamentTop(env: Env, chatId: number, quizId: number): Promise<void> {
+  const board = await getLeaderboardWithoutNegative(env, quizId, 10);
+  if (!board.length) {
+    await sendMessage(env, chatId, "🏁 مسابقه‌ی امشب تموم شد، ولی کسی شرکت نکرد. فردا شب منتظرت هستیم! 🎯");
+    return;
+  }
+  let text = "🏁 <b>نتایج مسابقه‌ی امشب</b>\n\n";
+  for (const e of board) {
+    text += `${badge(e.rank)} ${e.display_name} — ✅${e.correct}\n`;
+  }
+  text += "\nامشب شرکت نکردی؟ فردا شب حتماً بیا! 🎯";
+  await sendMessage(env, chatId, text, { parse_mode: "HTML" });
+}
+
+/**
+ * Broadcast final placements to every participant after settlement (participants
+ * only), including any medals they just earned.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The settled tournament's quiz id
+ * @param ranking - Final ranking (rank, user_id, correct) from settleTournament
+ * @param newBadgesByUser - Map of userId → newly-awarded badge codes
+ * @returns Count of messages sent/failed
+ */
+export async function announceTournamentResults(
+  env: Env,
+  quizId: number,
+  ranking: { rank: number; user_id: number; correct: number }[],
+  newBadgesByUser: Map<number, string[]> = new Map()
+): Promise<{ sent: number; failed: number }> {
+  const rankByUser = new Map(ranking.map((r) => [r.user_id, r]));
+  const total = ranking.length;
+
+  const finished = await getFinishedAttemptsWithChatId(env, quizId);
+  const seen = new Set<number>();
+  const recipients = finished.filter((a) => {
+    if (seen.has(a.user_id)) return false;
+    seen.add(a.user_id);
+    return true;
+  });
+
+  return broadcast(env, recipients, (a) => {
+    const r = rankByUser.get(a.user_id);
+    if (!r) return null;
+    let text =
+      `🏁 <b>مسابقه‌ی امشب تموم شد!</b>\n\n` +
+      `${badge(r.rank)} رتبه‌ی تو: <b>${r.rank}</b> از ${total}\n` +
+      `✅ پاسخ‌های درست: ${r.correct}`;
+    if (r.rank <= 3) {
+      text += `\n\n🎉 تبریک! جزو نفرات برتر شدی و امتیاز ویژه گرفتی.`;
+    }
+    const medals = (newBadgesByUser.get(a.user_id) || [])
+      .map((c) => badgeByCode(c))
+      .filter(Boolean);
+    if (medals.length) {
+      text += `\n\n🏅 <b>مدال جدید:</b> ` + medals.map((m) => `${m!.emoji} ${m!.title}`).join("، ");
+    }
+    text += `\n\nفردا شب دوباره منتظرت هستیم! 🎯`;
+    return { chatId: a.chat_id, text, extra: { parse_mode: "HTML" } };
+  });
+}

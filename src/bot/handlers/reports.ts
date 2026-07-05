@@ -97,17 +97,20 @@ function buildReportText(name: string | null, kind: ReportKind, cur: PeriodMetri
  * subscribers who were active in the current window.
  * @param env - The worker environment containing the D1 database binding and bot token
  * @param kind - The report cadence: daily / weekly / monthly
+ * @param dailyCta - Optional call-to-action HTML appended to daily reports (e.g.
+ *   tonight's tournament), so it reaches active users without a second broadcast.
  * @returns void
  */
-export async function sendProgressReports(env: Env, kind: ReportKind): Promise<void> {
+export async function sendProgressReports(env: Env, kind: ReportKind, dailyCta?: string): Promise<void> {
   const w = windowsFor(kind);
   const recipients = await getActiveUsersForReport(env, w.curStart, w.curEnd);
+  const cta = kind === "daily" && dailyCta ? dailyCta : "";
   let sent = 0;
 
   for (const u of recipients) {
     try {
       const cmp = await getActivityComparison(env, u.id, w);
-      const text = buildReportText(u.display_name, kind, cmp.current, cmp.previous);
+      const text = buildReportText(u.display_name, kind, cmp.current, cmp.previous) + cta;
       await sendMessage(env, u.telegram_id, text);
       sent++;
     } catch (err) {
