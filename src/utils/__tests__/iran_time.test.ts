@@ -4,18 +4,31 @@ import {
   iranDateStr,
   iranWeekStartDate,
   iranMidnightToUtc,
+  iranWallClockToUtcStamp,
   shiftDateStr,
   iranNow,
+  parseUtcStamp,
 } from "../iran_time";
 
 /** ms for an Iran-local wall-clock instant: local midnight of `ymd` plus hours. */
 function iranInstantMs(ymd: string, hours: number): number {
-  return new Date(iranMidnightToUtc(ymd)).getTime() + hours * 60 * 60 * 1000;
+  return parseUtcStamp(iranMidnightToUtc(ymd)).getTime() + hours * 60 * 60 * 1000;
 }
 
 describe("iranMidnightToUtc", () => {
   it("maps Iran 00:00 to previous-day 20:30 UTC (+3.5h offset)", () => {
     expect(iranMidnightToUtc("2026-07-04")).toBe("2026-07-03 20:30:00");
+  });
+});
+
+describe("iranWallClockToUtcStamp (deterministic tournament window)", () => {
+  it("pins 21:00 / 22:00 Iran to the correct UTC stamps", () => {
+    expect(iranWallClockToUtcStamp("2026-07-04", 21)).toBe("2026-07-04 17:30:00");
+    expect(iranWallClockToUtcStamp("2026-07-04", 22)).toBe("2026-07-04 18:30:00");
+    // Round-trips back to the same instant regardless of host timezone.
+    expect(parseUtcStamp(iranWallClockToUtcStamp("2026-07-04", 21)).getTime()).toBe(
+      Date.UTC(2026, 6, 4, 17, 30, 0)
+    );
   });
 });
 
@@ -36,7 +49,7 @@ describe("iranWeekStartDate", () => {
         const weekStart = iranWeekStartDate(t);
 
         // The week-start's Iran-local midnight is a Saturday (getUTCDay === 6).
-        const startMs = new Date(iranMidnightToUtc(weekStart)).getTime();
+        const startMs = parseUtcStamp(iranMidnightToUtc(weekStart)).getTime();
         expect(iranNow(startMs).getUTCDay()).toBe(6);
 
         // The instant's Iran date is within [weekStart, weekStart + 7).
@@ -52,7 +65,7 @@ describe("weekly-league boundary (the Friday-night edge case)", () => {
   it("Friday 22:00 counts for the ending week; Saturday 00:30 starts the new week", () => {
     // Anchor on some real week's Saturday start.
     const anchor = iranWeekStartDate(Date.UTC(2026, 6, 6, 12)); // an Iran Saturday date
-    expect(iranNow(new Date(iranMidnightToUtc(anchor)).getTime()).getUTCDay()).toBe(6);
+    expect(iranNow(parseUtcStamp(iranMidnightToUtc(anchor)).getTime()).getUTCDay()).toBe(6);
 
     const fridayNight = iranInstantMs(shiftDateStr(anchor, 6), 22); // Friday 22:00 Iran
     const saturdayEarly = iranInstantMs(shiftDateStr(anchor, 7), 0.5); // next Sat 00:30 Iran

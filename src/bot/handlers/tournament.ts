@@ -3,7 +3,7 @@ import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { DbUser, getOrCreateUser } from "../../db/users";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup } from "../telegram-api";
 import { TOURNAMENT_CONFIG, CB_PREFIX } from "../../config/constants";
-import { iranDateStr } from "../../utils/iran_time";
+import { iranDateStr, parseUtcStamp, IRAN_OFFSET_MS } from "../../utils/iran_time";
 import {
   getTournamentByDate,
   settleTournament,
@@ -31,9 +31,9 @@ function reminderKeyboard(optedIn: boolean): { inline_keyboard: InlineKeyboardBu
   return { inline_keyboard: [[{ text: label, callback_data: `${CB_PREFIX.TOURNAMENT}:remind` }]] };
 }
 
-/** Format an Iran-local HH:MM label (Persian digits) for a UTC timestamp string. */
-function iranHm(utc: string): string {
-  const d = new Date(new Date(utc).getTime() + 3.5 * 60 * 60 * 1000);
+/** Format an Iran-local HH:MM label (Persian digits) for an epoch-ms instant. */
+function iranHm(ms: number): string {
+  const d = new Date(ms + IRAN_OFFSET_MS);
   const hm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
   return toPersianDigits(hm);
 }
@@ -67,8 +67,8 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
   }
 
   const now = Date.now();
-  const opensMs = quiz.opens_at ? new Date(quiz.opens_at).getTime() : 0;
-  const closesMs = quiz.closes_at ? new Date(quiz.closes_at).getTime() : Number.POSITIVE_INFINITY;
+  const opensMs = quiz.opens_at ? parseUtcStamp(quiz.opens_at).getTime() : 0;
+  const closesMs = quiz.closes_at ? parseUtcStamp(quiz.closes_at).getTime() : Number.POSITIVE_INFINITY;
   const lastJoinMs = opensMs + TOURNAMENT_CONFIG.JOIN_WINDOW_MINUTES * 60 * 1000;
 
   // Not started yet.
@@ -76,7 +76,7 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
     await sendMessage(
       env,
       chatId,
-      `🎯 <b>مسابقه‌ی امشب</b>\n\nسر ساعت ${OPEN_LABEL} شروع می‌شه (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())}). آماده باش! ⏳`,
+      `🎯 <b>مسابقه‌ی امشب</b>\n\nسر ساعت ${OPEN_LABEL} شروع می‌شه (ورود تا ${iranHm(lastJoinMs)}). آماده باش! ⏳`,
       { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
     );
     return;
@@ -86,7 +86,9 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
   if (now >= closesMs || quiz.status === "completed") {
     if (quiz.status !== "completed") {
       try {
-        await settleTournament(env, iranDateStr());
+        // Settle THIS quiz's date (not iranDateStr(), which could roll past
+        // midnight) so we never accidentally target a different day's tournament.
+        await settleTournament(env, quiz.tournament_date ?? iranDateStr());
       } catch (err) {
         console.error("Lazy tournament settle error:", err);
       }
@@ -116,7 +118,7 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
   await sendMessage(
     env,
     chatId,
-    `⏳ پنجره‌ی ورود به مسابقه‌ی امشب بسته شد (ورود تا ${iranHm(new Date(lastJoinMs).toISOString())} بود).\nنتایج ساعت ${CLOSE_LABEL} اعلام می‌شه. فردا شب زودتر بیا! 🎯`,
+    `⏳ پنجره‌ی ورود به مسابقه‌ی امشب بسته شد (ورود تا ${iranHm(lastJoinMs)} بود).\nنتایج ساعت ${CLOSE_LABEL} اعلام می‌شه. فردا شب زودتر بیا! 🎯`,
     { parse_mode: "HTML" }
   );
 }

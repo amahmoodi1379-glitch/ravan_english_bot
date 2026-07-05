@@ -90,3 +90,30 @@ export function iranMidnightToUtc(ymd: string): string {
   const ms = Date.UTC(y, m - 1, d) - IRAN_OFFSET_MS;
   return fmtStamp(new Date(ms));
 }
+
+/**
+ * The UTC datetime string ('YYYY-MM-DD HH:MM:SS') for a given Iran-local
+ * wall-clock time on a given Iran date. Used to pin a cron-created window to an
+ * exact Iran hour (e.g. 21:00) regardless of when the hourly trigger actually
+ * fires — so the tournament window doesn't drift with trigger jitter.
+ * @param ymd - Iran-local 'YYYY-MM-DD'
+ * @param hour - Iran-local hour (0-23)
+ * @param minute - Iran-local minute (default 0)
+ */
+export function iranWallClockToUtcStamp(ymd: string, hour: number, minute = 0): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const ms = Date.UTC(y, m - 1, d, hour, minute) - IRAN_OFFSET_MS;
+  return fmtStamp(new Date(ms));
+}
+
+/**
+ * Parse a SQLite UTC timestamp ('YYYY-MM-DD HH:MM:SS', as written by
+ * datetime('now') / utcStamp) as UTC in every runtime. Plain
+ * `new Date('YYYY-MM-DD HH:MM:SS')` is implementation-defined and V8 treats it as
+ * LOCAL time — correct on the (UTC) Workers runtime but wrong under a non-UTC
+ * local dev/test machine. This forces UTC so behaviour is environment-independent.
+ * @param stamp - A UTC 'YYYY-MM-DD HH:MM:SS' timestamp string
+ */
+export function parseUtcStamp(stamp: string): Date {
+  return new Date(stamp.replace(" ", "T") + "Z");
+}

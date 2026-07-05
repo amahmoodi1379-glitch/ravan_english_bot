@@ -117,17 +117,16 @@ export async function awardTournamentBadges(
   quizId: number,
   entries: TournamentBadgeEntry[]
 ): Promise<Map<number, string[]>> {
-  const result = new Map<number, string[]>();
+  const candidates = new Map<number, string[]>();
   for (const e of entries) {
     const codes: string[] = ["tourney_first"];
     if (e.participationCount >= 10) codes.push("tourney_10");
     if (e.rank <= 3) codes.push("tourney_top3");
     if (e.rank === 1) codes.push("tourney_win");
     if (e.total > 0 && e.correct === e.total) codes.push("tourney_perfect");
-    const fresh = await awardBadges(env, e.userId, codes, { quiz_id: quizId });
-    if (fresh.length) result.set(e.userId, fresh);
+    candidates.set(e.userId, codes);
   }
-  return result;
+  return bulkAwardBadges(env, candidates, { quiz_id: quizId });
 }
 
 /** A league participant's outcome, used to decide tier/champion badges. */
@@ -149,11 +148,78 @@ export async function awardLeagueBadges(
   weekStart: string,
   entries: LeagueBadgeEntry[]
 ): Promise<void> {
+  const candidates = new Map<number, string[]>();
   for (const e of entries) {
     const codes: string[] = [];
     const tierCode = leagueTierBadgeCode(e.newTier);
     if (tierCode) codes.push(tierCode);
     if (e.outcome === "champion") codes.push("league_champion");
-    if (codes.length) await awardBadges(env, e.userId, codes, { week_start: weekStart });
+    if (codes.length) candidates.set(e.userId, codes);
   }
+  await bulkAwardBadges(env, candidates, { week_start: weekStart });
+}
+
+/**
+ * Award many users' event badges in bulk: one batched read of existing badges
+ * for all users, then chunked batched inserts of only the new ones. Avoids the
+ * N sequential queries a per-user loop would issue (Cloudflare subrequest/CPU
+ * limits) at tournament/league settlement.
+ * @param env - The worker environment containing the D1 database binding
+ * @param candidatesByUser - userId → candidate badge codes to award
+ * @param meta - Optional context stored on each new row (uniform per call)
+ * @returns userId → newly-awarded badge codes
+ */
+async function bulkAwardBadges(
+  env: Env,
+  candidatesByUser: Map<number, string[]>,
+  meta?: Record<string, unknown>
+): Promise<Map<number, string[]>> {
+  const userIds = [...candidatesByUser.keys()];
+  if (!userIds.length) return new Map();
+
+  // One read of existing badges for all involved users (chunked IN lists).
+  const IN_CHUNK = 200;
+  const existingByUser = new Map<number, Set<string>>();
+  for (let i = 0; i < userIds.length; i += IN_CHUNK) {
+    const chunk = userIds.slice(i, i + IN_CHUNK);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = await queryAll<{ user_id: number; badge_code: string }>(
+      env,
+      `SELECT user_id, badge_code FROM user_badges WHERE user_id IN (${placeholders})`,
+      chunk
+    );
+    for (const r of rows) {
+      let s = existingByUser.get(r.user_id);
+      if (!s) {
+        s = new Set();
+        existingByUser.set(r.user_id, s);
+      }
+      s.add(r.badge_code);
+    }
+  }
+
+  const metaJson = meta ? JSON.stringify(meta) : null;
+  const result = new Map<number, string[]>();
+  const stmts: D1PreparedStatement[] = [];
+  for (const [userId, codes] of candidatesByUser) {
+    const existing = existingByUser.get(userId) ?? new Set<string>();
+    const fresh: string[] = [];
+    for (const code of new Set(codes)) {
+      if (!existing.has(code)) {
+        fresh.push(code);
+        stmts.push(
+          prepare(
+            env,
+            `INSERT OR IGNORE INTO user_badges (user_id, badge_code, meta_json) VALUES (?, ?, ?)`,
+            [userId, code, metaJson]
+          )
+        );
+      }
+    }
+    if (fresh.length) result.set(userId, fresh);
+  }
+  for (let i = 0; i < stmts.length; i += BADGE_BATCH_CHUNK) {
+    await batch(env, stmts.slice(i, i + BADGE_BATCH_CHUNK));
+  }
+  return result;
 }

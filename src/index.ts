@@ -11,7 +11,7 @@ import { announceTournamentResults } from "./bot/handlers/tournament";
 import { settleLeague } from "./db/leagues";
 import { announceLeagueResults } from "./bot/handlers/league";
 import { broadcast } from "./bot/handlers/broadcast";
-import { iranDateStr, utcStamp } from "./utils/iran_time";
+import { iranDateStr, iranWallClockToUtcStamp } from "./utils/iran_time";
 import { toPersianDigits } from "./utils/digits";
 import { TOURNAMENT_CONFIG, LEAGUE_CONFIG } from "./config/constants";
 import { MAIN_MENU_BUTTON_TOURNAMENT } from "./bot/keyboards";
@@ -156,13 +156,14 @@ export default {
         let tournamentCta: string | undefined;
         if (iranHour === TOURNAMENT_CONFIG.OPEN_HOUR) {
           try {
-            const openGapMs =
-              (TOURNAMENT_CONFIG.CLOSE_HOUR - TOURNAMENT_CONFIG.OPEN_HOUR) * 60 * 60 * 1000;
+            // Pin the window to exactly OPEN_HOUR:00–CLOSE_HOUR:00 Iran from the
+            // calendar, so it never drifts with the trigger's actual fire time.
+            const iranDate = iranDateStr();
             const quizId = await createDailyTournament(
               env,
-              iranDateStr(),
-              utcStamp(),
-              utcStamp(Date.now() + openGapMs)
+              iranDate,
+              iranWallClockToUtcStamp(iranDate, TOURNAMENT_CONFIG.OPEN_HOUR),
+              iranWallClockToUtcStamp(iranDate, TOURNAMENT_CONFIG.CLOSE_HOUR)
             );
             if (quizId) {
               const closeLabel = `${toPersianDigits(TOURNAMENT_CONFIG.CLOSE_HOUR)}:۰۰`;

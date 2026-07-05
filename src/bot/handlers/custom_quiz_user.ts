@@ -2,6 +2,7 @@ import { Env } from "../../types";
 import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, editMessageText, answerCallbackQuery } from "../telegram-api";
 import { CB_PREFIX } from "../../config/constants";
+import { parseUtcStamp } from "../../utils/iran_time";
 import { getOrCreateUser, DbUser } from "../../db/users";
 import {
   getQuizLinkByToken, getQuizById, getQuizQuestions,
@@ -79,7 +80,7 @@ export async function beginOrResumeQuiz(env: Env, user: DbUser, chatId: number, 
     }
     // Resume
     const resumeIndex = existing.current_question_index || 1;
-    const endTime = new Date(attemptEndMs(quiz, new Date(existing.started_at).getTime()));
+    const endTime = new Date(attemptEndMs(quiz, parseUtcStamp(existing.started_at).getTime()));
     await sendMessage(env, chatId, `⏱️ <b>ادامه آزمون "${quiz.title}"</b>\n🕐 پایان: ${formatTime(endTime)}\n\nاز دکمه‌های زیر استفاده کن 👇`, { parse_mode: "HTML" });
     await sendQuizQuestion(env, chatId, quiz.id, existing.id, resumeIndex);
     return;
@@ -119,14 +120,14 @@ export async function beginOrResumeQuiz(env: Env, user: DbUser, chatId: number, 
 function attemptEndMs(quiz: { total_time_minutes: number; closes_at?: string | null }, startedMs: number): number {
   let end = startedMs + quiz.total_time_minutes * 60 * 1000;
   if (quiz.closes_at) {
-    const closeMs = new Date(quiz.closes_at).getTime();
+    const closeMs = parseUtcStamp(quiz.closes_at).getTime();
     if (!Number.isNaN(closeMs) && closeMs < end) end = closeMs;
   }
   return end;
 }
 
 function isQuizExpired(attempt: { started_at: string }, quiz: { total_time_minutes: number; closes_at?: string | null }): boolean {
-  return Date.now() > attemptEndMs(quiz, new Date(attempt.started_at).getTime());
+  return Date.now() > attemptEndMs(quiz, parseUtcStamp(attempt.started_at).getTime());
 }
 
 /**
