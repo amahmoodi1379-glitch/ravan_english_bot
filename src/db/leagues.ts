@@ -77,6 +77,7 @@ export function tierName(tier: number): string {
  * @returns The promote and demote counts for that division
  */
 export function movementCounts(n: number): { promote: number; demote: number } {
+  if (n <= 0) return { promote: 0, demote: 0 };
   return {
     promote: Math.round(n * LEAGUE_CONFIG.PROMOTE_RATIO),
     demote: Math.round(n * LEAGUE_CONFIG.DEMOTE_RATIO),
@@ -106,6 +107,9 @@ function weekBoundsUtc(weekStart: string): { startUtc: string; endUtc: string } 
  */
 export function evenDivisionSizes(total: number, maxSize: number): number[] {
   if (total <= 0) return [];
+  // Defensive: a non-positive/invalid cap would make Math.ceil() yield
+  // Infinity/negative and crash Array.from(). Fall back to one division.
+  if (!Number.isFinite(maxSize) || maxSize <= 0) return [total];
   const numDivisions = Math.ceil(total / maxSize);
   const base = Math.floor(total / numDivisions);
   const extra = total % numDivisions; // the first `extra` divisions get one more
@@ -367,36 +371,56 @@ export async function settleLeague(env: Env, nowMs: number = Date.now()): Promis
       arr.push(userId);
       usersByTier.set(tier, arr);
     }
+    // Plan every division up-front, then write them in batched round-trips
+    // instead of one execute() per division. Each tier's users are split into
+    // as FEW divisions as DIVISION_SIZE allows and spread EVENLY (sizes differ
+    // by at most one), so the tiny "tail" division the old fixed-chunk approach
+    // produced (e.g. 63 users → 30/30/3) never forms — it's 21/21/21 instead —
+    // which, with the dynamic movement counts above, keeps every division fairly
+    // rankable.
+    const divisionsToCreate: { tier: number; divisionNumber: number; chunk: number[] }[] = [];
     for (let tier = 1; tier <= top; tier++) {
       const users = shuffle(usersByTier.get(tier) ?? []);
-      // Split the tier's users into as FEW divisions as DIVISION_SIZE allows, then
-      // spread them EVENLY across those divisions (sizes differ by at most one).
-      // This avoids the tiny "tail" division the old fixed-chunk approach produced
-      // (e.g. 63 users → 21/21/21 instead of 30/30/3), which — combined with the
-      // dynamic movement counts above — keeps every division fairly rankable.
       const sizes = evenDivisionSizes(users.length, LEAGUE_CONFIG.DIVISION_SIZE);
       let offset = 0;
       let divisionNumber = 1;
       for (const size of sizes) {
-        const chunk = users.slice(offset, offset + size);
+        divisionsToCreate.push({ tier, divisionNumber: divisionNumber++, chunk: users.slice(offset, offset + size) });
         offset += size;
-        const res = await execute(
-          env,
-          `INSERT INTO league_divisions (week_start, tier, division_number) VALUES (?, ?, ?)`,
-          [thisWeek, tier, divisionNumber++]
-        );
-        const divId = (res.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
-        const memberStmts = chunk.map((uid) =>
+      }
+    }
+
+    // 1) Insert all divisions (batched, chunked). D1 batch() returns results in
+    //    statement order, each with its own meta.last_row_id, so we can map each
+    //    result back to its planned division and recover the generated id.
+    const divisionStmts = divisionsToCreate.map((d) =>
+      prepare(
+        env,
+        `INSERT INTO league_divisions (week_start, tier, division_number) VALUES (?, ?, ?)`,
+        [thisWeek, d.tier, d.divisionNumber]
+      )
+    );
+    const divResults: D1Result[] = [];
+    for (let i = 0; i < divisionStmts.length; i += LEAGUE_BATCH_CHUNK) {
+      divResults.push(...(await batch(env, divisionStmts.slice(i, i + LEAGUE_BATCH_CHUNK))));
+    }
+
+    // 2) Insert all members (batched, chunked), pointing at the ids from step 1.
+    const memberStmts: D1PreparedStatement[] = [];
+    divisionsToCreate.forEach((d, idx) => {
+      const divId = (divResults[idx]?.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
+      for (const uid of d.chunk) {
+        memberStmts.push(
           prepare(
             env,
             `INSERT OR IGNORE INTO league_members (week_start, user_id, division_id, tier) VALUES (?, ?, ?, ?)`,
-            [thisWeek, uid, divId, tier]
+            [thisWeek, uid, divId, d.tier]
           )
         );
-        for (let j = 0; j < memberStmts.length; j += LEAGUE_BATCH_CHUNK) {
-          await batch(env, memberStmts.slice(j, j + LEAGUE_BATCH_CHUNK));
-        }
       }
+    });
+    for (let j = 0; j < memberStmts.length; j += LEAGUE_BATCH_CHUNK) {
+      await batch(env, memberStmts.slice(j, j + LEAGUE_BATCH_CHUNK));
     }
   }
 

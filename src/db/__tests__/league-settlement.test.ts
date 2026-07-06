@@ -63,6 +63,11 @@ describe("dynamic movement counts (movementCounts)", () => {
     expect(decideOutcome(100, 1, 1, 2, TOP)).toEqual({ outcome: "stay", newTier: 2 });
   });
 
+  it("guards non-positive n", () => {
+    expect(movementCounts(0)).toEqual({ promote: 0, demote: 0 });
+    expect(movementCounts(-5)).toEqual({ promote: 0, demote: 0 });
+  });
+
   it("small divisions no longer promote everyone (regression: fixed 7/7 bug)", () => {
     // 5-person division: only the top 1 promotes, the bottom 1 demotes, 3 stay.
     expect(decideOutcome(100, 1, 5, 2, TOP)).toEqual({ outcome: "promote", newTier: 3 });
@@ -80,6 +85,12 @@ describe("even division balancing (evenDivisionSizes)", () => {
     expect(evenDivisionSizes(30, 30)).toEqual([30]);
     expect(evenDivisionSizes(1, 30)).toEqual([1]);
     expect(evenDivisionSizes(0, 30)).toEqual([]);
+  });
+
+  it("guards an invalid capacity instead of crashing (Infinity length)", () => {
+    expect(evenDivisionSizes(10, 0)).toEqual([10]);
+    expect(evenDivisionSizes(10, -3)).toEqual([10]);
+    expect(evenDivisionSizes(0, 0)).toEqual([]);
   });
 
   it("never exceeds capacity and always sums back to the total", () => {

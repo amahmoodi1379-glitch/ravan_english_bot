@@ -39,6 +39,11 @@ function buildLeagueText(view: UserLeagueView, userId: number): string {
   text += `\n`;
   if (view.tier === top) {
     text += `👑 تو در بالاترین لیگی — قهرمان‌های این هفته از همین‌جا مشخص می‌شن!`;
+    // Even at the top, the bottom of the division still drops a tier (the 🔴
+    // zone shown above), so explain it here too.
+    if (view.demoteCount > 0) {
+      text += `\n🔴 ${view.demoteCount} نفر آخر یک لیگ سقوط می‌کنن`;
+    }
   } else if (view.promoteCount > 0) {
     // Counts are dynamic (≈20% of this division's size), so they mirror the real
     // green/red zones above rather than a fixed number.
