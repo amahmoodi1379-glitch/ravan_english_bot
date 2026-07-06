@@ -47,8 +47,13 @@ export const TOURNAMENT_CONFIG = {
 export const LEAGUE_CONFIG = {
   ANNOUNCE_HOUR: 11,         // Iran-local Saturday hour to announce (11, not 10, to avoid stacking with 10:00 inactivity reminders)
   DIVISION_SIZE: 30,         // max users per division
-  PROMOTE_COUNT: 7,          // top N of each division promote to the next tier
-  DEMOTE_COUNT: 7,           // bottom N (with XP > 0) demote to the previous tier
+  // Promote/demote counts are DYNAMIC: each is ≈this share of the division's
+  // actual size (see movementCounts() in db/leagues.ts). Fixed counts used to
+  // promote everyone in small/half-filled divisions (e.g. a 5-person tail
+  // division); scaling by size keeps a "stay" zone at every size and stops the
+  // over-promotion that inflated the upper tiers.
+  PROMOTE_RATIO: 0.2,        // top ~20% of each division promote to the next tier
+  DEMOTE_RATIO: 0.2,         // bottom ~20% (with XP > 0) demote to the previous tier
   TIERS: ["برنز", "نقره", "طلا", "یاقوت", "الماس"], // tier 1..5 display names
 } as const;
 

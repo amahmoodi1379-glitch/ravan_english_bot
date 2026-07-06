@@ -63,6 +63,27 @@ export function tierName(tier: number): string {
   return LEAGUE_CONFIG.TIERS[tier - 1] ?? `سطح ${tier}`;
 }
 
+/**
+ * Dynamic promote / demote counts for a division of `n` members. Both scale with
+ * the division's actual size (≈20% each) so a small or half-filled division never
+ * promotes everyone — the flaw of the old fixed 7/7 counts, which turned any
+ * division of ≤7 into an all-promote division and inflated the upper tiers.
+ *
+ * Properties (with the 20/20 split + rounding):
+ *  - promote + demote < n for every n, so a "stay" zone always exists (n ≥ 3);
+ *  - n ≤ 2 yields 0/0 — a division too small to rank meaningfully stays put,
+ *    which also stops a lone member from auto-promoting every single week.
+ * @param n - Number of members in the division
+ * @returns The promote and demote counts for that division
+ */
+export function movementCounts(n: number): { promote: number; demote: number } {
+  if (n <= 0) return { promote: 0, demote: 0 };
+  return {
+    promote: Math.round(n * LEAGUE_CONFIG.PROMOTE_RATIO),
+    demote: Math.round(n * LEAGUE_CONFIG.DEMOTE_RATIO),
+  };
+}
+
 /** The number of tiers configured (top tier index). */
 function maxTier(): number {
   return LEAGUE_CONFIG.TIERS.length;
@@ -74,6 +95,25 @@ function weekBoundsUtc(weekStart: string): { startUtc: string; endUtc: string } 
     startUtc: iranMidnightToUtc(weekStart),
     endUtc: iranMidnightToUtc(shiftDateStr(weekStart, 7)),
   };
+}
+
+/**
+ * Split `total` members into the fewest divisions of at most `maxSize`, sized as
+ * evenly as possible (each size is floor or ceil of total/numDivisions, so they
+ * differ by at most one). Returns [] for total <= 0.
+ * @param total - Number of members to place
+ * @param maxSize - Division capacity (LEAGUE_CONFIG.DIVISION_SIZE)
+ * @returns The size of each division, largest-first
+ */
+export function evenDivisionSizes(total: number, maxSize: number): number[] {
+  if (total <= 0) return [];
+  // Defensive: a non-positive/invalid cap would make Math.ceil() yield
+  // Infinity/negative and crash Array.from(). Fall back to one division.
+  if (!Number.isFinite(maxSize) || maxSize <= 0) return [total];
+  const numDivisions = Math.ceil(total / maxSize);
+  const base = Math.floor(total / numDivisions);
+  const extra = total % numDivisions; // the first `extra` divisions get one more
+  return Array.from({ length: numDivisions }, (_, i) => base + (i < extra ? 1 : 0));
 }
 
 /** Fisher-Yates shuffle (returns a new array). */
@@ -213,6 +253,7 @@ export async function getUserLeagueState(
 
   const standings = await getDivisionStandings(env, weekStart, member.division_id);
   const userRank = standings.findIndex((s) => s.user_id === userId) + 1;
+  const { promote, demote } = movementCounts(standings.length);
 
   return {
     weekStart,
@@ -223,8 +264,8 @@ export async function getUserLeagueState(
     standings,
     userRank,
     memberCount: standings.length,
-    promoteCount: LEAGUE_CONFIG.PROMOTE_COUNT,
-    demoteCount: LEAGUE_CONFIG.DEMOTE_COUNT,
+    promoteCount: promote,
+    demoteCount: demote,
     maxTier: maxTier(),
   };
 }
@@ -263,6 +304,7 @@ export async function settleLeague(env: Env, nowMs: number = Date.now()): Promis
   for (const div of divisions) {
     const standings = await getDivisionStandings(env, endedWeek, div.id);
     const n = standings.length;
+    const { promote: promoteCount, demote: demoteCount } = movementCounts(n);
     standings.forEach((s, idx) => {
       const rank = idx + 1;
       const tier = div.tier;
@@ -279,13 +321,13 @@ export async function settleLeague(env: Env, nowMs: number = Date.now()): Promis
           outcome = "stay";
           newTier = 1;
         }
-      } else if (rank <= LEAGUE_CONFIG.PROMOTE_COUNT && tier < top) {
+      } else if (rank <= promoteCount && tier < top) {
         outcome = "promote";
         newTier = tier + 1;
-      } else if (rank <= LEAGUE_CONFIG.PROMOTE_COUNT && tier === top) {
+      } else if (rank <= promoteCount && tier === top) {
         outcome = "champion";
         newTier = tier;
-      } else if (rank > n - LEAGUE_CONFIG.DEMOTE_COUNT && tier > 1) {
+      } else if (rank > n - demoteCount && tier > 1) {
         outcome = "demote";
         newTier = tier - 1;
       } else {
@@ -329,28 +371,56 @@ export async function settleLeague(env: Env, nowMs: number = Date.now()): Promis
       arr.push(userId);
       usersByTier.set(tier, arr);
     }
+    // Plan every division up-front, then write them in batched round-trips
+    // instead of one execute() per division. Each tier's users are split into
+    // as FEW divisions as DIVISION_SIZE allows and spread EVENLY (sizes differ
+    // by at most one), so the tiny "tail" division the old fixed-chunk approach
+    // produced (e.g. 63 users → 30/30/3) never forms — it's 21/21/21 instead —
+    // which, with the dynamic movement counts above, keeps every division fairly
+    // rankable.
+    const divisionsToCreate: { tier: number; divisionNumber: number; chunk: number[] }[] = [];
     for (let tier = 1; tier <= top; tier++) {
       const users = shuffle(usersByTier.get(tier) ?? []);
+      const sizes = evenDivisionSizes(users.length, LEAGUE_CONFIG.DIVISION_SIZE);
+      let offset = 0;
       let divisionNumber = 1;
-      for (let i = 0; i < users.length; i += LEAGUE_CONFIG.DIVISION_SIZE) {
-        const chunk = users.slice(i, i + LEAGUE_CONFIG.DIVISION_SIZE);
-        const res = await execute(
-          env,
-          `INSERT INTO league_divisions (week_start, tier, division_number) VALUES (?, ?, ?)`,
-          [thisWeek, tier, divisionNumber++]
-        );
-        const divId = (res.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
-        const memberStmts = chunk.map((uid) =>
+      for (const size of sizes) {
+        divisionsToCreate.push({ tier, divisionNumber: divisionNumber++, chunk: users.slice(offset, offset + size) });
+        offset += size;
+      }
+    }
+
+    // 1) Insert all divisions (batched, chunked). D1 batch() returns results in
+    //    statement order, each with its own meta.last_row_id, so we can map each
+    //    result back to its planned division and recover the generated id.
+    const divisionStmts = divisionsToCreate.map((d) =>
+      prepare(
+        env,
+        `INSERT INTO league_divisions (week_start, tier, division_number) VALUES (?, ?, ?)`,
+        [thisWeek, d.tier, d.divisionNumber]
+      )
+    );
+    const divResults: D1Result[] = [];
+    for (let i = 0; i < divisionStmts.length; i += LEAGUE_BATCH_CHUNK) {
+      divResults.push(...(await batch(env, divisionStmts.slice(i, i + LEAGUE_BATCH_CHUNK))));
+    }
+
+    // 2) Insert all members (batched, chunked), pointing at the ids from step 1.
+    const memberStmts: D1PreparedStatement[] = [];
+    divisionsToCreate.forEach((d, idx) => {
+      const divId = (divResults[idx]?.meta as unknown as { last_row_id?: number })?.last_row_id || 0;
+      for (const uid of d.chunk) {
+        memberStmts.push(
           prepare(
             env,
             `INSERT OR IGNORE INTO league_members (week_start, user_id, division_id, tier) VALUES (?, ?, ?, ?)`,
-            [thisWeek, uid, divId, tier]
+            [thisWeek, uid, divId, d.tier]
           )
         );
-        for (let j = 0; j < memberStmts.length; j += LEAGUE_BATCH_CHUNK) {
-          await batch(env, memberStmts.slice(j, j + LEAGUE_BATCH_CHUNK));
-        }
       }
+    });
+    for (let j = 0; j < memberStmts.length; j += LEAGUE_BATCH_CHUNK) {
+      await batch(env, memberStmts.slice(j, j + LEAGUE_BATCH_CHUNK));
     }
   }
 
