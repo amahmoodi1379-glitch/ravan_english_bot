@@ -121,6 +121,8 @@ export async function awardTournamentBadges(
   for (const e of entries) {
     const codes: string[] = ["tourney_first"];
     if (e.participationCount >= 10) codes.push("tourney_10");
+    if (e.participationCount >= 50) codes.push("tourney_50");
+    if (e.participationCount >= 100) codes.push("tourney_100");
     if (e.rank <= 3) codes.push("tourney_top3");
     if (e.rank === 1) codes.push("tourney_win");
     if (e.total > 0 && e.correct === e.total) codes.push("tourney_perfect");
