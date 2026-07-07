@@ -3,12 +3,14 @@ import * as fc from "fast-check";
 import {
   iranDateStr,
   iranWeekStartDate,
+  iranMonthStartDate,
   iranMidnightToUtc,
   iranWallClockToUtcStamp,
   shiftDateStr,
   iranNow,
   parseUtcStamp,
 } from "../iran_time";
+import { toJalaliParts } from "../jalali";
 
 /** ms for an Iran-local wall-clock instant: local midnight of `ymd` plus hours. */
 function iranInstantMs(ymd: string, hours: number): number {
@@ -58,6 +60,35 @@ describe("iranWeekStartDate", () => {
         expect(today < shiftDateStr(weekStart, 7)).toBe(true);
       })
     );
+  });
+});
+
+describe("iranMonthStartDate", () => {
+  it("returns the 1st of the current Jalali month, and the instant falls within that month", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 4 * 365 * 24 }), (hoursFromEpochBase) => {
+        const t = Date.UTC(2024, 0, 1) + hoursFromEpochBase * 60 * 60 * 1000;
+        const monthStart = iranMonthStartDate(t);
+
+        // The month-start's Iran-local Jalali day-of-month is exactly 1.
+        const startMs = parseUtcStamp(iranMidnightToUtc(monthStart)).getTime();
+        expect(toJalaliParts(iranNow(startMs))[2]).toBe(1);
+
+        // The month-start and the instant share the same Jalali year+month.
+        const [sy, sm] = toJalaliParts(iranNow(startMs));
+        const [ty, tm] = toJalaliParts(iranNow(t));
+        expect([sy, sm]).toEqual([ty, tm]);
+
+        // The month-start is on or before the instant's Iran date.
+        expect(monthStart <= iranDateStr(t)).toBe(true);
+      })
+    );
+  });
+
+  it("pins a known date to its Jalali month start", () => {
+    // 2026-07-07 is 16 Tir 1405 (Iran) → month starts 1 Tir 1405 = 2026-06-22.
+    const t = Date.UTC(2026, 6, 7, 12);
+    expect(iranMonthStartDate(t)).toBe("2026-06-22");
   });
 });
 

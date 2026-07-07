@@ -1,9 +1,32 @@
 import { Env } from "../types";
 import { queryAll, queryOne } from "./client";
 import { TIME_ZONE_OFFSET } from "../config/constants";
+import {
+  iranWeekStartDate,
+  iranMonthStartDate,
+  iranMidnightToUtc,
+} from "../utils/iran_time";
 
 export type LeaderboardPeriod = "weekly" | "monthly" | "all";
 export type StreakType = "live" | "record";
+
+/**
+ * UTC lower-bound ('YYYY-MM-DD HH:MM:SS') for a windowed leaderboard period,
+ * aligned to the SAME fixed Iran-calendar boundaries the league uses: the current
+ * Persian week (Saturday 00:00 Iran) for "weekly" and the 1st of the current
+ * Jalali month (00:00 Iran) for "monthly". Using a fixed boundary — instead of the
+ * old rolling `now - 7/30 days` window — means a user's score only ever grows
+ * within the period and resets cleanly at the boundary, so it no longer appears to
+ * shrink as older activity falls out of a trailing window.
+ * @param period - "weekly" or "monthly"
+ * @param nowMs - Epoch ms the period is computed relative to
+ * @returns The UTC datetime string marking the period's start
+ */
+function periodStartUtc(period: "weekly" | "monthly", nowMs: number): string {
+  const startDate =
+    period === "weekly" ? iranWeekStartDate(nowMs) : iranMonthStartDate(nowMs);
+  return iranMidnightToUtc(startDate);
+}
 
 export interface LeaderboardEntry {
   rank: number;
@@ -28,12 +51,15 @@ export interface UserRank {
 export async function getLeaderboardXp(
   env: Env,
   period: LeaderboardPeriod,
-  limit = 50
+  limit = 50,
+  nowMs: number = Date.now()
 ): Promise<LeaderboardEntry[]> {
-  const TIME_MODIFIER = TIME_ZONE_OFFSET;
   let rows: LeaderboardEntry[];
 
-  if (period === "weekly") {
+  if (period === "weekly" || period === "monthly") {
+    // Fixed Iran-calendar boundary (Persian week / Jalali month), matching the
+    // league — so the score only grows within the period and resets at the edge.
+    const startUtc = periodStartUtc(period, nowMs);
     rows = await queryAll(
       env,
       `
@@ -43,7 +69,7 @@ export async function getLeaderboardXp(
              SUM(al.xp_delta) as score
       FROM activity_log al
       JOIN users u ON u.id = al.user_id
-      WHERE al.created_at >= datetime('now', '-7 days', ?)
+      WHERE al.created_at >= ?
         AND u.is_approved = 1
         AND (u.is_banned IS NULL OR u.is_banned = 0)
       GROUP BY al.user_id
@@ -51,27 +77,7 @@ export async function getLeaderboardXp(
       ORDER BY score DESC, al.user_id ASC
       LIMIT ?
       `,
-      [TIME_MODIFIER, limit]
-    );
-  } else if (period === "monthly") {
-    rows = await queryAll(
-      env,
-      `
-      SELECT al.user_id,
-             COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
-             u.avatar_code,
-             SUM(al.xp_delta) as score
-      FROM activity_log al
-      JOIN users u ON u.id = al.user_id
-      WHERE al.created_at >= datetime('now', '-30 days', ?)
-        AND u.is_approved = 1
-        AND (u.is_banned IS NULL OR u.is_banned = 0)
-      GROUP BY al.user_id
-      HAVING score > 0
-      ORDER BY score DESC, al.user_id ASC
-      LIMIT ?
-      `,
-      [TIME_MODIFIER, limit]
+      [startUtc, limit]
     );
   } else {
     rows = await queryAll(
@@ -111,10 +117,9 @@ export async function getLeaderboardXp(
 export async function getUserRankXp(
   env: Env,
   userId: number,
-  period: LeaderboardPeriod
+  period: LeaderboardPeriod,
+  nowMs: number = Date.now()
 ): Promise<UserRank | null> {
-  const TIME_MODIFIER = TIME_ZONE_OFFSET;
-
   if (period === "all") {
     const user = await queryOne<{ xp_total: number }>(
       env,
@@ -133,14 +138,16 @@ export async function getUserRankXp(
     return { rank: (result?.cnt ?? 0) + 1, score: user.xp_total };
   }
 
-  const daysBack = period === "weekly" ? "-7 days" : "-30 days";
+  // Same fixed Iran-calendar boundary as getLeaderboardXp, so a user's rank and
+  // their score are computed over the identical window.
+  const startUtc = periodStartUtc(period, nowMs);
 
   const userScore = await queryOne<{ score: number }>(
     env,
     `SELECT COALESCE(SUM(xp_delta), 0) as score
      FROM activity_log
-     WHERE user_id = ? AND created_at >= datetime('now', ?, ?)`,
-    [userId, daysBack, TIME_MODIFIER]
+     WHERE user_id = ? AND created_at >= ?`,
+    [userId, startUtc]
   );
   if (!userScore) return null;
 
@@ -151,14 +158,14 @@ export async function getUserRankXp(
       SELECT al.user_id
       FROM activity_log al
       JOIN users u ON u.id = al.user_id
-      WHERE al.created_at >= datetime('now', ?, ?)
+      WHERE al.created_at >= ?
         AND u.is_approved = 1
         AND (u.is_banned IS NULL OR u.is_banned = 0)
       GROUP BY al.user_id
       HAVING SUM(al.xp_delta) > ?
     )
     `,
-    [daysBack, TIME_MODIFIER, userScore.score]
+    [startUtc, userScore.score]
   );
 
   return { rank: (result?.cnt ?? 0) + 1, score: userScore.score };
