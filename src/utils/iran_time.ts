@@ -8,6 +8,8 @@
  * `new Date('YYYY-MM-DD HH:MM:SS')` parses as UTC — matching stored timestamps.
  */
 
+import { toJalaliParts } from "./jalali";
+
 export const IRAN_OFFSET_MS = 3.5 * 60 * 60 * 1000;
 
 /**
@@ -77,6 +79,19 @@ export function iranWeekStartDate(nowMs: number = Date.now()): string {
   const dow = local.getUTCDay(); // 0=Sun .. 6=Sat
   const daysSinceSaturday = (dow + 1) % 7; // Sat→0, Sun→1, ... Fri→6
   return shiftDateStr(fmtYmd(local), -daysSinceSaturday);
+}
+
+/**
+ * The Iran-local date ('YYYY-MM-DD') of the 1st day of the Jalali (Shamsi) month
+ * that contains the given instant. Aligns the "monthly" leaderboard with the
+ * Persian calendar month (same boundary the monthly progress report uses) instead
+ * of a rolling 30-day window, matching the league's fixed-boundary philosophy.
+ * @param nowMs - Optional epoch ms (defaults to now)
+ */
+export function iranMonthStartDate(nowMs: number = Date.now()): string {
+  const local = iranNow(nowMs);
+  const [, , jd] = toJalaliParts(local); // jd = day-of-month (1..31)
+  return shiftDateStr(fmtYmd(local), -(jd - 1));
 }
 
 /**
