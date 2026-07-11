@@ -72,7 +72,7 @@ import { checkAndCancelStaleSession } from "./handlers/reading";
 import { handlePremiumEmojiCommand } from "./handlers/premium_emoji_admin";
 import { loadEmojiMap, canonicalizeUserMenu } from "./premium-emojis";
 import { isAdmin } from "../db/admin";
-import { CB_PREFIX, REQUIRED_CHANNEL } from "../config/constants";
+import { CB_PREFIX, REQUIRED_CHANNELS } from "../config/constants";
 import { getUserByTelegramId, getOrCreateUser, touchExistingUser } from "../db/users";
 
 /** Channel-membership statuses that count as "joined". */
@@ -82,34 +82,50 @@ const MEMBER_STATUSES = new Set(["creator", "administrator", "member"]);
  * Build the force-join prompt keyboard: a link to the channel and a re-check button.
  */
 function joinKeyboard() {
-  const channelUrl = `https://t.me/${REQUIRED_CHANNEL.replace(/^@/, "")}`;
   return {
     inline_keyboard: [
-      [{ text: "📢 عضویت در کانال", url: channelUrl }],
+      ...REQUIRED_CHANNELS.map((channel) => [
+        {
+          text: `📢 عضویت در ${channel}`,
+          url: `https://t.me/${channel.replace(/^@/, "")}`,
+        },
+      ]),
       [{ text: "✅ عضو شدم، بررسی کن", callback_data: `${CB_PREFIX.JOIN_CHECK}:1` }],
     ],
   };
 }
 
 const JOIN_PROMPT_TEXT =
-  `🔒 برای استفاده از ربات، لازمه اول عضو کانال ما بشی:\n\n` +
-  `${REQUIRED_CHANNEL}\n\n` +
-  `بعد از عضویت، دکمه‌ی «✅ عضو شدم، بررسی کن» رو بزن.`;
+  `🔒 برای استفاده از ربات، لازمه اول عضو کانال‌های ما بشی:\n\n` +
+  `${REQUIRED_CHANNELS.join("\n")}\n\n` +
+  `بعد از عضویت در همه، دکمه‌ی «✅ عضو شدم، بررسی کن» رو بزن.`;
 
 /**
- * Check whether the user is a member of the required channel.
+ * Check whether the user is a member of a single channel.
  * Fails open (treats as member) if the API call errors — e.g. the bot is not yet
  * an admin of the channel — to avoid locking everyone out on misconfiguration.
- * @param env - The worker environment containing the bot token
- * @param tgUserId - The Telegram user ID to check
- * @returns True if the user may proceed (member or fail-open), false if blocked
  */
-async function isChannelMember(env: Env, tgUserId: number): Promise<boolean> {
-  const res = await getChatMemberStatus(env, REQUIRED_CHANNEL, tgUserId);
+async function isMemberOfChannel(env: Env, channel: string, tgUserId: number): Promise<boolean> {
+  const res = await getChatMemberStatus(env, channel, tgUserId);
   if (res === null) return true; // fail-open on API error
   if (MEMBER_STATUSES.has(res.status)) return true;
   if (res.status === "restricted" && res.isMember) return true;
   return false;
+}
+
+/**
+ * Check whether the user is a member of all required channels.
+ * Membership in every channel is required; each check fails open independently
+ * to avoid locking everyone out on misconfiguration.
+ * @param env - The worker environment containing the bot token
+ * @param tgUserId - The Telegram user ID to check
+ * @returns True if the user may proceed (member of all or fail-open), false if blocked
+ */
+async function isChannelMember(env: Env, tgUserId: number): Promise<boolean> {
+  const results = await Promise.all(
+    REQUIRED_CHANNELS.map((channel) => isMemberOfChannel(env, channel, tgUserId))
+  );
+  return results.every(Boolean);
 }
 
 /**

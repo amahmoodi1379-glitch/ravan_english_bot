@@ -113,8 +113,8 @@ export const LETTERS = {
 
 export const LESSON_PICKER_PAGE_SIZE = 20;
 
-/** Required channel the user must join to use the bot (force-join). */
-export const REQUIRED_CHANNEL = "@psynex";
+/** Required channels the user must join to use the bot (force-join). Membership in all is required. */
+export const REQUIRED_CHANNELS = ["@psynex", "@PsyEngAcademy"] as const;
 
 /** Minimum number of recorded answers before showing the "others answered" stats line. */
 export const ANSWER_STATS_MIN_THRESHOLD = 5;
