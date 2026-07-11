@@ -184,10 +184,10 @@ async function sendQuizQuestion(
   // Navigation
   const navRow: InlineKeyboardButton[] = [];
   if (questionIndex > 1) {
-    navRow.push({ text: "سوال قبلی ▶️", callback_data: `${CB_PREFIX.QUIZ}:nav:${attemptId}:${questionIndex - 1}` });
+    navRow.push({ text: "سوال قبلی ◀️", callback_data: `${CB_PREFIX.QUIZ}:nav:${attemptId}:${questionIndex - 1}` });
   }
   if (questionIndex < questions.length) {
-    navRow.push({ text: "◀️ سوال بعدی", callback_data: `${CB_PREFIX.QUIZ}:nav:${attemptId}:${questionIndex + 1}` });
+    navRow.push({ text: "▶️ سوال بعدی", callback_data: `${CB_PREFIX.QUIZ}:nav:${attemptId}:${questionIndex + 1}` });
   }
   if (navRow.length) rows.push(navRow);
 
