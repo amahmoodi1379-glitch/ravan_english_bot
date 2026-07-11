@@ -216,7 +216,12 @@ export async function sendLeitnerQuestion(
       continue;
     }
 
-    // Record that the user has seen this question (reset answered state so they can answer again).
+    // Record that the user has seen this question. On re-show (same question comes
+    // due again — common in FSRS when a word was rated "Again"/"Hard" and no other
+    // unseen question exists for it), fully reset the attempt state: answered_at,
+    // is_correct AND rated_at. Leaving a stale rated_at here would make the rating
+    // claim in handleRating (guarded on rated_at IS NULL) a no-op, stranding the
+    // user on "امتیاز قبلاً ثبت شده" with no way to advance.
     const now = new Date().toISOString();
     await execute(
       env,
@@ -224,7 +229,7 @@ export async function sendLeitnerQuestion(
         (user_id, word_id, question_id, context, shown_at)
        VALUES (?, ?, ?, 'leitner', ?)
        ON CONFLICT(user_id, question_id, context)
-       DO UPDATE SET shown_at = excluded.shown_at, answered_at = NULL, is_correct = NULL`,
+       DO UPDATE SET shown_at = excluded.shown_at, answered_at = NULL, is_correct = NULL, rated_at = NULL`,
       [user.id, question.word_id, question.id, now]
     );
 
