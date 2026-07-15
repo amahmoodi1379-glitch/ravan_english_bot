@@ -32,8 +32,9 @@ export async function addAdmin(env: Env, telegramId: number, createdByAdminId: n
   try {
     await execute(
       env,
+      // D1's bind() rejects `undefined`, so coalesce optional fields to null.
       "INSERT INTO admins (telegram_id, username, first_name, is_super_admin, created_by_admin_id) VALUES (?, ?, ?, 0, ?)",
-      [telegramId, username, firstName, createdByAdminId]
+      [telegramId, username ?? null, firstName ?? null, createdByAdminId]
     );
     return true;
   } catch (error) {
