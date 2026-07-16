@@ -123,6 +123,7 @@ export function getProfileMenuKeyboard(): ReplyKeyboardMarkup {
 }
 
 export const ADMIN_MENU_BUTTON_LICENSE = "🎫 ایجاد لایسنس";
+export const ADMIN_MENU_BUTTON_LICENSE_DEFAULT = "⚙️ پیش‌فرض لایسنس (۷۰۰ روز)";
 export const ADMIN_MENU_BUTTON_ANNOUNCE = "📢 اطلاع‌رسانی";
 export const ADMIN_MENU_BUTTON_USER_MGMT = "👥 مدیریت کاربران";
 export const ADMIN_MENU_BUTTON_ADMIN_MGMT = "👤 مدیریت ادمین‌ها";
@@ -146,6 +147,7 @@ export function getAdminMenuKeyboard(): AdminReplyKeyboardMarkup {
   return {
     keyboard: [
       [ADMIN_MENU_BUTTON_LICENSE],
+      [ADMIN_MENU_BUTTON_LICENSE_DEFAULT],
       [ADMIN_MENU_BUTTON_ANNOUNCE],
       [ADMIN_MENU_BUTTON_QUIZ],
       [ADMIN_MENU_BUTTON_USER_MGMT],
