@@ -26,20 +26,13 @@ export async function getSetting(env: Env, key: string): Promise<string | null> 
 }
 
 /**
- * Persist a single system setting value, creating the settings table if needed.
+ * Persist a single system setting value. The `system_settings` table is
+ * provided by the schema migrations, so no DDL is issued here.
  * @param env - The worker environment containing the D1 database binding
  * @param key - The setting key to write
  * @param value - The string value to store
  */
 export async function setSetting(env: Env, key: string, value: string): Promise<void> {
-  await execute(
-    env,
-    `CREATE TABLE IF NOT EXISTS system_settings (
-       key TEXT PRIMARY KEY,
-       value TEXT NOT NULL,
-       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-     )`
-  );
   await execute(
     env,
     `INSERT INTO system_settings (key, value, updated_at)

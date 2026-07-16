@@ -413,10 +413,17 @@ async function createLicenseAndReport(
       }
     );
   } else {
+    // Keep the admin in the code-entry step so they can immediately retry with
+    // a different code (or go back), instead of being dropped to the menu.
     await sendMessage(env, chatId,
-      `❌ خطا در ثبت لایسنس. احتمالاً کد <code>${code}</code> قبلاً ثبت شده.`,
-      { parse_mode: "HTML" }
+      `❌ خطا در ثبت لایسنس. احتمالاً کد <code>${code}</code> قبلاً ثبت شده.\n\n🎫 کد دیگری وارد کنید:`,
+      {
+        parse_mode: "HTML",
+        reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
+      }
     );
+    await setAdminState(env, telegramId, 'admin', { action: 'await_license_code' });
+    return;
   }
   await setAdminState(env, telegramId, 'admin', { action: 'menu' });
 }
