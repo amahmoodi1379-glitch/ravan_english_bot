@@ -116,6 +116,16 @@ export const LESSON_PICKER_PAGE_SIZE = 20;
 /** Required channels the user must join to use the bot (force-join). Membership in all is required. */
 export const REQUIRED_CHANNELS = ["@psynex", "@PsyEngAcademy"] as const;
 
+/**
+ * How long a successful channel-membership check stays valid before we re-verify
+ * against Telegram. A `getChatMember` call per required channel used to run on
+ * EVERY button press (a full Telegram round-trip before the bot could even
+ * answer the callback); caching it for this window removes that latency from the
+ * hot path. Trade-off: a user who leaves a channel can keep using the bot until
+ * the window elapses. See ensureChannelMember() in src/bot/router.ts.
+ */
+export const CHANNEL_VERIFY_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 /** Minimum number of recorded answers before showing the "others answered" stats line. */
 export const ANSWER_STATS_MIN_THRESHOLD = 5;
 

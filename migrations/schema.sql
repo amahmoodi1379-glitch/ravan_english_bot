@@ -43,7 +43,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- inactivity return-reminder stage (0027): 0=none 1=2d 2=5d 3=10d; reset on interaction
   inactivity_reminder_stage INTEGER NOT NULL DEFAULT 0,
   -- daily-tournament reminder opt-in (0034): 1 = push a nightly "tournament open" ping
-  tournament_reminder INTEGER NOT NULL DEFAULT 0
+  tournament_reminder INTEGER NOT NULL DEFAULT 0,
+  -- channel-membership verification cache (0036): last time the user was confirmed
+  -- a member of all required channels; gate skips the Telegram call while fresh
+  channel_verified_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);

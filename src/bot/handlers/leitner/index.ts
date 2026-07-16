@@ -143,8 +143,10 @@ export async function handleLeitnerCallback(env: Env, callbackQuery: TelegramCal
         return;
       case CB_PREFIX.LEITNER_NEXT: {
         const mode = extractMode(parts, 1);
-        await answerCallbackQuery(env, callbackQuery.id);
-        await removeInlineKeyboard(env, chatId, messageId);
+        await Promise.all([
+          answerCallbackQuery(env, callbackQuery.id),
+          removeInlineKeyboard(env, chatId, messageId),
+        ]);
         await sendLeitnerQuestion(env, user, chatId, mode);
         return;
       }
@@ -209,8 +211,10 @@ async function handleHome(
   chatId: number,
   messageId: number
 ): Promise<void> {
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
   await sendMessage(env, chatId, "به منوی تمرین‌ها برگشتی 👇", {
     reply_markup: getTrainingMenuKeyboard(),
   });
@@ -232,27 +236,26 @@ async function handleDunno(
     return;
   }
 
-  const alreadyAnswered = await queryOne<{ id: number }>(
-    env,
-    `SELECT id FROM user_word_question_history
-     WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NOT NULL`,
-    [user.id, questionId]
-  );
-  if (alreadyAnswered) {
-    await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
-    return;
-  }
-
-  const question = await queryOne<LeitnerQuestionRow>(
+  // One round-trip: question/word + this user's history row (dedup pre-check)
+  // via LEFT JOIN. UNIQUE(user_id, question_id, context) ⇒ at most one match.
+  const question = await queryOne<LeitnerQuestionRow & { history_answered_at: string | null }>(
     env,
     `SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
             q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level,
-            w.lesson_name
-     FROM word_questions q JOIN words w ON q.word_id = w.id WHERE q.id = ?`,
-    [questionId]
+            w.lesson_name, h.answered_at AS history_answered_at
+     FROM word_questions q
+     JOIN words w ON q.word_id = w.id
+     LEFT JOIN user_word_question_history h
+       ON h.question_id = q.id AND h.user_id = ? AND h.context = 'leitner'
+     WHERE q.id = ?`,
+    [user.id, questionId]
   );
   if (!question) {
     await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد");
+    return;
+  }
+  if (question.history_answered_at) {
+    await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
     return;
   }
 
@@ -289,8 +292,11 @@ async function handleDunno(
     return;
   }
 
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  // Spinner-clear and keyboard-removal are independent — fire them together.
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
 
   const correctNum = optionLetterToNumber(question.correct_option);
   const correctText = getCorrectOptionText(question);
@@ -333,8 +339,10 @@ async function handleExitRequest(
   parts: string[]
 ): Promise<void> {
   const mode = extractMode(parts, 1);
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
 
   let confirmText = exitConfirmText(mode);
 
@@ -357,8 +365,10 @@ async function handleExitConfirm(
   chatId: number,
   messageId: number
 ): Promise<void> {
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
 
   const stats = await getReviewStats(env, user.id, 24);
 
@@ -452,8 +462,11 @@ async function handleRating(
     return;
   }
 
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  // Spinner-clear and keyboard-removal are independent — fire them together.
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
 
   if (ratingValue >= Rating.Good) {
     const streakMsg = await checkAndUpdateStreak(env, user.id);
@@ -498,8 +511,10 @@ async function handleIgnoreWord(
     return;
   }
 
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
 
   // Ask for confirmation
   await sendMessage(env, chatId,
@@ -678,8 +693,10 @@ async function handleNewLevel(
 ): Promise<void> {
   const action = parts[1]; // "pick" to show menu, or a level number
 
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
 
   if (action === "pick") {
     // Show level selection menu with counts
@@ -738,8 +755,10 @@ async function handleReviewLevel(
 ): Promise<void> {
   const action = parts[1];
 
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
+  await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+  ]);
 
   if (action === "pick") {
     const levelCounts = await countDueWordsByLevel(env, user.id);
@@ -806,46 +825,48 @@ async function handleAnswer(
     return;
   }
 
-  const alreadyAnswered = await queryOne<{ id: number }>(
-    env,
-    `SELECT id FROM user_word_question_history
-     WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NOT NULL`,
-    [user.id, questionId]
-  );
-  if (alreadyAnswered) {
-    await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
-    return;
-  }
-
-  const question = await queryOne<LeitnerQuestionRow>(
+  // Single round-trip: fetch the question/word AND this user's history row (the
+  // dedup pre-check) together via a LEFT JOIN — UNIQUE(user_id, question_id,
+  // context) guarantees at most one history row, so `.first()` is unambiguous.
+  const question = await queryOne<LeitnerQuestionRow & { history_answered_at: string | null }>(
     env,
     `SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
            q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level,
-           w.lesson_name
+           w.lesson_name, h.answered_at AS history_answered_at
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
+    LEFT JOIN user_word_question_history h
+      ON h.question_id = q.id AND h.user_id = ? AND h.context = 'leitner'
     WHERE q.id = ?`,
-    [questionId]
+    [user.id, questionId]
   );
   if (!question) {
     await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد ❗️");
+    return;
+  }
+  if (question.history_answered_at) {
+    await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
     return;
   }
 
   const isCorrect = chosenOption === question.correct_option;
   const now = new Date().toISOString();
 
-  await answerCallbackQuery(env, callbackQuery.id);
-  await removeInlineKeyboard(env, chatId, messageId);
-
-  // Atomically mark as answered — if another request already answered, changes=0
-  const answerResult = await execute(
-    env,
-    `UPDATE user_word_question_history
-     SET is_correct = ?, answered_at = ?, first_is_correct = COALESCE(first_is_correct, ?)
-     WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`,
-    [isCorrect ? 1 : 0, now, isCorrect ? 1 : 0, user.id, question.id]
-  );
+  // Clear the button spinner, drop the old keyboard, and claim the answer all at
+  // once — three independent I/O calls that used to run sequentially. The atomic
+  // UPDATE (answered_at IS NULL guard) is still the real dedup: changes=0 means a
+  // concurrent request won, so we stop.
+  const [, , answerResult] = await Promise.all([
+    answerCallbackQuery(env, callbackQuery.id),
+    removeInlineKeyboard(env, chatId, messageId),
+    execute(
+      env,
+      `UPDATE user_word_question_history
+       SET is_correct = ?, answered_at = ?, first_is_correct = COALESCE(first_is_correct, ?)
+       WHERE user_id = ? AND question_id = ? AND context = 'leitner' AND answered_at IS NULL`,
+      [isCorrect ? 1 : 0, now, isCorrect ? 1 : 0, user.id, question.id]
+    ),
+  ]);
 
   if (answerResult.meta.changes === 0) {
     // Already answered by a concurrent request — silently stop

@@ -348,8 +348,10 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   // NULL so it counts as "بدون پاسخ" in the summary, never as correct/wrong.
   // No extra reads/writes beyond the single guarded UPDATE the answer path uses.
   if (chosenOption === 'SKIP') {
-    const skipUser = await getOrCreateUser(env, callbackQuery.from);
-    const skipSession = await getReadingSessionById(env, sessionId);
+    const [skipUser, skipSession] = await Promise.all([
+      getOrCreateUser(env, callbackQuery.from),
+      getReadingSessionById(env, sessionId),
+    ]);
     if (!skipSession) {
       await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.");
       return;
@@ -371,8 +373,10 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
       return;
     }
 
-    await answerCallbackQuery(env, callbackQuery.id, "⏭ بدون پاسخ رد شد");
-    await editMessageReplyMarkup(env, chatId, message.message_id);
+    await Promise.all([
+      answerCallbackQuery(env, callbackQuery.id, "⏭ بدون پاسخ رد شد"),
+      editMessageReplyMarkup(env, chatId, message.message_id),
+    ]);
 
     const sent = await sendNextReadingQuestion(env, skipUser, skipSession, chatId);
     if (!sent) {
@@ -381,32 +385,34 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     return;
   }
 
-  const user = await getOrCreateUser(env, callbackQuery.from);
-  const session = await getReadingSessionById(env, sessionId);
+  // These three reads are independent (user by tg-id, session by id, question by
+  // id) — fetch them in one round-trip instead of three sequential ones.
+  const [user, session, question] = await Promise.all([
+    getOrCreateUser(env, callbackQuery.from),
+    getReadingSessionById(env, sessionId),
+    queryOne<DbTextQuestion>(
+      env,
+      `
+      SELECT
+        id,
+        text_id,
+        question_text,
+        option_a,
+        option_b,
+        option_c,
+        option_d,
+        correct_option,
+        explanation_text
+      FROM text_questions
+      WHERE id = ?
+      `,
+      [questionId]
+    ),
+  ]);
   if (!session) {
     await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.");
     return;
   }
-
-  const question = await queryOne<DbTextQuestion>(
-    env,
-    `
-    SELECT
-      id,
-      text_id,
-      question_text,
-      option_a,
-      option_b,
-      option_c,
-      option_d,
-      correct_option,
-      explanation_text
-    FROM text_questions
-    WHERE id = ?
-    `,
-    [questionId]
-  );
-
   if (!question) {
     await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد.");
     return;
@@ -432,18 +438,21 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     return;
   }
 
-  if (isCorrect) {
-    await execute(
-      env,
-      `UPDATE reading_sessions SET num_correct = num_correct + 1 WHERE id = ?`,
-      [session.id]
-    );
-  }
-
-  // Exam-style: no per-question feedback. Just confirm the answer was recorded
-  // and disable this question's buttons so it can't be answered again.
-  await answerCallbackQuery(env, callbackQuery.id, "✅ پاسخت ثبت شد");
-  await editMessageReplyMarkup(env, chatId, message.message_id);
+  // The correct-count bump, the confirmation toast, and disabling this
+  // question's buttons are all independent — run them together. The num_correct
+  // UPDATE must land before we re-read the session below, so it's awaited here.
+  // Exam-style: no per-question feedback, just confirm + lock the buttons.
+  await Promise.all([
+    isCorrect
+      ? execute(
+          env,
+          `UPDATE reading_sessions SET num_correct = num_correct + 1 WHERE id = ?`,
+          [session.id]
+        )
+      : Promise.resolve(),
+    answerCallbackQuery(env, callbackQuery.id, "✅ پاسخت ثبت شد"),
+    editMessageReplyMarkup(env, chatId, message.message_id),
+  ]);
 
   const freshSession = await getReadingSessionById(env, sessionId);
   if (!freshSession) {

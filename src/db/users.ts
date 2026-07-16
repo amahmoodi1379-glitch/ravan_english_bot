@@ -15,6 +15,7 @@ export interface DbUser {
   banned_until: string | null;
   banned_by_admin_id: number | null;
   ban_reason: string | null;
+  channel_verified_at: string | null;
 }
 
 export interface TelegramUserLike {
@@ -91,13 +92,20 @@ export async function getOrCreateUser(env: Env, tg: TelegramUserLike): Promise<D
     `user_${tg.id}`;
 
   try {
+    // Stamp channel_verified_at at creation: every path that reaches
+    // getOrCreateUser has already passed the force-join gate (ensureChannelMember
+    // in router.ts runs at the top of both the callback and message pipelines),
+    // so a brand-new user is, by construction, a verified member right now. This
+    // seeds the durable cache the gate's own markChannelVerified() UPDATE couldn't
+    // (the row didn't exist yet), so the first cold isolate after signup doesn't
+    // make a redundant getChatMember call.
     await execute(
       env,
       `
-        INSERT INTO users (telegram_id, username, first_name, last_name, display_name, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO users (telegram_id, username, first_name, last_name, display_name, last_seen_at, channel_verified_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
-      [tg.id, tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, nowIso]
+      [tg.id, tg.username ?? null, tg.first_name ?? null, tg.last_name ?? null, displayName, nowIso, nowIso]
     );
   } catch (e) {
     console.warn("Duplicate user creation avoided:", tg.id);
