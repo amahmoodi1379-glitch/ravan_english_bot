@@ -9,6 +9,7 @@ import {
   getAdminMenuKeyboard,
   getAdminSubMenuKeyboard,
   ADMIN_MENU_BUTTON_LICENSE,
+  ADMIN_MENU_BUTTON_LICENSE_DEFAULT,
   ADMIN_MENU_BUTTON_ANNOUNCE,
   ADMIN_MENU_BUTTON_QUIZ,
   ADMIN_MENU_BUTTON_USER_MGMT,
@@ -45,6 +46,12 @@ import {
   setAdminState,
   clearAllAdminState
 } from "../../db/admin_state";
+import {
+  DEFAULT_LICENSE_DAYS,
+  isLicenseDefaultDaysEnabled,
+  setLicenseDefaultDaysEnabled
+} from "../../db/settings";
+import { toEnglishDigits } from "../../utils/digits";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -110,12 +117,19 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         return true;
       }
       if (text && text.trim().length > 0) {
+        const code = text.trim();
+        // When the default-days mode is on, skip the prompt and register the
+        // license immediately with DEFAULT_LICENSE_DAYS.
+        if (await isLicenseDefaultDaysEnabled(env)) {
+          await createLicenseAndReport(env, chatId, telegramId, admin, code, DEFAULT_LICENSE_DAYS);
+          return true;
+        }
         await setAdminState(env, telegramId, 'admin', {
           action: 'await_license_days',
-          licenseCode: text.trim()
+          licenseCode: code
         });
         await sendMessage(env, chatId,
-          `🎫 کد لایسنس: <code>${text.trim()}</code>\n\n⏳ لطفاً تعداد روز اعتبار را وارد کنید:`,
+          `🎫 کد لایسنس: <code>${code}</code>\n\n⏳ لطفاً تعداد روز اعتبار را وارد کنید:`,
           { parse_mode: "HTML" }
         );
         return true;
@@ -128,35 +142,19 @@ export async function handleAdminCommand(env: Env, update: TelegramUpdate): Prom
         await showAdminMenu(env, chatId);
         return true;
       }
-      if (!text || !/^\d+$/.test(text)) {
+      // Accept both English and Persian/Arabic digits for the day count.
+      const normalized = text ? toEnglishDigits(text.trim()) : "";
+      if (!/^\d+$/.test(normalized)) {
         await sendMessage(env, chatId, "⚠️ لطفاً یک عدد معتبر وارد کنید (۱ تا ۳۶۵۰).");
         return true;
       }
-      const days = parseInt(text);
+      const days = parseInt(normalized, 10);
       if (days <= 0 || days > 3650) {
         await sendMessage(env, chatId, "⚠️ تعداد روز باید بین ۱ تا ۳۶۵۰ باشد.");
         return true;
       }
       const code = state.licenseCode || "";
-      const success = await insertLicense(env, code, days, admin.id);
-      if (success) {
-        await sendMessage(env, chatId,
-          `✅ لایسنس <code>${code}</code> با ${days} روز اعتبار ثبت شد.\n\nلایسنس بعدی؟`,
-          {
-            parse_mode: "HTML",
-            reply_markup: getAdminSubMenuKeyboard([
-              [ADMIN_SUBMENU_BUTTON_NEXT_LICENSE],
-              [ADMIN_SUBMENU_BUTTON_BACK]
-            ])
-          }
-        );
-      } else {
-        await sendMessage(env, chatId,
-          `❌ خطا در ثبت لایسنس. احتمالاً کد <code>${code}</code> قبلاً ثبت شده.`,
-          { parse_mode: "HTML" }
-        );
-      }
-      await setAdminState(env, telegramId, 'admin', { action: 'menu' });
+      await createLicenseAndReport(env, chatId, telegramId, admin, code, days);
       return true;
     }
 
@@ -384,6 +382,52 @@ async function enterAdminPanel(env: Env, chatId: number, admin: DbAdmin): Promis
   await showAdminMenu(env, chatId);
 }
 
+/**
+ * Register a license and report the outcome to the admin. On success the
+ * "next license" prompt (with its button) is shown and state is reset to menu.
+ * @param env - The worker environment containing the D1 database binding
+ * @param chatId - The Telegram chat ID to send messages to
+ * @param telegramId - The admin's Telegram ID (for state updates)
+ * @param admin - The acting admin record
+ * @param code - The license code to register
+ * @param days - The license validity in days
+ */
+async function createLicenseAndReport(
+  env: Env,
+  chatId: number,
+  telegramId: number,
+  admin: DbAdmin,
+  code: string,
+  days: number
+): Promise<void> {
+  const success = await insertLicense(env, code, days, admin.id);
+  if (success) {
+    await sendMessage(env, chatId,
+      `✅ لایسنس <code>${code}</code> با ${days} روز اعتبار ثبت شد.\n\nلایسنس بعدی؟`,
+      {
+        parse_mode: "HTML",
+        reply_markup: getAdminSubMenuKeyboard([
+          [ADMIN_SUBMENU_BUTTON_NEXT_LICENSE],
+          [ADMIN_SUBMENU_BUTTON_BACK]
+        ])
+      }
+    );
+  } else {
+    // Keep the admin in the code-entry step so they can immediately retry with
+    // a different code (or go back), instead of being dropped to the menu.
+    await sendMessage(env, chatId,
+      `❌ خطا در ثبت لایسنس. احتمالاً کد <code>${code}</code> قبلاً ثبت شده.\n\n🎫 کد دیگری وارد کنید:`,
+      {
+        parse_mode: "HTML",
+        reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]])
+      }
+    );
+    await setAdminState(env, telegramId, 'admin', { action: 'await_license_code' });
+    return;
+  }
+  await setAdminState(env, telegramId, 'admin', { action: 'menu' });
+}
+
 async function showAdminMenu(env: Env, chatId: number): Promise<void> {
   await sendMessage(env, chatId,
     `🛠️ <b>پنل مدیریت ادمین</b>\n\nلطفاً یکی از گزینه‌ها را انتخاب کنید:`,
@@ -433,8 +477,24 @@ async function handleMenuSelection(
 
     case ADMIN_SUBMENU_BUTTON_NEXT_LICENSE:
       await setAdminState(env, telegramId, 'admin', { action: 'await_license_code' });
-      await sendMessage(env, chatId, `🎫 کد لایسنس بعدی را وارد کنید:`);
+      await sendMessage(env, chatId, `🎫 کد لایسنس بعدی را وارد کنید:`,
+        { reply_markup: getAdminSubMenuKeyboard([[ADMIN_SUBMENU_BUTTON_BACK]]) }
+      );
       return true;
+
+    case ADMIN_MENU_BUTTON_LICENSE_DEFAULT: {
+      const enabled = await isLicenseDefaultDaysEnabled(env);
+      const next = !enabled;
+      await setLicenseDefaultDaysEnabled(env, next);
+      const msg = next
+        ? `✅ حالت پیش‌فرض لایسنس <b>روشن</b> شد.\n\nاز این پس هنگام ساخت لایسنس، مدت اعتبار به‌صورت خودکار ${DEFAULT_LICENSE_DAYS} روز در نظر گرفته می‌شود و دیگر پرسیده نمی‌شود.`
+        : `☑️ حالت پیش‌فرض لایسنس <b>خاموش</b> شد.\n\nاز این پس هنگام ساخت لایسنس، مدت روز اعتبار از شما پرسیده می‌شود.`;
+      await sendMessage(env, chatId, msg, {
+        parse_mode: "HTML",
+        reply_markup: getAdminMenuKeyboard()
+      });
+      return true;
+    }
 
     case ADMIN_SUBMENU_BUTTON_ADD_ADMIN:
       await setAdminState(env, telegramId, 'admin', { action: 'await_admin_id', adminAction: 'add' });
