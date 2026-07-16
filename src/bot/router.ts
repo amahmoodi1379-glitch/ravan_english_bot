@@ -202,8 +202,8 @@ async function ensureChannelMember(env: Env, tgUserId: number): Promise<boolean>
     "SELECT channel_verified_at FROM users WHERE telegram_id = ?",
     [tgUserId]
   );
-  if (isChannelVerificationFresh(row?.channel_verified_at, now)) {
-    membershipCache.set(tgUserId, new Date(row!.channel_verified_at!).getTime());
+  if (row?.channel_verified_at && isChannelVerificationFresh(row.channel_verified_at, now)) {
+    membershipCache.set(tgUserId, new Date(row.channel_verified_at).getTime());
     return true;
   }
 
