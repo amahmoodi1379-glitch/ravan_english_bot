@@ -15,6 +15,7 @@ export interface DbUser {
   banned_until: string | null;
   banned_by_admin_id: number | null;
   ban_reason: string | null;
+  channel_verified_at: string | null;
 }
 
 export interface TelegramUserLike {

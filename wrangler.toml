@@ -2,6 +2,13 @@ name = "ravan-english-bot"
 main = "src/index.ts"
 compatibility_date = "2024-09-01"
 
+# Run the Worker close to the D1 primary instead of at the edge nearest the user.
+# Each button press makes several sequential D1 queries; placing the Worker near
+# the database shortens every one of those round-trips (the Telegram round-trips
+# happen from Cloudflare's backbone either way).
+[placement]
+mode = "smart"
+
 [vars]
 TELEGRAM_WEBHOOK_SECRET = "ravan_english"
 
