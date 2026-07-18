@@ -10,10 +10,10 @@ import {
   WordQuestionForReview
 } from "../../db/word_questions";
 
-/** Batch-size bounds for a review export (matches the plan: 500–1000 per turn). */
+/** Batch-size bounds for a review export. Round-two QC reviews 100 per turn. */
 const EXPORT_MIN_SIZE = 1;
 const EXPORT_MAX_SIZE = 1000;
-const EXPORT_DEFAULT_SIZE = 500;
+const EXPORT_DEFAULT_SIZE = 100;
 
 /** Shape of a single question as written to the downloadable review file. */
 interface ReviewFileEntry {
@@ -107,7 +107,7 @@ export async function handleReviewRoutes(request: Request, env: Env, url: URL): 
       return htmlResponse(
         renderAdminLayout(
           "خطا",
-          '<div class="error">فرمت JSON اشتباه است. لطفاً خروجی Claude را دقیقاً (بدون متن اضافه یا code fence) پیست کن.</div><div style="margin-top:12px;"><a href="/admin/review">← بازگشت</a></div>',
+          '<div class="error">فرمت JSON اشتباه است. لطفاً خروجی هوش مصنوعی را دقیقاً (بدون متن اضافه یا code fence) پیست کن.</div><div style="margin-top:12px;"><a href="/admin/review">← بازگشت</a></div>',
           "review"
         ),
         400
