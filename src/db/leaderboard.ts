@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { queryAll, queryOne } from "./client";
-import { TIME_ZONE_OFFSET } from "../config/constants";
+import { TIME_ZONE_OFFSET, LEADERBOARD_CACHE_TTL_MS } from "../config/constants";
 import {
   iranWeekStartDate,
   iranMonthStartDate,
@@ -9,6 +9,77 @@ import {
 
 export type LeaderboardPeriod = "weekly" | "monthly" | "all";
 export type StreakType = "live" | "record";
+
+/**
+ * In-isolate cache of the FULL ranked XP standings for a windowed period (weekly /
+ * monthly). One such snapshot serves both the top-50 board AND any user's rank,
+ * so a leaderboard tap costs at most one aggregation every LEADERBOARD_CACHE_TTL_MS
+ * instead of the three full `activity_log` GROUP-BY/SUM scans it used to. Keyed by
+ * `period:periodStartUtc` so a week/month rollover invalidates instantly (the start
+ * boundary changes) rather than waiting out the TTL. Same best-effort, TTL-only
+ * pattern as the channel-membership / emoji caches — never a source of truth.
+ */
+interface XpStanding {
+  user_id: number;
+  display_name: string;
+  avatar_code: string | null;
+  score: number;
+}
+const xpStandingsCache = new Map<string, { at: number; standings: XpStanding[] }>();
+
+/** Clear the in-isolate leaderboard caches. Test-only seam. */
+export function _resetLeaderboardCaches(): void {
+  xpStandingsCache.clear();
+}
+
+/**
+ * The full ranked XP standings (all eligible users with score > 0) for a windowed
+ * period, cached in-isolate for LEADERBOARD_CACHE_TTL_MS. Sorted score DESC, then
+ * user_id ASC — the exact order the board and rank derivations rely on.
+ */
+async function getXpStandingsCached(
+  env: Env,
+  period: "weekly" | "monthly",
+  nowMs: number
+): Promise<XpStanding[]> {
+  const startUtc = periodStartUtc(period, nowMs);
+  const key = `${period}:${startUtc}`;
+  const cached = xpStandingsCache.get(key);
+  if (cached && nowMs - cached.at < LEADERBOARD_CACHE_TTL_MS) return cached.standings;
+
+  const rows = await queryAll<{
+    user_id: number;
+    display_name: string;
+    avatar_code: string | null;
+    score: number;
+  }>(
+    env,
+    `
+    SELECT al.user_id,
+           COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
+           u.avatar_code,
+           SUM(al.xp_delta) as score
+    FROM activity_log al
+    JOIN users u ON u.id = al.user_id
+    WHERE al.created_at >= ?
+      AND u.is_approved = 1
+      AND (u.is_banned IS NULL OR u.is_banned = 0)
+    GROUP BY al.user_id
+    HAVING score > 0
+    ORDER BY score DESC, al.user_id ASC
+    `,
+    [startUtc]
+  );
+
+  const standings: XpStanding[] = rows.map((r) => ({
+    user_id: r.user_id as number,
+    display_name: r.display_name as string,
+    avatar_code: (r.avatar_code as string | null) || null,
+    score: (r.score as number) || 0,
+  }));
+  xpStandingsCache.set(key, { at: nowMs, standings });
+  return standings;
+}
 
 /**
  * UTC lower-bound ('YYYY-MM-DD HH:MM:SS') for a windowed leaderboard period,
@@ -54,49 +125,43 @@ export async function getLeaderboardXp(
   limit = 50,
   nowMs: number = Date.now()
 ): Promise<LeaderboardEntry[]> {
-  let rows: LeaderboardEntry[];
-
   if (period === "weekly" || period === "monthly") {
     // Fixed Iran-calendar boundary (Persian week / Jalali month), matching the
     // league — so the score only grows within the period and resets at the edge.
-    const startUtc = periodStartUtc(period, nowMs);
-    rows = await queryAll(
-      env,
-      `
-      SELECT al.user_id,
-             COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
-             u.avatar_code,
-             SUM(al.xp_delta) as score
-      FROM activity_log al
-      JOIN users u ON u.id = al.user_id
-      WHERE al.created_at >= ?
-        AND u.is_approved = 1
-        AND (u.is_banned IS NULL OR u.is_banned = 0)
-      GROUP BY al.user_id
-      HAVING score > 0
-      ORDER BY score DESC, al.user_id ASC
-      LIMIT ?
-      `,
-      [startUtc, limit]
-    );
-  } else {
-    rows = await queryAll(
-      env,
-      `
-      SELECT u.id as user_id,
-             COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
-             u.avatar_code,
-             u.xp_total as score
-      FROM users u
-      WHERE u.is_approved = 1
-        AND (u.is_banned IS NULL OR u.is_banned = 0)
-        AND u.xp_total > 0
-      ORDER BY u.xp_total DESC, u.id ASC
-      LIMIT ?
-      `,
-      [limit]
-    );
+    // The full ranked snapshot is cached, so the top-`limit` slice is free.
+    const standings = await getXpStandingsCached(env, period, nowMs);
+    return standings.slice(0, limit).map((r, i) => ({
+      rank: i + 1,
+      user_id: r.user_id,
+      display_name: r.display_name,
+      avatar_code: r.avatar_code,
+      score: r.score,
+    }));
   }
+
+  // All-time: a single indexed read of users.xp_total — already fast, left uncached
+  // so the all-time board stays exactly live.
+  const rows = await queryAll<{
+    user_id: number;
+    display_name: string;
+    avatar_code: string | null;
+    score: number;
+  }>(
+    env,
+    `
+    SELECT u.id as user_id,
+           COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
+           u.avatar_code,
+           u.xp_total as score
+    FROM users u
+    WHERE u.is_approved = 1
+      AND (u.is_banned IS NULL OR u.is_banned = 0)
+      AND u.xp_total > 0
+    ORDER BY u.xp_total DESC, u.id ASC
+    LIMIT ?
+    `,
+    [limit]
+  );
 
   return rows.map((r, i) => ({
     rank: i + 1,
@@ -138,37 +203,19 @@ export async function getUserRankXp(
     return { rank: (result?.cnt ?? 0) + 1, score: user.xp_total };
   }
 
-  // Same fixed Iran-calendar boundary as getLeaderboardXp, so a user's rank and
-  // their score are computed over the identical window.
-  const startUtc = periodStartUtc(period, nowMs);
-
-  const userScore = await queryOne<{ score: number }>(
-    env,
-    `SELECT COALESCE(SUM(xp_delta), 0) as score
-     FROM activity_log
-     WHERE user_id = ? AND created_at >= ?`,
-    [userId, startUtc]
-  );
-  if (!userScore) return null;
-
-  const result = await queryOne<{ cnt: number }>(
-    env,
-    `
-    SELECT COUNT(*) as cnt FROM (
-      SELECT al.user_id
-      FROM activity_log al
-      JOIN users u ON u.id = al.user_id
-      WHERE al.created_at >= ?
-        AND u.is_approved = 1
-        AND (u.is_banned IS NULL OR u.is_banned = 0)
-      GROUP BY al.user_id
-      HAVING SUM(al.xp_delta) > ?
-    )
-    `,
-    [startUtc, userScore.score]
-  );
-
-  return { rank: (result?.cnt ?? 0) + 1, score: userScore.score };
+  // Same fixed Iran-calendar boundary as getLeaderboardXp — derived from the SAME
+  // cached snapshot so the board and the "your rank" line are always consistent.
+  // The user's score is their entry in the snapshot (0 if they have no activity this
+  // period, in which case the handler doesn't show the rank line). Rank is the count
+  // of strictly-higher scores + 1, matching the old COUNT(... HAVING SUM > score).
+  const standings = await getXpStandingsCached(env, period, nowMs);
+  const me = standings.find((s) => s.user_id === userId);
+  const score = me?.score ?? 0;
+  // standings is sorted score DESC, so the first entry with score <= ours marks the
+  // end of the strictly-higher run — that index IS the count of higher scores.
+  const firstEqualOrLower = standings.findIndex((s) => s.score <= score);
+  const higher = firstEqualOrLower === -1 ? standings.length : firstEqualOrLower;
+  return { rank: higher + 1, score };
 }
 
 /**

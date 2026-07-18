@@ -14,7 +14,6 @@ import {
   countNewWordsByLevel,
   countLeechWords,
   getReviewStats,
-  getQuestionAnswerStats,
 } from "../../../db/leitner";
 import { formatAnswerStatsLine } from "../../../utils/answer_stats";
 import { prepareXpForLeitner, prepareXpForLeitnerDunno, checkAndUpdateStreak } from "../../../db/xp";
@@ -63,9 +62,12 @@ import {
  * @returns void
  */
 export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number): Promise<void> {
-  const dueCount = await countDueWords(env, user.id);
-  const newCount = await countNewWords(env, user.id);
-  const leechCount = await countLeechWords(env, user.id);
+  // The three counts are independent — run them together instead of serially.
+  const [dueCount, newCount, leechCount] = await Promise.all([
+    countDueWords(env, user.id),
+    countNewWords(env, user.id),
+    countLeechWords(env, user.id),
+  ]);
 
   if (dueCount === 0 && newCount === 0 && leechCount === 0) {
     await sendMessage(env, chatId, "🎉 عالی! فعلاً هیچ واژه‌ای برای مرور، یادگیری یا تمرین نداری. بعداً سر بزن!", {
@@ -232,18 +234,37 @@ async function handleDunno(
   const questionId = Number(parts[1]);
   const mode = extractMode(parts, 2);
 
+  // Stop the spinner immediately — don't hold it through the read + FSRS batch.
+  // Fired now, awaited on every exit path so it never floats. answerCallbackQuery
+  // never rejects (fetchWithRetry swallows errors). A rare double-tap that finds
+  // the row already answered now stops silently instead of showing a toast.
+  const ack = answerCallbackQuery(env, callbackQuery.id);
+
   if (!Number.isFinite(questionId)) {
-    await answerCallbackQuery(env, callbackQuery.id);
+    await ack;
     return;
   }
 
-  // One round-trip: question/word + this user's history row (dedup pre-check)
-  // via LEFT JOIN. UNIQUE(user_id, question_id, context) ⇒ at most one match.
-  const question = await queryOne<LeitnerQuestionRow & { history_answered_at: string | null }>(
+  // One round-trip: question/word + this user's history row (dedup pre-check) via
+  // LEFT JOIN, PLUS the "how others answered" aggregate as two correlated subqueries
+  // so the stats line costs no extra round-trip. UNIQUE(user_id, question_id,
+  // context) ⇒ at most one history match. The stats exclude this user's own answer
+  // (not yet claimed here) — an off-by-one that's invisible in the percentage.
+  const question = await queryOne<
+    LeitnerQuestionRow & {
+      history_answered_at: string | null;
+      stats_total: number;
+      stats_correct: number;
+    }
+  >(
     env,
     `SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
             q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level,
-            w.lesson_name, h.answered_at AS history_answered_at
+            w.lesson_name, h.answered_at AS history_answered_at,
+            (SELECT COUNT(*) FROM user_word_question_history s
+              WHERE s.question_id = q.id AND s.context = 'leitner' AND s.first_is_correct IS NOT NULL) AS stats_total,
+            (SELECT COALESCE(SUM(CASE WHEN s.first_is_correct = 1 THEN 1 ELSE 0 END), 0) FROM user_word_question_history s
+              WHERE s.question_id = q.id AND s.context = 'leitner' AND s.first_is_correct IS NOT NULL) AS stats_correct
      FROM word_questions q
      JOIN words w ON q.word_id = w.id
      LEFT JOIN user_word_question_history h
@@ -252,11 +273,11 @@ async function handleDunno(
     [user.id, questionId]
   );
   if (!question) {
-    await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد");
+    await ack;
     return;
   }
   if (question.history_answered_at) {
-    await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
+    await ack;
     return;
   }
 
@@ -289,13 +310,14 @@ async function handleDunno(
   const results = await runBatch(env, batch);
   const claimResult = results[results.length - 1];
   if (!claimResult || claimResult.meta.changes === 0) {
-    await answerCallbackQuery(env, callbackQuery.id, "قبلاً پاسخ داده شده 👍");
+    // Lost the race / already answered — spinner already stopped, nothing to show.
+    await ack;
     return;
   }
 
-  // Spinner-clear and keyboard-removal are independent — fire them together.
+  // Keyboard-removal is independent — fire it with the (already in-flight) ack.
   await Promise.all([
-    answerCallbackQuery(env, callbackQuery.id),
+    ack,
     removeInlineKeyboard(env, chatId, messageId),
   ]);
 
@@ -320,8 +342,12 @@ async function handleDunno(
     replyText += `\n\n${explanation}`;
   }
 
-  const dunnoStats = await getQuestionAnswerStats(env, question.id);
-  replyText += formatAnswerStatsLine(dunnoStats);
+  // Stats came free with the question read above (correlated subqueries).
+  replyText += formatAnswerStatsLine({
+    correct: question.stats_correct,
+    incorrect: question.stats_total - question.stats_correct,
+    total: question.stats_total,
+  });
 
   const rows: InlineKeyboardButton[][] = [];
   if (mode === "leech") rows.push([unleechButton(question.id, mode)]);
@@ -402,12 +428,20 @@ async function handleRating(
   const ratingValue = Number(parts[2]) as Rating;
   const mode = extractMode(parts, 3);
 
+  // Stop the spinner immediately — don't hold it through the question read, the
+  // FSRS state read and the write batch (the three round-trips that made rating the
+  // slowest tap to acknowledge). Fired now, awaited on every exit path so it never
+  // floats. answerCallbackQuery never rejects (fetchWithRetry swallows errors). A
+  // rare double-tap that finds the rating already applied now stops silently
+  // instead of showing the "امتیاز قبلاً ثبت شده" toast.
+  const ack = answerCallbackQuery(env, callbackQuery.id);
+
   if (!Number.isFinite(questionId) || !Number.isFinite(ratingValue)) {
-    await answerCallbackQuery(env, callbackQuery.id);
+    await ack;
     return;
   }
   if (![Rating.Again, Rating.Hard, Rating.Good, Rating.Easy].includes(ratingValue)) {
-    await answerCallbackQuery(env, callbackQuery.id, "نامعتبر");
+    await ack;
     return;
   }
 
@@ -418,7 +452,7 @@ async function handleRating(
     [questionId]
   );
   if (!question) {
-    await answerCallbackQuery(env, callbackQuery.id);
+    await ack;
     await sendMessage(env, chatId, "❗️ خطا: سوال پیدا نشد.", {
       reply_markup: { inline_keyboard: [[nextButton(mode)], [homeButton()]] },
     });
@@ -458,14 +492,14 @@ async function handleRating(
   const results = await runBatch(env, batch);
   const claimResult = results[results.length - 1];
   if (!claimResult || claimResult.meta.changes === 0) {
-    // Lost the race / already rated — nothing was applied by this request.
-    await answerCallbackQuery(env, callbackQuery.id, "امتیاز قبلاً ثبت شده 👍");
+    // Lost the race / already rated — spinner already stopped, nothing to show.
+    await ack;
     return;
   }
 
-  // Spinner-clear and keyboard-removal are independent — fire them together.
+  // Keyboard-removal is independent — fire it with the (already in-flight) ack.
   await Promise.all([
-    answerCallbackQuery(env, callbackQuery.id),
+    ack,
     removeInlineKeyboard(env, chatId, messageId),
   ]);
 
@@ -828,12 +862,25 @@ async function handleAnswer(
 
   // Single round-trip: fetch the question/word AND this user's history row (the
   // dedup pre-check) together via a LEFT JOIN — UNIQUE(user_id, question_id,
-  // context) guarantees at most one history row, so `.first()` is unambiguous.
-  const question = await queryOne<LeitnerQuestionRow & { history_answered_at: string | null }>(
+  // context) guarantees at most one history row, so `.first()` is unambiguous. The
+  // "how others answered" aggregate rides along as two correlated subqueries so the
+  // stats line adds no extra round-trip; it excludes this user's own answer (not yet
+  // claimed here) — an off-by-one that's invisible in the percentage.
+  const question = await queryOne<
+    LeitnerQuestionRow & {
+      history_answered_at: string | null;
+      stats_total: number;
+      stats_correct: number;
+    }
+  >(
     env,
     `SELECT q.id, q.word_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
            q.correct_option, q.question_style, q.explanation_text, w.english, w.persian, w.level,
-           w.lesson_name, h.answered_at AS history_answered_at
+           w.lesson_name, h.answered_at AS history_answered_at,
+           (SELECT COUNT(*) FROM user_word_question_history s
+             WHERE s.question_id = q.id AND s.context = 'leitner' AND s.first_is_correct IS NOT NULL) AS stats_total,
+           (SELECT COALESCE(SUM(CASE WHEN s.first_is_correct = 1 THEN 1 ELSE 0 END), 0) FROM user_word_question_history s
+             WHERE s.question_id = q.id AND s.context = 'leitner' AND s.first_is_correct IS NOT NULL) AS stats_correct
     FROM word_questions q
     JOIN words w ON q.word_id = w.id
     LEFT JOIN user_word_question_history h
@@ -904,8 +951,12 @@ async function handleAnswer(
     replyText += `\n\n${explanation}`;
   }
 
-  const answerStats = await getQuestionAnswerStats(env, question.id);
-  replyText += formatAnswerStatsLine(answerStats);
+  // Stats came free with the question read above (correlated subqueries).
+  replyText += formatAnswerStatsLine({
+    correct: question.stats_correct,
+    incorrect: question.stats_total - question.stats_correct,
+    total: question.stats_total,
+  });
 
   let ratingButtons: InlineKeyboardButton[];
   if (isCorrect) {

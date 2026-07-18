@@ -5,7 +5,6 @@ import { getProfileMenuKeyboard } from "../keyboards";
 import { pe } from "../premium-emojis";
 import { escapeHtml } from "../../utils/html";
 import { getOrCreateUser, DbUser } from "../../db/users";
-import { queryOne } from "../../db/client";
 import {
   getUserProfile,
   updateDisplayName,
@@ -14,41 +13,36 @@ import {
   ActivityPeriod,
   ActivityStats
 } from "../../db/profile";
-import { CB_PREFIX, TIME_ZONE_OFFSET } from "../../config/constants";
+import { CB_PREFIX } from "../../config/constants";
+import { iranDateStr, shiftDateStr } from "../../utils/iran_time";
 import { AVATARS, getAvatarEmoji, getAvatarLabel } from "../avatars";
 import { toJalaliString } from "../../utils/jalali";
 import { evaluateThresholdBadges } from "../../db/badges";
 import { notifyNewBadges } from "./medals";
 
-async function getStreakInfo(env: Env, userId: number): Promise<number> {
-  const row = await queryOne<{ streak_count: number; last_streak_date: string }>(
-    env,
-    `SELECT streak_count, last_streak_date FROM users WHERE id = ?`,
-    [userId]
-  );
-  if (!row) return 0;
-
-  const count = (row.streak_count as number) || 0;
-  const lastDate = (row.last_streak_date as string) || "";
-
+/**
+ * Resolve the streak count to DISPLAY from a user's stored streak fields. A streak
+ * only counts as "alive" if the last streak day is today or yesterday (Iran local);
+ * otherwise it has lapsed and shows as 0. Pure/side-effect-free — the Iran-local
+ * today/yesterday are computed in JS (via iranDateStr/shiftDateStr, the exact
+ * equivalent of the old `date('now', '+3.5 hours')`), so this needs no DB round-trip
+ * and is unit-testable. Replaces the previous two-query getStreakInfo.
+ * @param streakCount - The user's stored streak_count
+ * @param lastStreakDate - The user's stored last_streak_date ('YYYY-MM-DD', Iran local)
+ * @param nowMs - Optional epoch ms (defaults to now)
+ * @returns The streak to display (0 if lapsed or none)
+ */
+export function resolveStreakDisplay(
+  streakCount: number | null | undefined,
+  lastStreakDate: string | null | undefined,
+  nowMs: number = Date.now()
+): number {
+  const count = streakCount || 0;
   if (count === 0) return 0;
-
-  const dateCheck = await queryOne<{ today_local: string; yesterday_local: string }>(
-    env,
-    `SELECT
-      date('now', ?) as today_local,
-      date('now', ?, '-1 day') as yesterday_local`,
-    [TIME_ZONE_OFFSET, TIME_ZONE_OFFSET]
-  );
-
-  const todayStr = dateCheck?.today_local as string;
-  const yesterdayStr = dateCheck?.yesterday_local as string;
-
-  if (lastDate === todayStr || lastDate === yesterdayStr) {
-    return count;
-  }
-
-  return 0;
+  const lastDate = lastStreakDate || "";
+  const today = iranDateStr(nowMs);
+  const yesterday = shiftDateStr(today, -1);
+  return lastDate === today || lastDate === yesterday ? count : 0;
 }
 
 /**
@@ -70,7 +64,9 @@ export async function showProfileHome(env: Env, user: DbUser, chatId: number): P
   const xpTotal = profile?.xp_total ?? 0;
   const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
 
-  const streakCount = await getStreakInfo(env, user.id);
+  // Streak is derived from the fields already loaded by getUserProfile — no extra
+  // read, and today/yesterday are computed in JS.
+  const streakCount = resolveStreakDisplay(profile?.streak_count, profile?.last_streak_date);
   const streakText = streakCount > 0 ? `${pe("🔥")} <b>${streakCount}</b> روز` : "خاموش ❄️";
 
   const text =
@@ -331,11 +327,13 @@ export async function handleStatsCallback(
   }
 
   const chatId = message.chat.id;
-  const user = await getOrCreateUser(env, callbackQuery.from);
 
-  const stats = await getUserActivityStats(env, user.id, period);
-
+  // Stop the spinner right away — the stats aggregation below gates no toast, so
+  // there's no reason to hold the loading state through it.
   await answerCallbackQuery(env, callbackQuery.id);
+
+  const user = await getOrCreateUser(env, callbackQuery.from);
+  const stats = await getUserActivityStats(env, user.id, period);
 
   const text = buildStatsText(stats);
   await sendMessage(env, chatId, text);

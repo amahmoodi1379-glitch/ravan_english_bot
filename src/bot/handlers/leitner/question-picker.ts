@@ -8,7 +8,6 @@ import {
   pickNextNewWord,
   pickNextNewWordByLesson,
   pickNextLeechWord,
-  getWordStage,
   countNewWords,
   getLessonNameById,
   DbWord,
@@ -198,7 +197,10 @@ export async function sendLeitnerQuestion(
     }
     seenWordIds.add(word.id);
 
-    const stage = await getWordStage(env, user.id, word.id);
+    // Review/leech words carry question_stage from their FSRS state row (fetched in
+    // the same pick query); new words have no state row yet, so stage defaults to 1 —
+    // exactly what getWordStage returned. This drops a separate per-question read.
+    const stage = word.question_stage || 1;
     const prioritizedTypes = getQuestionStyleForStage(stage);
 
     let question: LeitnerQuestionRow | null = null;

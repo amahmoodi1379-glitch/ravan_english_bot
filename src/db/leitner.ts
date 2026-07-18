@@ -30,6 +30,9 @@ export interface DbWord {
   synonyms: string | null;
   antonyms: string | null;
   order_index: number;
+  // Present only when the word was drawn from an existing FSRS state row
+  // (review / leech modes). New-word picks leave it undefined → treated as stage 1.
+  question_stage?: number;
 }
 
 export interface UserWordState {
@@ -167,7 +170,8 @@ export async function pickNextReviewWord(env: Env, userId: number, level?: numbe
   const row = await queryOne<DbWord>(
     env,
     `
-    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index,
+           s.question_stage
     FROM user_words_sm2 s
     JOIN words w ON w.id = s.word_id
     WHERE s.user_id = ?
@@ -488,7 +492,8 @@ export async function pickNextLeechWord(env: Env, userId: number): Promise<DbWor
   const row = await queryOne<DbWord>(
     env,
     `
-    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index
+    SELECT w.id, w.english, w.persian, w.level, w.lesson_name, w.synonyms, w.antonyms, w.order_index,
+           s.question_stage
     FROM user_words_sm2 s
     JOIN words w ON w.id = s.word_id
     WHERE s.user_id = ?

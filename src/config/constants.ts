@@ -129,6 +129,18 @@ export const CHANNEL_VERIFY_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 /** Minimum number of recorded answers before showing the "others answered" stats line. */
 export const ANSWER_STATS_MIN_THRESHOLD = 5;
 
+/**
+ * How long a leaderboard/league standings snapshot stays cached in-isolate before
+ * it is recomputed. These are the heaviest aggregations in the bot (a full
+ * GROUP-BY/SUM over activity_log per open); caching the whole ranked snapshot lets
+ * both the top-50 board AND any user's rank be served from memory, turning several
+ * large aggregations per tap into one every few minutes. Trade-off: freshly earned
+ * XP can take up to this long to move the standings — invisible on a leaderboard.
+ * The cache is per-isolate (like the channel-membership / emoji caches) and expires
+ * purely by TTL.
+ */
+export const LEADERBOARD_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
+
 /** Days of inactivity at which each return-reminder stage fires (subscribers only). */
 export const INACTIVITY_REMINDER_DAYS = [2, 5, 10] as const;
 
