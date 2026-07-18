@@ -12,7 +12,7 @@
 -- • When you change the schema: add a new migration in migrations/ AND update
 --   this file to match. They must never disagree. See .kiro/steering/database.md
 --
--- Last consolidated: migration 0030 (word-question reports).
+-- Last consolidated: migration 0038 (activity_log covering index).
 -- ============================================================================
 
 
@@ -198,7 +198,11 @@ CREATE TABLE IF NOT EXISTS activity_log (
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_log(user_id, created_at);
+-- Covering index for per-user windowed XP sums (leaderboards, league standings,
+-- user rank, windowed profile stats): xp_delta trails the (user_id, created_at)
+-- seek so those aggregations read index-only. Replaced the narrower
+-- idx_activity_user_created (user_id, created_at) in migration 0038.
+CREATE INDEX IF NOT EXISTS idx_activity_user_created_xpdelta ON activity_log(user_id, created_at, xp_delta);
 CREATE INDEX IF NOT EXISTS idx_activity_created_xp ON activity_log(created_at, xp_delta);
 CREATE INDEX IF NOT EXISTS idx_activity_user_created_xp
   ON activity_log(created_at, user_id, xp_delta);

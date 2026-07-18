@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { queryOne, queryAll, execute, prepare, batch } from "./client";
-import { LEAGUE_CONFIG } from "../config/constants";
+import { LEAGUE_CONFIG, LEADERBOARD_CACHE_TTL_MS } from "../config/constants";
 import { awardLeagueBadges, LeagueBadgeEntry } from "./badges";
 import {
   iranWeekStartDate,
@@ -231,6 +231,37 @@ export async function getDivisionStandings(
 }
 
 /**
+ * In-isolate cache of a division's standings for the INTERACTIVE league view. The
+ * weekly-XP roll-up (a SUM over activity_log per member) is the heaviest part of
+ * opening the league, so caching it for LEADERBOARD_CACHE_TTL_MS turns repeated
+ * opens into one aggregation every few minutes. Keyed by `weekStart:divisionId`.
+ * Settlement (settleLeague) deliberately does NOT use this — it always reads fresh.
+ */
+const divisionStandingsCache = new Map<string, { at: number; standings: DivisionStanding[] }>();
+
+/** Clear the in-isolate league standings cache. Test-only seam. */
+export function _resetLeagueCaches(): void {
+  divisionStandingsCache.clear();
+}
+
+/**
+ * Cached wrapper around getDivisionStandings for the interactive path only.
+ */
+async function getDivisionStandingsCached(
+  env: Env,
+  weekStart: string,
+  divisionId: number,
+  nowMs: number
+): Promise<DivisionStanding[]> {
+  const key = `${weekStart}:${divisionId}`;
+  const cached = divisionStandingsCache.get(key);
+  if (cached && nowMs - cached.at < LEADERBOARD_CACHE_TTL_MS) return cached.standings;
+  const standings = await getDivisionStandings(env, weekStart, divisionId);
+  divisionStandingsCache.set(key, { at: nowMs, standings });
+  return standings;
+}
+
+/**
  * Build the current-week league view for a user (enrolling them lazily if needed).
  * @param env - The worker environment containing the D1 database binding
  * @param userId - The user id
@@ -251,7 +282,7 @@ export async function getUserLeagueState(
   );
   if (!member) return null;
 
-  const standings = await getDivisionStandings(env, weekStart, member.division_id);
+  const standings = await getDivisionStandingsCached(env, weekStart, member.division_id, nowMs);
   const userRank = standings.findIndex((s) => s.user_id === userId) + 1;
   const { promote, demote } = movementCounts(standings.length);
 

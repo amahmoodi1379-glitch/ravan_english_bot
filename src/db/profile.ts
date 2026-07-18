@@ -34,60 +34,61 @@ export async function getActivityComparison(
 ): Promise<PeriodComparison> {
   const { curStart, curEnd, prevStart, prevEnd } = r;
 
-  // XP from activity_log
-  const xpRow = await queryOne<{ cur: number; prev: number }>(
-    env,
-    `
-    SELECT
-      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN xp_delta ELSE 0 END), 0) AS cur,
-      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN xp_delta ELSE 0 END), 0) AS prev
-    FROM (
-      SELECT xp_delta, date(created_at, ${LOCAL_DATE}) AS d
-      FROM activity_log
-      WHERE user_id = ? AND date(created_at, ${LOCAL_DATE}) >= ? AND date(created_at, ${LOCAL_DATE}) < ?
-    )
-    `,
-    [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd]
-  );
-
-  // Answered questions: leitner + reading combined
-  const qRow = await queryOne<{ cur: number; prev: number }>(
-    env,
-    `
-    SELECT
-      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS cur,
-      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS prev
-    FROM (
-      SELECT date(answered_at, ${LOCAL_DATE}) AS d
-      FROM user_word_question_history
-      WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL
-        AND date(answered_at, ${LOCAL_DATE}) >= ? AND date(answered_at, ${LOCAL_DATE}) < ?
-      UNION ALL
-      SELECT date(answered_at, ${LOCAL_DATE}) AS d
-      FROM user_text_question_history
-      WHERE user_id = ? AND answered_at IS NOT NULL
-        AND date(answered_at, ${LOCAL_DATE}) >= ? AND date(answered_at, ${LOCAL_DATE}) < ?
-    )
-    `,
-    [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd, userId, prevStart, curEnd]
-  );
-
-  // New words learned (state row created), excluding ignored
-  const wRow = await queryOne<{ cur: number; prev: number }>(
-    env,
-    `
-    SELECT
-      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS cur,
-      COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS prev
-    FROM (
-      SELECT date(created_at, ${LOCAL_DATE}) AS d
-      FROM user_words_sm2
-      WHERE user_id = ? AND ignored = 0
-        AND date(created_at, ${LOCAL_DATE}) >= ? AND date(created_at, ${LOCAL_DATE}) < ?
-    )
-    `,
-    [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd]
-  );
+  // The three windows are independent — run them together instead of serially.
+  const [xpRow, qRow, wRow] = await Promise.all([
+    // XP from activity_log
+    queryOne<{ cur: number; prev: number }>(
+      env,
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN xp_delta ELSE 0 END), 0) AS cur,
+        COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN xp_delta ELSE 0 END), 0) AS prev
+      FROM (
+        SELECT xp_delta, date(created_at, ${LOCAL_DATE}) AS d
+        FROM activity_log
+        WHERE user_id = ? AND date(created_at, ${LOCAL_DATE}) >= ? AND date(created_at, ${LOCAL_DATE}) < ?
+      )
+      `,
+      [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd]
+    ),
+    // Answered questions: leitner + reading combined
+    queryOne<{ cur: number; prev: number }>(
+      env,
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS cur,
+        COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS prev
+      FROM (
+        SELECT date(answered_at, ${LOCAL_DATE}) AS d
+        FROM user_word_question_history
+        WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL
+          AND date(answered_at, ${LOCAL_DATE}) >= ? AND date(answered_at, ${LOCAL_DATE}) < ?
+        UNION ALL
+        SELECT date(answered_at, ${LOCAL_DATE}) AS d
+        FROM user_text_question_history
+        WHERE user_id = ? AND answered_at IS NOT NULL
+          AND date(answered_at, ${LOCAL_DATE}) >= ? AND date(answered_at, ${LOCAL_DATE}) < ?
+      )
+      `,
+      [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd, userId, prevStart, curEnd]
+    ),
+    // New words learned (state row created), excluding ignored
+    queryOne<{ cur: number; prev: number }>(
+      env,
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS cur,
+        COALESCE(SUM(CASE WHEN d >= ? AND d < ? THEN 1 ELSE 0 END), 0) AS prev
+      FROM (
+        SELECT date(created_at, ${LOCAL_DATE}) AS d
+        FROM user_words_sm2
+        WHERE user_id = ? AND ignored = 0
+          AND date(created_at, ${LOCAL_DATE}) >= ? AND date(created_at, ${LOCAL_DATE}) < ?
+      )
+      `,
+      [curStart, curEnd, prevStart, prevEnd, userId, prevStart, curEnd]
+    ),
+  ]);
 
   return {
     current: {
@@ -111,6 +112,8 @@ export interface UserProfile {
   created_at: string;
   last_seen_at: string | null;
   name_change_count: number;
+  streak_count: number;
+  last_streak_date: string | null;
 }
 
 export interface ActivityStats {
@@ -155,7 +158,9 @@ export async function getUserProfile(env: Env, userId: number): Promise<UserProf
       xp_total,
       created_at,
       last_seen_at,
-      name_change_count
+      name_change_count,
+      streak_count,
+      last_streak_date
     FROM users
     WHERE id = ?
     `,
@@ -259,91 +264,87 @@ export async function getUserActivityStats(
   let readingQuestionsTotal = 0;
 
   if (!sinceExpr) {
-    // "all time" period
-    const xpRow = await queryOne<{ xp: number | null }>(
-      env,
-      `SELECT xp_total AS xp FROM users WHERE id = ?`,
-      [userId]
-    );
+    // "all time" period — the five aggregates are independent, so run them together.
+    const [xpRow, lRow, newRow, rRow, rqRow] = await Promise.all([
+      queryOne<{ xp: number | null }>(
+        env,
+        `SELECT xp_total AS xp FROM users WHERE id = ?`,
+        [userId]
+      ),
+      queryOne<{ cnt: number; correct: number; incorrect: number }>(
+        env,
+        `SELECT COUNT(*) AS cnt,
+                COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
+                COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect
+         FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL`,
+        [userId]
+      ),
+      queryOne<{ cnt: number }>(
+        env,
+        `SELECT COUNT(*) AS cnt FROM user_words_sm2 WHERE user_id = ? AND ignored = 0`,
+        [userId]
+      ),
+      queryOne<{ cnt: number }>(
+        env,
+        `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed'`,
+        [userId]
+      ),
+      queryOne<{ total: number; correct: number }>(
+        env,
+        `SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct
+         FROM user_text_question_history WHERE user_id = ? AND answered_at IS NOT NULL`,
+        [userId]
+      ),
+    ]);
     xp = xpRow?.xp ?? 0;
-
-    const lRow = await queryOne<{ cnt: number; correct: number; incorrect: number }>(
-      env,
-      `SELECT COUNT(*) AS cnt,
-              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
-              COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect
-       FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL`,
-      [userId]
-    );
     leitnerQuestions = lRow?.cnt ?? 0;
     leitnerCorrect = lRow?.correct ?? 0;
     leitnerIncorrect = lRow?.incorrect ?? 0;
-
-    const newRow = await queryOne<{ cnt: number }>(
-      env,
-      `SELECT COUNT(*) AS cnt FROM user_words_sm2 WHERE user_id = ? AND ignored = 0`,
-      [userId]
-    );
     newWordsLearned = newRow?.cnt ?? 0;
-
-    const rRow = await queryOne<{ cnt: number }>(
-      env,
-      `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed'`,
-      [userId]
-    );
     readingSets = rRow?.cnt ?? 0;
-
-    const rqRow = await queryOne<{ total: number; correct: number }>(
-      env,
-      `SELECT COUNT(*) AS total,
-              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct
-       FROM user_text_question_history WHERE user_id = ? AND answered_at IS NOT NULL`,
-      [userId]
-    );
     readingQuestionsTotal = rqRow?.total ?? 0;
     readingQuestionsCorrect = rqRow?.correct ?? 0;
   } else {
-    // Time-bounded period
-    const xpRow = await queryOne<{ xp: number | null }>(
-      env,
-      `SELECT COALESCE(SUM(xp_delta), 0) AS xp FROM activity_log WHERE user_id = ? AND created_at >= ${sinceExpr}`,
-      [userId]
-    );
+    // Time-bounded period — same five aggregates, run together.
+    const [xpRow, lRow, newRow, rRow, rqRow] = await Promise.all([
+      queryOne<{ xp: number | null }>(
+        env,
+        `SELECT COALESCE(SUM(xp_delta), 0) AS xp FROM activity_log WHERE user_id = ? AND created_at >= ${sinceExpr}`,
+        [userId]
+      ),
+      queryOne<{ cnt: number; correct: number; incorrect: number }>(
+        env,
+        `SELECT COUNT(*) AS cnt,
+                COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
+                COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect
+         FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL AND answered_at >= ${sinceExpr}`,
+        [userId]
+      ),
+      queryOne<{ cnt: number }>(
+        env,
+        `SELECT COUNT(*) AS cnt FROM user_words_sm2 WHERE user_id = ? AND ignored = 0 AND created_at >= ${sinceExpr}`,
+        [userId]
+      ),
+      queryOne<{ cnt: number }>(
+        env,
+        `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed' AND completed_at >= ${sinceExpr}`,
+        [userId]
+      ),
+      queryOne<{ total: number; correct: number }>(
+        env,
+        `SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct
+         FROM user_text_question_history WHERE user_id = ? AND answered_at IS NOT NULL AND answered_at >= ${sinceExpr}`,
+        [userId]
+      ),
+    ]);
     xp = xpRow?.xp ?? 0;
-
-    const lRow = await queryOne<{ cnt: number; correct: number; incorrect: number }>(
-      env,
-      `SELECT COUNT(*) AS cnt,
-              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
-              COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect
-       FROM user_word_question_history WHERE user_id = ? AND context = 'leitner' AND answered_at IS NOT NULL AND answered_at >= ${sinceExpr}`,
-      [userId]
-    );
     leitnerQuestions = lRow?.cnt ?? 0;
     leitnerCorrect = lRow?.correct ?? 0;
     leitnerIncorrect = lRow?.incorrect ?? 0;
-
-    const newRow = await queryOne<{ cnt: number }>(
-      env,
-      `SELECT COUNT(*) AS cnt FROM user_words_sm2 WHERE user_id = ? AND ignored = 0 AND created_at >= ${sinceExpr}`,
-      [userId]
-    );
     newWordsLearned = newRow?.cnt ?? 0;
-
-    const rRow = await queryOne<{ cnt: number }>(
-      env,
-      `SELECT COUNT(*) AS cnt FROM reading_sessions WHERE user_id = ? AND status = 'completed' AND completed_at >= ${sinceExpr}`,
-      [userId]
-    );
     readingSets = rRow?.cnt ?? 0;
-
-    const rqRow = await queryOne<{ total: number; correct: number }>(
-      env,
-      `SELECT COUNT(*) AS total,
-              COALESCE(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct
-       FROM user_text_question_history WHERE user_id = ? AND answered_at IS NOT NULL AND answered_at >= ${sinceExpr}`,
-      [userId]
-    );
     readingQuestionsTotal = rqRow?.total ?? 0;
     readingQuestionsCorrect = rqRow?.correct ?? 0;
   }
