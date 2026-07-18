@@ -117,9 +117,11 @@ async function showXpLeaderboard(
   // Kept sequential on purpose: both reads share the same cached standings
   // snapshot, so the first populates the in-isolate cache and the second is a
   // free lookup — cheaper than running them in parallel and double-fetching on a
-  // cold cache.
-  const entries = await getLeaderboardXp(env, period);
-  const userRank = await getUserRankXp(env, userId, period);
+  // cold cache. Pass ONE nowMs to both so a call that straddles a week/month
+  // rollover can't derive the board and the rank from two different periods.
+  const nowMs = Date.now();
+  const entries = await getLeaderboardXp(env, period, 50, nowMs);
+  const userRank = await getUserRankXp(env, userId, period, nowMs);
 
   const text = buildLeaderboardText(periodLabels[period], entries, userRank, "XP");
 

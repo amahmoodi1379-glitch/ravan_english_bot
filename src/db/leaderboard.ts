@@ -211,10 +211,10 @@ export async function getUserRankXp(
   const standings = await getXpStandingsCached(env, period, nowMs);
   const me = standings.find((s) => s.user_id === userId);
   const score = me?.score ?? 0;
-  let higher = 0;
-  for (const s of standings) {
-    if (s.score > score) higher++;
-  }
+  // standings is sorted score DESC, so the first entry with score <= ours marks the
+  // end of the strictly-higher run — that index IS the count of higher scores.
+  const firstEqualOrLower = standings.findIndex((s) => s.score <= score);
+  const higher = firstEqualOrLower === -1 ? standings.length : firstEqualOrLower;
   return { rank: higher + 1, score };
 }
 
