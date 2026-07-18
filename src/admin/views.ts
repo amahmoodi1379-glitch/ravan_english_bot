@@ -529,63 +529,95 @@ export function renderUserForm(user: UserFormRow, heading: string): string {
 }
 
 /**
- * The English review prompt handed to a Claude chat. It explains the exported
- * file format, the vocabulary-question styles, the scientific issues to look
- * for, and the EXACT corrections-JSON shape the site re-imports.
+ * The English review prompt handed to an AI chat (round two). It is a stricter,
+ * quality-focused second pass: on top of raw correctness it enforces exactly one
+ * defensible answer, no synonym distractors, no length/format tell, non-obvious
+ * distractors, and richer stems/explanations — while pinning the correct option
+ * to the EXACT database target. It also states the corrections-JSON shape the
+ * site re-imports. Model-agnostic (works with any capable LLM).
  */
-const WORD_REVIEW_PROMPT = `You are an expert ESL vocabulary-test reviewer. You will receive a JSON array of multiple-choice vocabulary test questions from a Persian-speaking learners' English app. Your job is to find questions that have a SCIENTIFIC/CORRECTNESS problem and return corrected versions of ONLY those questions.
+const WORD_REVIEW_PROMPT = `ROLE
+You are a meticulous senior ESL assessment editor performing a SECOND-PASS quality review of multiple-choice vocabulary questions for a Persian-speaking learners' English app (CEFR level A2–B1). A first pass already removed gross errors. Your job now is to raise every remaining question to publishable, exam-grade quality while guaranteeing it is factually correct, unambiguous, and has exactly ONE defensible answer.
+
+You will receive a JSON array of up to 100 questions. Review each item independently and thoroughly.
+
+GROUND TRUTH — NEVER CHANGE THESE
+Each item carries the target word and meaning straight from the database. They are the single source of truth:
+- "word"    — the exact target English word.
+- "meaning" — the exact target Persian meaning.
+- "synonyms" / "antonyms" — may be empty; when present, treat them as true.
+Never turn the item into a test of a different word or meaning. Every fix must keep testing THIS word with THIS meaning.
 
 INPUT FORMAT
 Each item looks like this:
 {
   "id": 123,                       // stable database id — you MUST echo it back unchanged
-  "word": "seed",                  // the target English word (ground truth)
-  "meaning": "دانه",               // the target Persian meaning (ground truth)
+  "word": "seed",                  // target English word (ground truth)
+  "meaning": "دانه",               // target Persian meaning (ground truth)
   "synonyms": "...", "antonyms": "...",  // may be empty
   "style": "en_to_fa",             // question style, see below
-  "question": "…",                 // the question stem shown to the learner
+  "question": "…",                 // the stem shown to the learner
   "options": { "A": "…", "B": "…", "C": "…", "D": "…" },
   "correct": "A",                  // the letter currently marked correct
   "explanation": "…"
 }
 
-QUESTION STYLES (what "correct" should be)
+STYLES — WHAT THE CORRECT OPTION MUST BE
 - "en_to_fa": the English word is given; the correct option is its Persian meaning.
 - "fa_to_en": the Persian meaning is given; the correct option is the English word.
 - "definition_to_word": an English definition is given; the correct option is the word it defines.
-- "word_to_definition": the word is given; the correct option is its correct definition.
-- "cloze": a sentence with a blank; the correct option is the word/meaning that fits.
+- "word_to_definition": the word is given; the correct option is its correct English definition.
+- "cloze": a sentence with a blank; the correct option is the word (or, in a Persian stem, the meaning) that fits.
 
-WHAT COUNTS AS A PROBLEM (flag and fix)
-1. Wrong answer key: the option marked "correct" is not actually the right answer for this word/meaning.
-2. Multiple correct options: two or more options are acceptable answers (distractors that are true synonyms / equally correct).
-3. Missing correct answer: the correct English word (or its Persian meaning) required by the style is NOT present in any option, even though the question stem is fine.
-4. Duplicate options: two options are identical or mean the same thing.
-5. Style mismatch: the options do not match the declared style (e.g. an "en_to_fa" item whose options are English words).
-6. Nonsense / broken stem or an explanation that contradicts the marked answer.
+RULE 0 — THE CORRECT OPTION IS ALWAYS THE DATABASE TARGET (HIGHEST PRIORITY)
+The TEXT of the correct option must be the EXACT database target for that style — never a synonym, paraphrase, or looser wording:
+- en_to_fa (and any Persian-answer cloze): the correct option text must equal "meaning" exactly.
+- fa_to_en / definition_to_word (and any English-answer cloze): the correct option text must equal "word" exactly.
+- word_to_definition: the correct option is a precise definition that fits "word"/"meaning" and NOTHING else in the list.
+Only exception: in a cloze whose grammar makes the base form ungrammatical, the correct option may be the correctly inflected form of the SAME headword (e.g. plural or past tense) — never a different word. If the option currently marked correct is a synonym or near-synonym instead of the exact target, REPLACE it with the exact target and update "correct" accordingly.
 
-HOW TO FIX
-- Keep the question testing the SAME target word and the SAME style whenever possible.
-- Prefer the smallest change that makes the item correct and unambiguous: fix the answer key, replace a bad distractor, insert the missing correct option, or reword a broken stem.
-- Keep exactly 4 options. Keep them plausible, same part of speech, A2–B1 difficulty. Distractors must be clearly wrong.
-- IMPORTANT: keep the option order and A–D labels as given unless you must change an option's text. "correct" is the letter of the right option AFTER your edits. Do not shuffle just to shuffle.
+QUALITY BAR — FIX ANY ITEM THAT BREAKS ANY OF THESE
+Correctness & exactly one answer
+1. Answer key is right: "correct" truly points to the database target.
+2. Exactly one defensible answer: no distractor is a synonym, equivalent, or otherwise also-acceptable answer. NEVER use a listed synonym (or any true synonym) of the target as a distractor. A listed antonym makes a good, clearly-wrong distractor.
+3. Target is present: the required correct answer actually appears among the four options.
+4. No duplicates / near-duplicates: no two options are identical or mean the same thing.
+5. Style match: the options match the declared style (e.g. an "en_to_fa" item must have Persian meanings as options, not English words).
+6. Explanation agrees with the key and never contradicts it.
+
+Ambiguity & misreading
+7. The stem has ONE clear reading. Remove wording that can be misread, double meanings, or missing context. A cloze sentence must give enough context that only the target word fits the blank.
+8. The stem must not leak the answer: don't repeat the target word, don't give a cognate/transliteration giveaway, and don't let grammatical agreement (article, plural, tense) point to only one option.
+
+Fair, non-obvious distractors
+9. All three distractors are plausible to a learner who doesn't know the word: same part of speech, same language, same register, and from a believable confusion set (antonyms, same-topic words, common learner mix-ups). No absurd, joke, or off-category options that make the answer obvious by elimination.
+10. No test-wiseness cues. In particular, the four options must be of COMPARABLE length and structure — the correct answer must NOT be systematically the longest, most detailed, or most qualified option. Balance the option lengths so length never reveals the key.
+
+Richness & polish
+11. Upgrade weak content where it helps quality: turn a flat stem into a natural, contextual one; replace a bland or too-easy distractor with a sharper near-miss; and rewrite a thin or generic explanation into a clear Persian explanation that says why the answer is correct and, briefly, why the main distractors are wrong (you may draw on the synonyms/antonyms). Keep explanations in natural, standard Persian.
+12. Clean language: correct, idiomatic English and clean standard Persian (proper spacing/half-space, no machine-translated phrasing). Keep difficulty at A2–B1.
+
+HOW TO FIX (minimal but sufficient)
+- Keep the SAME target word and the SAME style.
+- Keep exactly 4 options labelled A–D. Keep the existing option order and labels unless you must change an option's text; do not shuffle just to shuffle. "correct" is the letter of the right option AFTER your edits.
+- After editing, RE-CHECK the whole item end to end: exactly one correct answer, no synonym distractor, balanced option lengths, and an explanation that matches the key.
 
 OUTPUT FORMAT (the website re-imports this automatically — follow EXACTLY)
 - Return ONLY a valid JSON array. No prose, no markdown, NO code fences.
-- Include ONLY the questions you changed. If a question is already fine, DO NOT include it.
-- If NOTHING needs fixing, return exactly: []
+- Include ONLY the questions you changed. If an item already meets every rule above, OMIT it.
+- If NOTHING needs changing, return exactly: []
 - Each object must contain "id" plus ONLY the fields you changed. Allowed keys:
   - "id" (integer, required — copy it from the input, unchanged)
-  - "question" (string, optional) — corrected stem
-  - "options" (object, optional) — MUST include all four keys "A","B","C","D" with non-empty strings if present
+  - "question" (string, optional) — corrected/improved stem
+  - "options" (object, optional) — if present, MUST include all four keys "A","B","C","D" with non-empty strings
   - "correct" (string, optional) — one of "A","B","C","D"
   - "explanation" (string, optional)
   - "style" (string, optional) — only if the declared style was wrong; one of en_to_fa, fa_to_en, definition_to_word, word_to_definition, cloze
-- Use straight double quotes. No trailing commas. Make sure "correct" points to the truly correct option after your edits.
+- Use straight double quotes. No trailing commas. Make sure "correct" points to the true database-target option AFTER your edits.
 
 Example output:
 [
-  { "id": 123, "correct": "B", "explanation": "'seed' means دانه, which is option B." },
+  { "id": 123, "correct": "B", "explanation": "واژه‌ی «seed» یعنی «دانه» (گزینه B). گزینه‌های دیگر معنی واژه‌های دیگری‌اند و ربطی به این واژه ندارند." },
   { "id": 145, "options": { "A": "کتاب", "B": "دانه", "C": "میز", "D": "درخت" }, "correct": "B" }
 ]
 
@@ -615,6 +647,8 @@ export function renderReviewPage(stats: ReviewStats): string {
       <form method="get" action="/admin/review/export" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <label style="margin:0;">اندازه‌ی دسته:</label>
         <select name="size" style="width:auto; margin:0;">
+          <option value="100" selected>۱۰۰</option>
+          <option value="250">۲۵۰</option>
           <option value="500">۵۰۰</option>
           <option value="750">۷۵۰</option>
           <option value="1000">۱۰۰۰</option>
@@ -625,8 +659,8 @@ export function renderReviewPage(stats: ReviewStats): string {
     </div>
 
     <div class="q-box" style="border:2px solid #0d9488; background:#f0fdfa;">
-      <h3 style="margin-top:0;">۲) پرامپت بازبینی برای Claude</h3>
-      <p style="font-size:12px; color:#555;">این پرامپت را کپی کن، بعد محتوای فایل دانلودشده را زیر آن در چت Claude پیست کن. خروجی JSON اصلاحی را در بخش ۳ پیست کن.</p>
+      <h3 style="margin-top:0;">۲) پرامپت بازبینی (دور دوم — هوش مصنوعی)</h3>
+      <p style="font-size:12px; color:#555;">این پرامپت را کپی کن، بعد محتوای فایل دانلودشده را زیر آن در چت هوش مصنوعی (هر مدل قوی‌ای) پیست کن. خروجی JSON اصلاحی را در بخش ۳ پیست کن.</p>
       <button type="button" id="btn-copy-review-prompt" style="background:#0d9488; color:white;">کپی پرامپت بازبینی</button>
     </div>
     <script type="text/template" id="tpl-review-prompt">${encodedPrompt}</script>
@@ -653,7 +687,7 @@ export function renderReviewPage(stats: ReviewStats): string {
 
     <div class="q-box" style="border:2px solid #059669; background:#f0fdf4;">
       <h3 style="margin-top:0;">۳) اعمال اصلاحات</h3>
-      <p style="font-size:12px; color:#555;">آرایه‌ی JSON اصلاحی که Claude برگردانده را اینجا پیست کن. فقط تست‌هایی که در آن آمده‌اند و id معتبر دارند به‌روزرسانی می‌شوند (بدون بُر خوردن گزینه‌ها).</p>
+      <p style="font-size:12px; color:#555;">آرایه‌ی JSON اصلاحی که هوش مصنوعی برگردانده را اینجا پیست کن. فقط تست‌هایی که در آن آمده‌اند و id معتبر دارند به‌روزرسانی می‌شوند (بدون بُر خوردن گزینه‌ها).</p>
       <form method="post" action="/admin/review/apply">
         <textarea name="corrections_json" style="min-height:220px; width:100%; font-family:monospace; direction:ltr;" placeholder="[ { &quot;id&quot;: 123, &quot;correct&quot;: &quot;B&quot; } ]"></textarea>
         <button type="submit" style="background:#059669; color:white; margin-top:10px;">✅ اعمال اصلاحات</button>
