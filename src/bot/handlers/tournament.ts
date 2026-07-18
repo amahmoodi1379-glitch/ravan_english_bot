@@ -55,8 +55,11 @@ const CLOSE_LABEL = `${toPersianDigits(TOURNAMENT_CONFIG.CLOSE_HOUR)}:۰۰`;
  * @returns void
  */
 export async function showTournamentEntry(env: Env, user: DbUser, chatId: number): Promise<void> {
-  const quiz = await getTournamentByDate(env, iranDateStr());
-  const optedIn = await getTournamentReminder(env, user.id);
+  // These two reads are independent — fire them together to save a round-trip.
+  const [quiz, optedIn] = await Promise.all([
+    getTournamentByDate(env, iranDateStr()),
+    getTournamentReminder(env, user.id),
+  ]);
 
   if (!quiz) {
     await sendMessage(

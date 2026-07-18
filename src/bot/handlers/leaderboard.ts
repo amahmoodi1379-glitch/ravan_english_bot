@@ -114,6 +114,10 @@ async function showXpLeaderboard(
     all: `${pe("⭐")} لیدربورد XP — همیشگی`,
   };
 
+  // Kept sequential on purpose: both reads share the same cached standings
+  // snapshot, so the first populates the in-isolate cache and the second is a
+  // free lookup — cheaper than running them in parallel and double-fetching on a
+  // cold cache.
   const entries = await getLeaderboardXp(env, period);
   const userRank = await getUserRankXp(env, userId, period);
 
@@ -146,8 +150,11 @@ async function showStreakLeaderboard(
     record: `🏅 لیدربورد استریک — رکورد تاریخی`,
   };
 
-  const entries = await getLeaderboardStreak(env, type);
-  const userRank = await getUserRankStreak(env, userId, type);
+  // Streak reads are index-backed and independent — run them together.
+  const [entries, userRank] = await Promise.all([
+    getLeaderboardStreak(env, type),
+    getUserRankStreak(env, userId, type),
+  ]);
 
   const text = buildLeaderboardText(typeLabels[type], entries, userRank, "روز");
 
