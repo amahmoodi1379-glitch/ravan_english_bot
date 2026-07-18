@@ -234,12 +234,20 @@ export async function settleAndAnnounceTournament(env: Env, iranDate: string): P
   // Returns null if it was already settled (e.g. by a lazy showTournamentEntry).
   const settled = await settleTournament(env, iranDate);
 
-  const quiz = await getTournamentByDate(env, iranDate);
-  if (!quiz) return;
+  // The settling call already gives us the quiz id in the happy path; only fall
+  // back to a lookup when a lazy click settled it first (settled === null).
+  let quizId: number;
+  if (settled) {
+    quizId = settled.quizId;
+  } else {
+    const quiz = await getTournamentByDate(env, iranDate);
+    if (!quiz) return;
+    quizId = quiz.id;
+  }
 
   // Claim the single broadcast. Losers (already announced, or a concurrent
   // winner) return here without sending.
-  const won = await claimTournamentAnnounce(env, quiz.id);
+  const won = await claimTournamentAnnounce(env, quizId);
   if (!won) return;
 
   // Ranking + medals come from settlement when we settled it ourselves; otherwise
@@ -248,19 +256,19 @@ export async function settleAndAnnounceTournament(env: Env, iranDate: string): P
   // settled night simply omits it — the ranks/scores are always correct.
   let ranking = settled?.ranking;
   if (!ranking) {
-    const board = await getLeaderboardWithoutNegative(env, quiz.id, 100000);
+    const board = await getLeaderboardWithoutNegative(env, quizId, 100000);
     ranking = board.map((r) => ({ rank: r.rank, user_id: r.user_id, correct: r.correct }));
   }
   const newBadgesByUser = settled?.newBadgesByUser ?? new Map<number, string[]>();
 
   try {
-    await announceTournamentResults(env, quiz.id, ranking, newBadgesByUser);
+    await announceTournamentResults(env, quizId, ranking, newBadgesByUser);
   } catch (err) {
     // Broadcast failed as a whole (per-recipient failures are swallowed inside
     // broadcast()). Release the claim so the backstop tick retries.
     console.error("announceTournamentResults failed; releasing claim for retry:", err);
     try {
-      await clearTournamentAnnounceClaim(env, quiz.id);
+      await clearTournamentAnnounceClaim(env, quizId);
     } catch (clearErr) {
       console.error("Failed to release tournament announce claim:", clearErr);
     }
