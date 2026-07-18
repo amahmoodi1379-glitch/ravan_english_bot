@@ -473,6 +473,7 @@ CREATE TABLE IF NOT EXISTS custom_quizzes (
   opens_at TEXT,                                  -- UTC 'YYYY-MM-DD HH:MM:SS' window open (tournament only)
   closes_at TEXT,                                 -- UTC hard close (tournament only)
   tournament_date TEXT,                           -- Iran-local 'YYYY-MM-DD' identity (tournament only)
+  results_announced_at TEXT,                      -- UTC when final results were broadcast (tournament only, 0037); NULL until then
   FOREIGN KEY (admin_id) REFERENCES admins(id)
 );
 

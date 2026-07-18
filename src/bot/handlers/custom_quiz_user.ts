@@ -70,12 +70,14 @@ export async function beginOrResumeQuiz(env: Env, user: DbUser, chatId: number, 
 
   // Check for existing attempt
 
+  const pending = tournamentResultsPending(quiz);
+
   if (existing && existing.status === 'in_progress') {
     // Check if time expired
     if (isQuizExpired(existing, quiz)) {
       await finishAttempt(env, existing.id, 'auto_ended');
       await sendMessage(env, chatId, "⏰ زمان آزمون شما تمام شده بود. نتایج:");
-      await sendResults(env, chatId, user.id, quiz.id, existing.id);
+      await sendResults(env, chatId, user.id, quiz.id, existing.id, { tournamentPending: pending });
       return;
     }
     // Resume
@@ -87,9 +89,13 @@ export async function beginOrResumeQuiz(env: Env, user: DbUser, chatId: number, 
   }
 
   if (existing && (existing.status === 'finished' || existing.status === 'auto_ended')) {
-    // Already finished — show results directly
-    await sendMessage(env, chatId, `✅ شما قبلاً آزمون <b>"${quiz.title}"</b> را داده‌اید. نتایج:`, { parse_mode: "HTML" });
-    await sendResults(env, chatId, user.id, quiz.id, existing.id);
+    // Already finished — show results directly. For a still-open tournament the
+    // standings are provisional; make clear the final result is still coming.
+    const header = pending
+      ? `✅ <b>تو توی مسابقه‌ی امشب شرکت کردی.</b>\nنتیجه‌ی نهایی بعد از پایان مسابقه برات ارسال میشه. وضعیت لحظه‌ای:`
+      : `✅ شما قبلاً آزمون <b>"${quiz.title}"</b> را داده‌اید. نتایج:`;
+    await sendMessage(env, chatId, header, { parse_mode: "HTML" });
+    await sendResults(env, chatId, user.id, quiz.id, existing.id, { tournamentPending: pending });
     return;
   }
 
@@ -128,6 +134,19 @@ function attemptEndMs(quiz: { total_time_minutes: number; closes_at?: string | n
 
 function isQuizExpired(attempt: { started_at: string }, quiz: { total_time_minutes: number; closes_at?: string | null }): boolean {
   return Date.now() > attemptEndMs(quiz, parseUtcStamp(attempt.started_at).getTime());
+}
+
+/**
+ * True when `quiz` is a tournament whose window is still open, so the standings a
+ * user sees right now are provisional: not everyone has played yet, and the final
+ * ranked results will be broadcast to all participants at close. Custom quizzes
+ * (no closes_at) and already-closed tournaments are never "pending". Time-based on
+ * closes_at so it's correct regardless of the quiz row's (possibly stale) status.
+ */
+function tournamentResultsPending(quiz: { kind?: string; closes_at?: string | null }): boolean {
+  if (quiz.kind !== "tournament" || !quiz.closes_at) return false;
+  const closeMs = parseUtcStamp(quiz.closes_at).getTime();
+  return !Number.isNaN(closeMs) && Date.now() < closeMs;
 }
 
 /**
@@ -219,12 +238,12 @@ async function sendQuizQuestion(
   }
 }
 
-async function autoFinish(env: Env, chatId: number, userId: number, attemptId: number, quizId: number, messageId?: number, quizKind?: string): Promise<void> {
+async function autoFinish(env: Env, chatId: number, userId: number, attemptId: number, quizId: number, messageId?: number, quizKind?: string, tournamentPending = false): Promise<void> {
   const attempt = await getAttempt(env, attemptId);
   if (!attempt) return;
   if (attempt.status === 'auto_ended' || attempt.status === 'finished') {
     await sendMessage(env, chatId, "⏰ آزمون قبلاً تمام شده. نتایج:");
-    await sendResults(env, chatId, userId, quizId, attemptId);
+    await sendResults(env, chatId, userId, quizId, attemptId, { tournamentPending });
     return;
   }
   await finishAttempt(env, attemptId, 'auto_ended');
@@ -236,7 +255,7 @@ async function autoFinish(env: Env, chatId: number, userId: number, attemptId: n
   }
 
   await sendMessage(env, chatId, "⏰ <b>زمان آزمون تمام شد!</b>\n\nنتایج شما:", { parse_mode: "HTML" });
-  await sendResults(env, chatId, userId, quizId, attemptId);
+  await sendResults(env, chatId, userId, quizId, attemptId, { tournamentPending });
 
   // Push "results ready" to other finished participants — for admin link-quizzes
   // only. Tournaments broadcast their own results at settlement (and have no link
@@ -313,13 +332,18 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: TelegramCa
     return;
   }
 
-  // Check if already finished
+  // Check if already finished. Tournaments have no re-openable link, so point the
+  // user at the tournament menu (or the pending final broadcast) instead.
   if (attempt.status === 'finished' || attempt.status === 'auto_ended') {
     await answerCallbackQuery(env, callbackQuery.id, "آزمون تمام شده است.");
+    const doneMsg =
+      quiz.kind === 'tournament'
+        ? (tournamentResultsPending(quiz)
+            ? "✅ این آزمون رو دادی. نتیجه‌ی نهایی بعد از پایان مسابقه برات ارسال میشه."
+            : "✅ مسابقه تمام شده. برای دیدن نتایج، دوباره وارد بخش مسابقه شو.")
+        : "✅ این آزمون تمام شده. برای دیدن نتایج، لینک آزمون رو دوباره باز کن.";
     try {
-      await editMessageText(env, chatId, messageId,
-        "✅ این آزمون تمام شده. برای دیدن نتایج، لینک آزمون رو دوباره باز کن.",
-        { reply_markup: { inline_keyboard: [] } });
+      await editMessageText(env, chatId, messageId, doneMsg, { reply_markup: { inline_keyboard: [] } });
     } catch {}
     return;
   }
@@ -327,7 +351,7 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: TelegramCa
   // Check time expiry
   if (isQuizExpired(attempt, quiz)) {
     await answerCallbackQuery(env, callbackQuery.id, "⏰ زمان تمام شد!");
-    await autoFinish(env, chatId, user.id, attemptId, quiz.id, messageId, quiz.kind);
+    await autoFinish(env, chatId, user.id, attemptId, quiz.id, messageId, quiz.kind, tournamentResultsPending(quiz));
     return;
   }
 
@@ -414,11 +438,13 @@ export async function handleQuizUserCallback(env: Env, callbackQuery: TelegramCa
     await answerCallbackQuery(env, callbackQuery.id, "✅ آزمون ثبت شد!");
     await finishAttempt(env, attemptId, 'finished');
 
-    await editMessageText(env, chatId, messageId,
-      "✅ <b>آزمون شما با موفقیت ثبت شد!</b>\n\nنتایج:",
-      { reply_markup: { inline_keyboard: [] } });
+    const pending = tournamentResultsPending(quiz);
+    const finishMsg = pending
+      ? "✅ <b>آزمونت ثبت شد!</b>\n\n⏳ صبر کن تا بقیه هم شرکت کنن؛ نتیجه‌ی نهایی و رتبه‌ی قطعی‌ات بعد از پایان مسابقه برات ارسال میشه."
+      : "✅ <b>آزمون شما با موفقیت ثبت شد!</b>\n\nنتایج:";
+    await editMessageText(env, chatId, messageId, finishMsg, { reply_markup: { inline_keyboard: [] } });
 
-    await sendResults(env, chatId, user.id, quiz.id, attemptId);
+    await sendResults(env, chatId, user.id, quiz.id, attemptId, { tournamentPending: pending });
     return;
   }
 
@@ -493,7 +519,21 @@ async function handleReturnResults(env: Env, chatId: number, messageId: number, 
 
 // --- Results ---
 
-export async function sendResults(env: Env, chatId: number, userId: number, quizId: number, attemptId: number): Promise<void> {
+export async function sendResults(env: Env, chatId: number, userId: number, quizId: number, attemptId: number, opts?: { tournamentPending?: boolean }): Promise<void> {
+  // For a still-open tournament, lead with a clear "this is provisional, the final
+  // result is still coming" banner so the live standings aren't mistaken for the
+  // final ranking (which is broadcast to everyone at close).
+  if (opts?.tournamentPending) {
+    await sendMessage(
+      env,
+      chatId,
+      "⏳ <b>صبر کن تا بقیه هم شرکت کنن</b>\n\n" +
+        "این رتبه‌بندی فعلاً موقتیه و فقط بین کسانیه که تا این لحظه آزمون دادن. " +
+        "رتبه‌ی نهایی و قطعی‌ات بعد از پایان مسابقه همین‌جا برات ارسال میشه. 🏁",
+      { parse_mode: "HTML" }
+    );
+  }
+
   // Parallel: fetch all leaderboard data at once
   const [lbNeg, userRankNeg, lbPos, userRankPos, questions] = await Promise.all([
     getLeaderboardWithNegative(env, quizId, 50),

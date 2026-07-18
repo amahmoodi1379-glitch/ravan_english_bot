@@ -40,3 +40,42 @@ describe("tournament join-window invariant", () => {
     expect(decide(closes + min, opens)).toBe("show_results");
   });
 });
+
+/**
+ * Pure re-implementation of attemptEndMs (custom_quiz_user.ts): an attempt's
+ * effective deadline is start + duration, HARD-CAPPED at the tournament's close.
+ * This cap is why settling at CLOSE_HOUR is always "after the last person's exam"
+ * — no attempt, no matter how late it starts, can still be running past close.
+ */
+function cappedEndMs(startMs: number, opensMs: number): number {
+  const closesMs = opensMs + (TOURNAMENT_CONFIG.CLOSE_HOUR - TOURNAMENT_CONFIG.OPEN_HOUR) * 60 * 60 * 1000;
+  const raw = startMs + TOURNAMENT_CONFIG.DURATION_MINUTES * 60 * 1000;
+  return Math.min(raw, closesMs);
+}
+
+describe("tournament close-cap invariant (results sent after the last finisher)", () => {
+  const opens = Date.UTC(2026, 6, 4, 17, 30); // 21:00 Iran as UTC
+  const min = 60 * 1000;
+  const closes = opens + (TOURNAMENT_CONFIG.CLOSE_HOUR - TOURNAMENT_CONFIG.OPEN_HOUR) * 60 * min;
+
+  it("no attempt can run past close, for any start in the window", () => {
+    // Every minute from open to close: the effective end never exceeds close.
+    for (let t = opens; t <= closes; t += min) {
+      expect(cappedEndMs(t, opens)).toBeLessThanOrEqual(closes);
+    }
+  });
+
+  it("even a hypothetical last-second joiner (21:59) is capped at close, not cut short by early settling", () => {
+    const start2159 = opens + 59 * min; // 21:59 Iran
+    // Their exam effectively ends exactly at close, so a CLOSE_HOUR settlement is
+    // right after them — never before. (In practice the 21:45 join window blocks
+    // this start entirely; the cap is the belt-and-suspenders guarantee.)
+    expect(cappedEndMs(start2159, opens)).toBe(closes);
+  });
+
+  it("a normal late joiner at the join deadline finishes strictly before close", () => {
+    const lastJoin = opens + TOURNAMENT_CONFIG.JOIN_WINDOW_MINUTES * min;
+    // Full duration from the last allowed start still lands before close.
+    expect(cappedEndMs(lastJoin, opens)).toBeLessThan(closes);
+  });
+});

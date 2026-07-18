@@ -100,7 +100,8 @@ export async function startLeitnerForUser(env: Env, user: DbUser, chatId: number
   await sendMessage(env, chatId, text, { reply_markup: { inline_keyboard: keyboard } });
 
   // Remove the reply keyboard while in leitner; navigation is fully inline.
-  await sendMessage(env, chatId, "⬇️ از دکمه‌های بالا استفاده کن:", {
+  // The inline buttons are in the message just above this one, so the arrow points up.
+  await sendMessage(env, chatId, "⬆️ از دکمه‌های بالا استفاده کن:", {
     reply_markup: { remove_keyboard: true },
   });
 }

@@ -13,6 +13,7 @@ export interface CustomQuiz {
   opens_at?: string | null;      // UTC 'YYYY-MM-DD HH:MM:SS'
   closes_at?: string | null;     // UTC hard close
   tournament_date?: string | null; // Iran-local 'YYYY-MM-DD'
+  results_announced_at?: string | null; // UTC when final results were broadcast (tournament only); null until then
 }
 
 export interface CustomQuizQuestion {
