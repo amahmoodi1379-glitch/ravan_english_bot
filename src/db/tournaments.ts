@@ -205,6 +205,45 @@ export async function settleTournament(
   };
 }
 
+/**
+ * Atomically claim the right to broadcast a tournament's final results, exactly
+ * once. Returns true only for the single caller that flips results_announced_at
+ * from NULL to now(); every later/concurrent caller gets false and must NOT
+ * broadcast. This is what decouples the announce from settlement: whoever settles
+ * the quiz first no longer decides whether the broadcast happens — the claim does
+ * — so the CLOSE_HOUR cron reliably sends results even when a user's lazy settle
+ * (showTournamentEntry) marked the quiz 'completed' first.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The tournament's custom_quizzes id
+ * @returns true if THIS call won the claim (and should broadcast), false otherwise
+ */
+export async function claimTournamentAnnounce(env: Env, quizId: number): Promise<boolean> {
+  const res = await execute(
+    env,
+    `UPDATE custom_quizzes SET results_announced_at = datetime('now')
+     WHERE id = ? AND kind = 'tournament' AND results_announced_at IS NULL`,
+    [quizId]
+  );
+  // D1 exposes rows-changed via meta.changes (not in the official typings).
+  return ((res.meta as unknown as { changes?: number })?.changes ?? 0) > 0;
+}
+
+/**
+ * Release a previously-won announce claim (set results_announced_at back to NULL)
+ * so a later backstop cron tick can retry. Only used when the broadcast itself
+ * threw after the claim was taken, to preserve at-least-once delivery without
+ * risking a double broadcast in the happy path.
+ * @param env - The worker environment containing the D1 database binding
+ * @param quizId - The tournament's custom_quizzes id
+ */
+export async function clearTournamentAnnounceClaim(env: Env, quizId: number): Promise<void> {
+  await execute(
+    env,
+    `UPDATE custom_quizzes SET results_announced_at = NULL WHERE id = ? AND kind = 'tournament'`,
+    [quizId]
+  );
+}
+
 /** Lifetime finished-tournament count for each participant of the given tournament. */
 async function getTournamentParticipationCounts(env: Env, quizId: number): Promise<Map<number, number>> {
   const rows = await queryAll<{ user_id: number; cnt: number }>(

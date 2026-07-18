@@ -7,6 +7,8 @@ import { iranDateStr, parseUtcStamp, IRAN_OFFSET_MS } from "../../utils/iran_tim
 import {
   getTournamentByDate,
   settleTournament,
+  claimTournamentAnnounce,
+  clearTournamentAnnounceClaim,
   getTournamentReminder,
   toggleTournamentReminder,
 } from "../../db/tournaments";
@@ -204,4 +206,71 @@ export async function announceTournamentResults(
     text += `\n\nفردا شب دوباره منتظرت هستیم! 🎯`;
     return { chatId: a.chat_id, text, extra: { parse_mode: "HTML" } };
   });
+}
+
+/**
+ * Settle tonight's tournament (idempotent) and broadcast final placements to every
+ * participant EXACTLY ONCE. This is the single entry point the cron uses at close.
+ *
+ * The announce is gated on claimTournamentAnnounce (a one-shot DB claim) rather
+ * than on settleTournament's return value, which fixes the original bug: a user
+ * opening the tournament right after close would settle it lazily first, making
+ * the cron's settle return null and the broadcast never happen. Now settlement
+ * and announcement are independent — whoever settles, the results still go out.
+ *
+ * Safe to call from more than one cron tick (e.g. a CLOSE_HOUR + backstop tick):
+ * settlement is idempotent, the claim guarantees a single broadcast, and if the
+ * broadcast itself throws the claim is rolled back so a later tick can retry
+ * (at-least-once) without ever double-sending in the normal path (at-most-once).
+ *
+ * The broadcast runs here (cron context) and never on a user's button-press path,
+ * so fanning out to hundreds of participants can't slow the interactive bot down.
+ * @param env - The worker environment containing the D1 database binding
+ * @param iranDate - Iran-local 'YYYY-MM-DD' identity of the tournament to close
+ * @returns void
+ */
+export async function settleAndAnnounceTournament(env: Env, iranDate: string): Promise<void> {
+  // Settle first (force-finish stragglers, award XP/badges, mark completed).
+  // Returns null if it was already settled (e.g. by a lazy showTournamentEntry).
+  const settled = await settleTournament(env, iranDate);
+
+  // The settling call already gives us the quiz id in the happy path; only fall
+  // back to a lookup when a lazy click settled it first (settled === null).
+  let quizId: number;
+  if (settled) {
+    quizId = settled.quizId;
+  } else {
+    const quiz = await getTournamentByDate(env, iranDate);
+    if (!quiz) return;
+    quizId = quiz.id;
+  }
+
+  // Claim the single broadcast. Losers (already announced, or a concurrent
+  // winner) return here without sending.
+  const won = await claimTournamentAnnounce(env, quizId);
+  if (!won) return;
+
+  // Ranking + medals come from settlement when we settled it ourselves; otherwise
+  // (a lazy click settled it first) recompute the ranking from the leaderboard.
+  // The "new medal" line is only available on the settling call, so a lazily-
+  // settled night simply omits it — the ranks/scores are always correct.
+  let ranking = settled?.ranking;
+  if (!ranking) {
+    const board = await getLeaderboardWithoutNegative(env, quizId, 100000);
+    ranking = board.map((r) => ({ rank: r.rank, user_id: r.user_id, correct: r.correct }));
+  }
+  const newBadgesByUser = settled?.newBadgesByUser ?? new Map<number, string[]>();
+
+  try {
+    await announceTournamentResults(env, quizId, ranking, newBadgesByUser);
+  } catch (err) {
+    // Broadcast failed as a whole (per-recipient failures are swallowed inside
+    // broadcast()). Release the claim so the backstop tick retries.
+    console.error("announceTournamentResults failed; releasing claim for retry:", err);
+    try {
+      await clearTournamentAnnounceClaim(env, quizId);
+    } catch (clearErr) {
+      console.error("Failed to release tournament announce claim:", clearErr);
+    }
+  }
 }

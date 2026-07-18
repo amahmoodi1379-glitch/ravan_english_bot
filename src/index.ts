@@ -6,8 +6,8 @@ import { handleAdminRequest } from "./admin/router";
 import { sendInactivityReminders } from "./bot/handlers/reminders";
 import { sendProgressReports } from "./bot/handlers/reports";
 import { toJalaliParts } from "./utils/jalali";
-import { createDailyTournament, settleTournament, getTournamentReminderOptIns } from "./db/tournaments";
-import { announceTournamentResults } from "./bot/handlers/tournament";
+import { createDailyTournament, getTournamentReminderOptIns } from "./db/tournaments";
+import { settleAndAnnounceTournament } from "./bot/handlers/tournament";
 import { settleLeague } from "./db/leagues";
 import { announceLeagueResults } from "./bot/handlers/league";
 import { broadcast } from "./bot/handlers/broadcast";
@@ -222,16 +222,19 @@ export default {
         }
       }
 
-      // Close & settle tonight's tournament, then push placements to participants.
-      // Idempotent: settleTournament returns null once the quiz is 'completed'.
-      if (iranHour === TOURNAMENT_CONFIG.CLOSE_HOUR) {
+      // Close & settle tonight's tournament, then push placements to every
+      // participant. The broadcast is claimed exactly once (see
+      // settleAndAnnounceTournament), so it fires even if a user's lazy settle
+      // marked the quiz 'completed' first. We also retry on the following hour as
+      // a backstop in case the CLOSE_HOUR tick was skipped entirely — the claim
+      // makes the extra attempt a no-op once results have gone out.
+      // Both settlement and the broadcast run here in cron context, never on a
+      // user's button path, so the fan-out can't slow the interactive bot down.
+      if (iranHour === TOURNAMENT_CONFIG.CLOSE_HOUR || iranHour === TOURNAMENT_CONFIG.CLOSE_HOUR + 1) {
         try {
-          const settled = await settleTournament(env, iranDateStr());
-          if (settled) {
-            await announceTournamentResults(env, settled.quizId, settled.ranking, settled.newBadgesByUser);
-          }
+          await settleAndAnnounceTournament(env, iranDateStr());
         } catch (err) {
-          console.error("Tournament settle error:", err);
+          console.error("Tournament settle/announce error:", err);
         }
       }
 

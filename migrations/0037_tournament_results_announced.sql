@@ -1,0 +1,16 @@
+-- 0037: Decouple tournament settlement from the results broadcast.
+--
+-- Why: settlement (compute ranking, award XP/badges, mark the quiz 'completed')
+-- and the "🏁 final results" broadcast to participants used to be a single step
+-- driven off settleTournament()'s return value. But settleTournament is called
+-- from TWO places: the CLOSE_HOUR cron (which broadcasts) and a lazy fallback in
+-- showTournamentEntry() when a user opens the tournament after close (which does
+-- NOT broadcast). Whichever ran first marked the quiz 'completed'; if the lazy
+-- path won the race, the cron's settle returned null and the broadcast was
+-- silently skipped — so nobody received their final rank.
+--
+-- Fix: a dedicated one-shot claim column. Settlement no longer decides whether
+-- the announce happens; the announce is gated on atomically claiming this column
+-- (UPDATE ... WHERE results_announced_at IS NULL), so it fires exactly once no
+-- matter who settled the quiz. NULL = not yet announced.
+ALTER TABLE custom_quizzes ADD COLUMN results_announced_at TEXT;   -- UTC 'YYYY-MM-DD HH:MM:SS' when final results were broadcast (tournament only); NULL until then
