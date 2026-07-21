@@ -245,7 +245,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 
     const session = await createReadingSession(env, user.id, startTextId, questionCount);
 
-    await answerCallbackQuery(env, callbackQuery.id, "آزمون شروع شد ✏️");
+    await answerCallbackQuery(env, callbackQuery.id, "آزمون شروع شد ✏️", false);
 
     await editMessageText(
       env,
@@ -333,7 +333,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   const chatId = message.chat.id;
 
   if (chosenOption === 'CANCEL') {
-    await answerCallbackQuery(env, callbackQuery.id, "آزمون لغو شد 🚫");
+    await answerCallbackQuery(env, callbackQuery.id, "آزمون لغو شد 🚫", false);
 
     await execute(env, "UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?", [sessionId]);
 
@@ -353,7 +353,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
       getReadingSessionById(env, sessionId),
     ]);
     if (!skipSession) {
-      await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.");
+      await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.", false);
       return;
     }
 
@@ -369,12 +369,12 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     );
 
     if (skipResult.meta.changes === 0) {
-      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً به این سوال رسیدگی شده!");
+      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً به این سوال رسیدگی شده!", false);
       return;
     }
 
     await Promise.all([
-      answerCallbackQuery(env, callbackQuery.id, "⏭ بدون پاسخ رد شد"),
+      answerCallbackQuery(env, callbackQuery.id, "⏭ بدون پاسخ رد شد", false),
       editMessageReplyMarkup(env, chatId, message.message_id),
     ]);
 
@@ -410,11 +410,11 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     ),
   ]);
   if (!session) {
-    await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.");
+    await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.", false);
     return;
   }
   if (!question) {
-    await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد.");
+    await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد.", false);
     return;
   }
 
@@ -434,7 +434,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   );
 
   if (updateResult.meta.changes === 0) {
-    await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
+    await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!", false);
     return;
   }
 
@@ -450,7 +450,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
           [session.id]
         )
       : Promise.resolve(),
-    answerCallbackQuery(env, callbackQuery.id, "✅ پاسخت ثبت شد"),
+    answerCallbackQuery(env, callbackQuery.id, "✅ پاسخت ثبت شد", false),
     editMessageReplyMarkup(env, chatId, message.message_id),
   ]);
 
