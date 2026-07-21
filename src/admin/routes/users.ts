@@ -1,7 +1,7 @@
 import { Env } from "../../types";
 import { queryAll, queryOne, execute } from "../../db/client";
 import { htmlResponse, redirect, parseForm, escapeHtml } from "../../utils/response";
-import { renderAdminLayout, renderUserForm } from "../views";
+import { renderAdminLayout, renderUserForm, renderPagination } from "../views";
 import { ADMIN_LIST_PAGE_SIZE } from "../../config/constants";
 
 interface UserListRow {
@@ -40,9 +40,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL): Pr
     const hideUnverified = url.searchParams.get("hide_unverified") === "1";
     let rawPage = parseInt(url.searchParams.get("page") || "1");
     if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
-    const page = Math.min(rawPage, 1000000);
     const limit = ADMIN_LIST_PAGE_SIZE;
-    const offset = (page - 1) * limit;
 
     let whereSql = "FROM users u LEFT JOIN access_codes ac ON ac.used_by_user_id = u.id WHERE 1 = 1";
     const baseParams: unknown[] = [];
@@ -63,6 +61,10 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL): Pr
     );
     const totalCount = countRow?.total || 0;
     const totalPages = Math.ceil(totalCount / limit) || 1;
+    // Clamp an out-of-range page to the last real page so a too-high jump lands
+    // on the last page instead of an empty table.
+    const page = Math.min(rawPage, totalPages);
+    const offset = (page - 1) * limit;
 
     const dataSql = `SELECT u.id, u.telegram_id, u.username, u.display_name, u.xp_total, u.created_at, u.is_approved, ac.code as license_code ${whereSql} ORDER BY u.id DESC LIMIT ? OFFSET ?`;
     const dataParams = [...baseParams, limit, offset];
@@ -82,15 +84,14 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL): Pr
       </tr>
     `).join("");
 
-    const hideParam = hideUnverified ? "&hide_unverified=1" : "";
-    const paginationHtml = `
-      <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
-        ${page > 1 ? `<a href="/admin/users?q=${encodeURIComponent(search)}${hideParam}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
-        <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
-        ${page < totalPages ? `<a href="/admin/users?q=${encodeURIComponent(search)}${hideParam}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
-      </div>
-      <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} users</div>
-    `;
+    const paginationHtml = renderPagination({
+      basePath: "/admin/users",
+      page,
+      totalPages,
+      totalCount,
+      params: { q: search, ...(hideUnverified ? { hide_unverified: "1" } : {}) },
+      itemLabel: "کاربر",
+    });
 
     const content = `
       <div class="top-row">
