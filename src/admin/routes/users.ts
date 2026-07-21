@@ -85,9 +85,9 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL): Pr
     const hideParam = hideUnverified ? "&hide_unverified=1" : "";
     const paginationHtml = `
       <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
-        ${page > 1 ? `<a href="/admin/users?q=${escapeHtml(search)}${hideParam}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
+        ${page > 1 ? `<a href="/admin/users?q=${encodeURIComponent(search)}${hideParam}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
         <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
-        ${page < totalPages ? `<a href="/admin/users?q=${escapeHtml(search)}${hideParam}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
+        ${page < totalPages ? `<a href="/admin/users?q=${encodeURIComponent(search)}${hideParam}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
       </div>
       <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} users</div>
     `;
