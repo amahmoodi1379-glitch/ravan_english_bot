@@ -245,7 +245,7 @@ export async function handleReadingTextChosen(env: Env, callbackQuery: TelegramC
 
     const session = await createReadingSession(env, user.id, startTextId, questionCount);
 
-    await answerCallbackQuery(env, callbackQuery.id, "آزمون شروع شد ✏️");
+    await answerCallbackQuery(env, callbackQuery.id, "آزمون شروع شد ✏️", false);
 
     await editMessageText(
       env,
@@ -333,7 +333,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   const chatId = message.chat.id;
 
   if (chosenOption === 'CANCEL') {
-    await answerCallbackQuery(env, callbackQuery.id, "آزمون لغو شد 🚫");
+    await answerCallbackQuery(env, callbackQuery.id, "آزمون لغو شد 🚫", false);
 
     await execute(env, "UPDATE reading_sessions SET status = 'cancelled' WHERE id = ?", [sessionId]);
 
@@ -374,7 +374,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     }
 
     await Promise.all([
-      answerCallbackQuery(env, callbackQuery.id, "⏭ بدون پاسخ رد شد"),
+      answerCallbackQuery(env, callbackQuery.id, "⏭ بدون پاسخ رد شد", false),
       editMessageReplyMarkup(env, chatId, message.message_id),
     ]);
 
@@ -450,7 +450,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
           [session.id]
         )
       : Promise.resolve(),
-    answerCallbackQuery(env, callbackQuery.id, "✅ پاسخت ثبت شد"),
+    answerCallbackQuery(env, callbackQuery.id, "✅ پاسخت ثبت شد", false),
     editMessageReplyMarkup(env, chatId, message.message_id),
   ]);
 
