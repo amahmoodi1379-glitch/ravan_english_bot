@@ -1,6 +1,127 @@
 import { escapeHtml } from "../utils/response";
 import { ReviewStats, ApplyCorrectionsResult } from "../db/word_questions";
 
+/** Options for {@link renderPagination}. */
+export interface PaginationOptions {
+  /** Base path without query string, e.g. "/admin/users". */
+  basePath: string;
+  /** Current page (1-based, already clamped to [1, totalPages]). */
+  page: number;
+  /** Total number of pages (always >= 1). */
+  totalPages: number;
+  /** Total number of items across all pages (shown in the summary line). */
+  totalCount: number;
+  /** Extra query params preserved on every link (e.g. { q: search }). Empty values are dropped. */
+  params?: Record<string, string>;
+  /** Noun for the summary line, e.g. "کاربر" → "مجموع ۱۲۳ کاربر". Optional. */
+  itemLabel?: string;
+}
+
+/**
+ * Compute which page numbers to show as buttons: always the first and last page,
+ * a window of `delta` pages on each side of the current page, and an "ellipsis"
+ * marker wherever a gap in the sequence is collapsed. Keeps the control compact
+ * no matter how many pages exist while still allowing a jump near the current page.
+ * @param page - Current page (1-based)
+ * @param totalPages - Total number of pages (>= 1)
+ * @param delta - How many neighbours to show on each side of the current page
+ * @returns Ordered list of page numbers with "ellipsis" placeholders between gaps
+ */
+export function buildPageWindow(page: number, totalPages: number, delta = 2): (number | "ellipsis")[] {
+  const pages: number[] = [1];
+  const left = Math.max(2, page - delta);
+  const right = Math.min(totalPages - 1, page + delta);
+  for (let i = left; i <= right; i++) pages.push(i);
+  if (totalPages > 1) pages.push(totalPages);
+
+  const unique = [...new Set(pages)].sort((a, b) => a - b);
+  const out: (number | "ellipsis")[] = [];
+  let prev = 0;
+  for (const p of unique) {
+    if (prev && p - prev > 1) out.push("ellipsis");
+    out.push(p);
+    prev = p;
+  }
+  return out;
+}
+
+/** Build an HTML-safe href for a given page, preserving the extra query params. */
+function pageUrl(basePath: string, params: Record<string, string>, page: number): string {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") sp.set(k, String(v));
+  }
+  sp.set("page", String(page));
+  // URLSearchParams percent-encodes values, so the only raw "&"/"=" left are the
+  // separators; escapeHtml turns those "&" into "&amp;" for a valid HTML attribute.
+  return escapeHtml(`${basePath}?${sp.toString()}`);
+}
+
+/**
+ * Render an accessible, feature-rich pagination control: first/last and
+ * previous/next arrows, numbered page buttons (with ellipses for long ranges),
+ * a "jump to page" form, and a summary line. The current page is marked with
+ * `aria-current`, unavailable arrows are disabled rather than removed so the
+ * control keeps a stable shape, and all controls carry Persian ARIA labels.
+ * Shared by the admin list views so pagination looks and behaves the same
+ * everywhere.
+ * @param opts - See {@link PaginationOptions}
+ * @returns HTML string for the pagination navigation block
+ */
+export function renderPagination(opts: PaginationOptions): string {
+  const { basePath, page, totalPages, totalCount } = opts;
+  const params = opts.params || {};
+  const itemLabel = opts.itemLabel ? ` ${escapeHtml(opts.itemLabel)}` : "";
+
+  const summary = `صفحه ${page} از ${totalPages} — مجموع ${totalCount}${itemLabel}`;
+
+  // Single page: nothing to navigate, so show only the summary line.
+  if (totalPages <= 1) {
+    return `
+    <nav class="pagination" aria-label="صفحه‌بندی">
+      <div class="pg-total">${summary}</div>
+    </nav>`;
+  }
+
+  const href = (p: number) => pageUrl(basePath, params, p);
+  const arrow = (target: number, enabled: boolean, glyph: string, label: string, rel: string, edge = false) => {
+    const cls = `pg-btn${edge ? " pg-edge" : ""}`;
+    return enabled
+      ? `<a class="${cls}" href="${href(target)}" rel="${rel}" aria-label="${label}" title="${label}">${glyph}</a>`
+      : `<span class="${cls} pg-disabled" aria-hidden="true">${glyph}</span>`;
+  };
+
+  const numbered = buildPageWindow(page, totalPages).map((item) => {
+    if (item === "ellipsis") return `<span class="pg-ellipsis" aria-hidden="true">…</span>`;
+    if (item === page) return `<span class="pg-btn pg-current" aria-current="page" aria-label="صفحه ${item} (صفحه فعلی)">${item}</span>`;
+    return `<a class="pg-btn" href="${href(item)}" aria-label="صفحه ${item}">${item}</a>`;
+  }).join("");
+
+  const hiddenFields = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(String(v))}" />`)
+    .join("");
+
+  return `
+    <nav class="pagination" aria-label="صفحه‌بندی">
+      <div class="pg-row">
+        ${arrow(1, page > 1, "«", "صفحه اول", "first", true)}
+        ${arrow(page - 1, page > 1, "‹", "صفحه قبل", "prev")}
+        ${numbered}
+        ${arrow(page + 1, page < totalPages, "›", "صفحه بعد", "next")}
+        ${arrow(totalPages, page < totalPages, "»", "صفحه آخر", "last", true)}
+      </div>
+      <form class="pg-jump" method="get" action="${escapeHtml(basePath)}">
+        ${hiddenFields}
+        <label>رفتن به صفحه
+          <input type="number" name="page" value="${page}" min="1" max="${totalPages}" aria-label="شماره صفحه" />
+        </label>
+        <button type="submit" class="secondary">برو</button>
+      </form>
+      <div class="pg-total">${summary}</div>
+    </nav>`;
+}
+
 /** Row shape for word form rendering. */
 export interface WordFormRow {
   id?: number | string;
@@ -104,6 +225,18 @@ export function renderAdminLayout(title: string, content: string, section: strin
     .q-text { font-weight: bold; margin-bottom: 6px; }
     .q-opt { font-size: 12px; margin-right: 10px; }
     .q-correct { color: #166534; font-weight: bold; }
+    .pagination { margin-top: 18px; display:flex; flex-direction:column; align-items:center; gap:10px; direction:rtl; }
+    .pagination .pg-row { display:flex; flex-wrap:wrap; gap:4px; justify-content:center; align-items:center; direction:ltr; }
+    .pagination .pg-btn { display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:34px; padding:0 8px; box-sizing:border-box; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#2563eb; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer; transition: background .12s, border-color .12s; }
+    .pagination .pg-btn:hover { background:#eff6ff; border-color:#2563eb; }
+    .pagination .pg-btn:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+    .pagination .pg-current { background:#2563eb; border-color:#2563eb; color:#fff; cursor:default; }
+    .pagination .pg-disabled { color:#c0c4cc; background:#f9fafb; border-color:#ececf0; cursor:not-allowed; }
+    .pagination .pg-edge { font-size:16px; }
+    .pagination .pg-ellipsis { min-width:24px; text-align:center; color:#9aa0a6; user-select:none; }
+    .pagination .pg-jump { display:flex; align-items:center; gap:6px; font-size:13px; color:#444; margin:0; }
+    .pagination .pg-jump input[type="number"] { width:64px; text-align:center; padding:5px 6px; margin:0; }
+    .pagination .pg-total { font-size:11px; color:#666; }
   </style>
 </head>
 <body>

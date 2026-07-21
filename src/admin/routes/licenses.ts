@@ -1,7 +1,7 @@
 import { Env } from "../../types";
 import { queryAll, queryOne, execute } from "../../db/client";
 import { htmlResponse, redirect, parseForm, escapeHtml } from "../../utils/response";
-import { renderAdminLayout } from "../views";
+import { renderAdminLayout, renderPagination } from "../views";
 import { ADMIN_LIST_PAGE_SIZE } from "../../config/constants";
 
 interface LicenseRow {
@@ -25,14 +25,16 @@ export async function handleLicenseRoutes(request: Request, env: Env, url: URL):
   if (url.pathname === "/admin/licenses") {
     let rawPage = parseInt(url.searchParams.get("page") || "1");
     if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
-    const page = Math.min(rawPage, 1000000);
     const limit = ADMIN_LIST_PAGE_SIZE;
-    const offset = (page - 1) * limit;
 
     // Two lightweight queries only: one COUNT, one paginated page slice.
     const countRow = await queryOne<{ total: number }>(env, `SELECT COUNT(*) as total FROM access_codes`);
     const totalCount = countRow?.total || 0;
     const totalPages = Math.ceil(totalCount / limit) || 1;
+    // Clamp an out-of-range page to the last real page so a too-high jump lands
+    // on the last page instead of an empty table.
+    const page = Math.min(rawPage, totalPages);
+    const offset = (page - 1) * limit;
 
     const codes = await queryAll<LicenseRow>(
       env,
@@ -70,14 +72,13 @@ export async function handleLicenseRoutes(request: Request, env: Env, url: URL):
     `;
     }).join("");
 
-    const paginationHtml = `
-      <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
-        ${page > 1 ? `<a href="/admin/licenses?page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
-        <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
-        ${page < totalPages ? `<a href="/admin/licenses?page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
-      </div>
-      <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">مجموع لایسنس‌ها: ${totalCount}</div>
-    `;
+    const paginationHtml = renderPagination({
+      basePath: "/admin/licenses",
+      page,
+      totalPages,
+      totalCount,
+      itemLabel: "لایسنس",
+    });
 
     const content = `
       <div class="top-row">
