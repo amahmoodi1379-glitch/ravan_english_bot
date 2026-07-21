@@ -37,9 +37,10 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL): Pr
   // GET /admin/users — user list
   if (url.pathname === "/admin/users") {
     const search = (url.searchParams.get("q") || "").trim();
+    const hideUnverified = url.searchParams.get("hide_unverified") === "1";
     let rawPage = parseInt(url.searchParams.get("page") || "1");
     if (isNaN(rawPage) || rawPage < 1) rawPage = 1;
-    const page = Math.min(rawPage, 1000000);    
+    const page = Math.min(rawPage, 1000000);
     const limit = ADMIN_LIST_PAGE_SIZE;
     const offset = (page - 1) * limit;
 
@@ -49,6 +50,10 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL): Pr
     if (search) {
       whereSql += ` AND (u.display_name LIKE ? OR u.username LIKE ? OR cast(u.telegram_id as text) LIKE ?)`;
       baseParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    if (hideUnverified) {
+      whereSql += ` AND (ac.code IS NOT NULL OR u.is_approved = 1)`;
     }
 
     const countRow = await queryOne<{ total: number }>(
@@ -77,20 +82,25 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL): Pr
       </tr>
     `).join("");
 
+    const hideParam = hideUnverified ? "&hide_unverified=1" : "";
     const paginationHtml = `
       <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; justify-content: center; direction: ltr;">
-        ${page > 1 ? `<a href="/admin/users?q=${escapeHtml(search)}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
+        ${page > 1 ? `<a href="/admin/users?q=${encodeURIComponent(search)}${hideParam}&page=${page - 1}"><button class="secondary">Previous</button></a>` : ""}
         <span style="font-size: 13px; font-weight: bold;">Page ${page} of ${totalPages}</span>
-        ${page < totalPages ? `<a href="/admin/users?q=${escapeHtml(search)}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
+        ${page < totalPages ? `<a href="/admin/users?q=${encodeURIComponent(search)}${hideParam}&page=${page + 1}"><button class="secondary">Next</button></a>` : ""}
       </div>
       <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} users</div>
     `;
 
     const content = `
       <div class="top-row">
-        <form method="get" action="/admin/users" style="flex:1; display:flex; gap:8px;">
+        <form method="get" action="/admin/users" style="flex:1; display:flex; gap:8px; align-items:center;">
           <input type="text" name="q" placeholder="جستجو..." value="${escapeHtml(search)}" style="margin:0; max-width:250px;" />
           <button type="submit" class="secondary">جستجو</button>
+          <label style="display:flex; align-items:center; gap:4px; font-size:13px; margin-inline-start:12px;">
+            <input type="checkbox" name="hide_unverified" value="1" ${hideUnverified ? "checked" : ""} onchange="this.form.submit()" />
+            مخفی کردن کاربران تایید نشده
+          </label>
         </form>
       </div>
       <table><thead><tr><th>ID</th><th>Telegram</th><th>Username</th><th>نام</th><th>XP</th><th>عضویت</th><th>لایسنس</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='8'>یافت نشد.</td></tr>"}</tbody></table>
