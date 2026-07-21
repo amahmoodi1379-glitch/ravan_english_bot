@@ -353,7 +353,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
       getReadingSessionById(env, sessionId),
     ]);
     if (!skipSession) {
-      await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.", false);
+      await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.");
       return;
     }
 
@@ -369,7 +369,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     );
 
     if (skipResult.meta.changes === 0) {
-      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً به این سوال رسیدگی شده!", false);
+      await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً به این سوال رسیدگی شده!");
       return;
     }
 
@@ -410,11 +410,11 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
     ),
   ]);
   if (!session) {
-    await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.", false);
+    await answerCallbackQuery(env, callbackQuery.id, "این تست دیگر در دسترس نیست.");
     return;
   }
   if (!question) {
-    await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد.", false);
+    await answerCallbackQuery(env, callbackQuery.id, "سوال پیدا نشد.");
     return;
   }
 
@@ -434,7 +434,7 @@ export async function handleReadingAnswerCallback(env: Env, callbackQuery: Teleg
   );
 
   if (updateResult.meta.changes === 0) {
-    await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!", false);
+    await answerCallbackQuery(env, callbackQuery.id, "⛔️ قبلاً پاسخ دادی!");
     return;
   }
 
