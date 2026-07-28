@@ -36,17 +36,20 @@ function buildLeaderboardText(
   if (entries.length === 0) {
     text += "🙈 هنوز کسی در این بخش امتیازی ندارد!\nاولین نفر باش 😉";
   } else {
-    for (const e of entries) {
-      const emoji = getRankEmoji(e.rank);
-      const avatar = getAvatarEmoji(e.avatar_code);
-      text += `${emoji} ${avatar} <b>${e.display_name}</b> — <b>${e.score.toLocaleString("fa-IR")}</b> ${scoreLabel}\n`;
-    }
+    // One blank line between ranks so each entry stands out and the board reads clearly.
+    text += entries
+      .map((e) => {
+        const emoji = getRankEmoji(e.rank);
+        const avatar = getAvatarEmoji(e.avatar_code);
+        return `${emoji} ${avatar} <b>${e.display_name}</b> — <b>${e.score.toLocaleString("fa-IR")}</b> ${scoreLabel}`;
+      })
+      .join("\n\n");
   }
 
   if (userRank && userRank.score > 0) {
     const inList = entries.some((e) => e.rank === userRank.rank);
     if (!inList) {
-      text += `\n📍 <b>رتبه شما:</b> ${userRank.rank} — ${userRank.score.toLocaleString("fa-IR")} ${scoreLabel}`;
+      text += `\n\n📍 <b>رتبه شما:</b> ${userRank.rank} — ${userRank.score.toLocaleString("fa-IR")} ${scoreLabel}`;
     }
   }
 

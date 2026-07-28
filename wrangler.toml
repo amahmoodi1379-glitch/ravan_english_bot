@@ -18,6 +18,13 @@ database_name = "ravan_english_local"
 database_id = "aeead8fa-8703-415d-b387-0e9d69e92a83"
 
 [triggers]
-crons = ["0 * * * *"]
+# Iran is UTC+3:30. Firing at UTC minute :30 lands on Iran wall-clock HH:00, so
+# every `iranHour === X` block in scheduled() runs at exactly Iran X:00 (the 21:00
+# tournament open, 22:00 close, Sat 00:00 league settle, 10:00 reminders, ...).
+# A "0 * * * *" schedule fires at Iran HH:30 — half an hour into each window —
+# which delayed the nightly tournament's creation to 21:30, eating the first third
+# of its advertised 21:00–21:45 join window. Keep this at :30 unless Iran's offset
+# changes.
+crons = ["30 * * * *"]
 
 

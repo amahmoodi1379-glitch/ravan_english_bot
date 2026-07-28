@@ -166,13 +166,15 @@ export default {
               iranWallClockToUtcStamp(iranDate, TOURNAMENT_CONFIG.CLOSE_HOUR)
             );
             if (quizId) {
+              const openLabel = `${toPersianDigits(TOURNAMENT_CONFIG.OPEN_HOUR)}:۰۰`;
               const closeLabel = `${toPersianDigits(TOURNAMENT_CONFIG.CLOSE_HOUR)}:۰۰`;
               const lastJoinLabel =
                 `${toPersianDigits(TOURNAMENT_CONFIG.OPEN_HOUR)}:` +
                 `${toPersianDigits(String(TOURNAMENT_CONFIG.JOIN_WINDOW_MINUTES).padStart(2, "0"))}`;
               tournamentCta =
                 `\n\n🎯 <b>مسابقه‌ی امشب شروع شد!</b>\n` +
-                `تا ساعت ${closeLabel} فرصت داری. از دکمه‌ی «${MAIN_MENU_BUTTON_TOURNAMENT}» توی منو شرکت کن و با بقیه رقابت کن! 🏆`;
+                `⏰ ورود از ساعت ${openLabel} تا ${lastJoinLabel} بازه و نتایج ساعت ${closeLabel} اعلام می‌شه.\n` +
+                `از دکمه‌ی «${MAIN_MENU_BUTTON_TOURNAMENT}» توی منو شرکت کن و با بقیه رقابت کن! 🏆`;
 
               // Dedicated opt-in reminder push to users who tapped "🔔 یادم بنداز"
               // (bounded to volunteers, and excludes users already active today so
@@ -183,7 +185,7 @@ export default {
                   chatId: u.telegram_id,
                   text:
                     `🎯 <b>مسابقه‌ی امشب شروع شد!</b>\n` +
-                    `ورود تا ${lastJoinLabel} بازه و هرکس وارد بشه کل وقتش رو داره. الان بیا و با بقیه رقابت کن! 🏆`,
+                    `⏰ ورود از ساعت ${openLabel} تا ${lastJoinLabel} بازه — هر وقت وارد بشی کل زمان مسابقه رو داری. الان بیا و با بقیه رقابت کن! 🏆`,
                   extra: { parse_mode: "HTML" },
                 }));
               } catch (err) {

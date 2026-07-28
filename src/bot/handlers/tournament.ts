@@ -3,7 +3,7 @@ import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { DbUser, getOrCreateUser } from "../../db/users";
 import { sendMessage, answerCallbackQuery, editMessageReplyMarkup } from "../telegram-api";
 import { TOURNAMENT_CONFIG, CB_PREFIX } from "../../config/constants";
-import { iranDateStr, parseUtcStamp, IRAN_OFFSET_MS } from "../../utils/iran_time";
+import { iranDateStr, parseUtcStamp } from "../../utils/iran_time";
 import {
   getTournamentByDate,
   settleTournament,
@@ -33,16 +33,28 @@ function reminderKeyboard(optedIn: boolean): { inline_keyboard: InlineKeyboardBu
   return { inline_keyboard: [[{ text: label, callback_data: `${CB_PREFIX.TOURNAMENT}:remind` }]] };
 }
 
-/** Format an Iran-local HH:MM label (Persian digits) for an epoch-ms instant. */
-function iranHm(ms: number): string {
-  const d = new Date(ms + IRAN_OFFSET_MS);
-  const hm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
-  return toPersianDigits(hm);
+/** Format an Iran wall-clock time (hour + minute) as a Persian-digit "HH:MM" label. */
+function hhmmLabel(hour: number, minute: number): string {
+  const hh = String(hour).padStart(2, "0");
+  const mm = String(minute).padStart(2, "0");
+  return toPersianDigits(`${hh}:${mm}`);
 }
 
-/** The tournament's open / close hour as a Persian-digit "HH:۰۰" label. */
-const OPEN_LABEL = `${toPersianDigits(TOURNAMENT_CONFIG.OPEN_HOUR)}:۰۰`;
-const CLOSE_LABEL = `${toPersianDigits(TOURNAMENT_CONFIG.CLOSE_HOUR)}:۰۰`;
+/** The tournament's key wall-clock moments as Persian-digit "HH:MM" labels. */
+const OPEN_LABEL = hhmmLabel(TOURNAMENT_CONFIG.OPEN_HOUR, 0); // ۲۱:۰۰ — window opens
+const CLOSE_LABEL = hhmmLabel(TOURNAMENT_CONFIG.CLOSE_HOUR, 0); // ۲۲:۰۰ — results announced
+// Latest a NEW attempt may start = OPEN_HOUR:00 + JOIN_WINDOW_MINUTES (e.g. ۲۱:۴۵).
+const LAST_JOIN_TOTAL_MIN = TOURNAMENT_CONFIG.OPEN_HOUR * 60 + TOURNAMENT_CONFIG.JOIN_WINDOW_MINUTES;
+const LAST_JOIN_LABEL = hhmmLabel(Math.floor(LAST_JOIN_TOTAL_MIN / 60), LAST_JOIN_TOTAL_MIN % 60);
+
+/**
+ * Shared "when can I play?" explainer, reused across the tournament messages so the
+ * window is described identically everywhere: join is open OPEN→LAST_JOIN, results
+ * land at CLOSE. Keeping it in one place is what makes the feature feel clear.
+ */
+const WINDOW_INFO =
+  `⏰ ورود به مسابقه از ساعت <b>${OPEN_LABEL}</b> تا <b>${LAST_JOIN_LABEL}</b> بازه.\n` +
+  `🏁 نتایج ساعت <b>${CLOSE_LABEL}</b> اعلام می‌شه.`;
 
 /**
  * Entry point for the "🎯 مسابقه" menu button. Shows the schedule + reminder
@@ -65,7 +77,10 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
     await sendMessage(
       env,
       chatId,
-      `🎯 <b>مسابقه‌ی امشب</b>\n\nهنوز مسابقه‌ای فعال نیست. هر شب ساعت ${OPEN_LABEL} یک مسابقه‌ی جدید برگزار می‌شه — منتظرت هستیم! 🏆`,
+      `🎯 <b>مسابقه‌ی امشب</b>\n\n` +
+        `هنوز شروع نشده. هر شب یک مسابقه‌ی تازه برگزار می‌شه — منتظرت هستیم! 🏆\n\n` +
+        `${WINDOW_INFO}\n\n` +
+        `می‌خوای هر شب سر ساعت ${OPEN_LABEL} یادت بندازم؟ دکمه‌ی زیر رو بزن 🔔`,
       { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
     );
     return;
@@ -81,7 +96,9 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
     await sendMessage(
       env,
       chatId,
-      `🎯 <b>مسابقه‌ی امشب</b>\n\nسر ساعت ${OPEN_LABEL} شروع می‌شه (ورود تا ${iranHm(lastJoinMs)}). آماده باش! ⏳`,
+      `🎯 <b>مسابقه‌ی امشب</b>\n\n` +
+        `مسابقه ساعت <b>${OPEN_LABEL}</b> شروع می‌شه. آماده باش! ⏳\n\n` +
+        `${WINDOW_INFO}`,
       { parse_mode: "HTML", reply_markup: reminderKeyboard(optedIn) }
     );
     return;
@@ -123,7 +140,10 @@ export async function showTournamentEntry(env: Env, user: DbUser, chatId: number
   await sendMessage(
     env,
     chatId,
-    `⏳ پنجره‌ی ورود به مسابقه‌ی امشب بسته شد (ورود تا ${iranHm(lastJoinMs)} بود).\nنتایج ساعت ${CLOSE_LABEL} اعلام می‌شه. فردا شب زودتر بیا! 🎯`,
+    `⏳ <b>پنجره‌ی ورود بسته شد</b>\n\n` +
+      `ورود به مسابقه‌ی امشب فقط از ساعت ${OPEN_LABEL} تا ${LAST_JOIN_LABEL} باز بود.\n` +
+      `🏁 نتایج ساعت ${CLOSE_LABEL} اعلام می‌شه.\n\n` +
+      `فردا شب از ساعت ${OPEN_LABEL} زودتر بیا! 🎯`,
     { parse_mode: "HTML" }
   );
 }
@@ -156,11 +176,10 @@ async function sendTournamentTop(env: Env, chatId: number, quizId: number): Prom
     await sendMessage(env, chatId, "🏁 مسابقه‌ی امشب تموم شد، ولی کسی شرکت نکرد. فردا شب منتظرت هستیم! 🎯");
     return;
   }
+  // One blank line between ranks so each placement stands out clearly.
   let text = "🏁 <b>نتایج مسابقه‌ی امشب</b>\n\n";
-  for (const e of board) {
-    text += `${badge(e.rank)} ${e.display_name} — ✅${e.correct}\n`;
-  }
-  text += "\nامشب شرکت نکردی؟ فردا شب حتماً بیا! 🎯";
+  text += board.map((e) => `${badge(e.rank)} ${e.display_name} — ✅${e.correct}`).join("\n\n");
+  text += "\n\nامشب شرکت نکردی؟ فردا شب حتماً بیا! 🎯";
   await sendMessage(env, chatId, text, { parse_mode: "HTML" });
 }
 
