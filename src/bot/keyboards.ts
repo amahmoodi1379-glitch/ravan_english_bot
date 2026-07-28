@@ -6,6 +6,7 @@ export const MAIN_MENU_BUTTON_LEADERBOARD = "🏆 لیدربورد";
 export const MAIN_MENU_BUTTON_LETTERS = "💌 نامه‌ها";
 export const MAIN_MENU_BUTTON_TOURNAMENT = "🎯 مسابقه";
 export const MAIN_MENU_BUTTON_LEAGUE = "🏅 لیگ";
+export const MAIN_MENU_BUTTON_HELP = "📖 راهنمای جامع ربات";
 
 export const TRAINING_MENU_BUTTON_LEITNER = "🧠 لایتنر واژگان";
 export const TRAINING_MENU_BUTTON_READING = "📖 تست درک مطلب";
@@ -31,6 +32,7 @@ registerUserMenuLabels([
   MAIN_MENU_BUTTON_LETTERS,
   MAIN_MENU_BUTTON_TOURNAMENT,
   MAIN_MENU_BUTTON_LEAGUE,
+  MAIN_MENU_BUTTON_HELP,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
@@ -61,13 +63,16 @@ interface AdminReplyKeyboardMarkup {
  * @returns A Telegram ReplyKeyboardMarkup object for the main menu
  */
 export function getMainMenuKeyboard(): ReplyKeyboardMarkup {
-  // Two rows of two. Styles alternate so no two adjacent buttons (horizontally
-  // or vertically) share a colour: row1 success|primary, row2 primary|success.
+  // Three rows of two, styles alternating so no two adjacent buttons (horizontally
+  // or vertically) share a colour: row1 success|primary, row2 primary|success, …
+  // A final full-width row holds the comprehensive-guide button, coloured red
+  // (danger) so it stands out from the feature buttons above it as a "help" entry.
   return {
     keyboard: [
       [{ text: MAIN_MENU_BUTTON_TRAINING, style: "success" }, { text: MAIN_MENU_BUTTON_LEADERBOARD, style: "primary" }],
       [{ text: MAIN_MENU_BUTTON_TOURNAMENT, style: "primary" }, { text: MAIN_MENU_BUTTON_LEAGUE, style: "success" }],
-      [{ text: MAIN_MENU_BUTTON_PROFILE, style: "primary" }, { text: MAIN_MENU_BUTTON_LETTERS, style: "success" }]
+      [{ text: MAIN_MENU_BUTTON_PROFILE, style: "primary" }, { text: MAIN_MENU_BUTTON_LETTERS, style: "success" }],
+      [{ text: MAIN_MENU_BUTTON_HELP, style: "danger" }]
     ],
     resize_keyboard: true,
     one_time_keyboard: false

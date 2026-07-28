@@ -9,6 +9,7 @@ import {
   MAIN_MENU_BUTTON_LETTERS,
   MAIN_MENU_BUTTON_TOURNAMENT,
   MAIN_MENU_BUTTON_LEAGUE,
+  MAIN_MENU_BUTTON_HELP,
   TRAINING_MENU_BUTTON_LEITNER,
   TRAINING_MENU_BUTTON_READING,
   TRAINING_MENU_BUTTON_BACK,
@@ -44,6 +45,7 @@ import {
 import { showTournamentEntry, handleTournamentCallback } from "./handlers/tournament";
 import { showLeagueHome } from "./handlers/league";
 import { showMedals } from "./handlers/medals";
+import { showHelpHome, handleHelpCallback } from "./handlers/help";
 import {
   handleQuizAdminCallback
 } from "./handlers/custom_quiz_admin";
@@ -341,6 +343,11 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
     return;
   }
 
+  if (prefix === CB_PREFIX.HELP) {
+    await handleHelpCallback(env, callbackQuery);
+    return;
+  }
+
   await answerCallbackQuery(env, callbackQuery.id);
 }
 
@@ -507,6 +514,11 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
   if (navText === MAIN_MENU_BUTTON_LETTERS) {
     await showLettersEntry(env, user, chatId);
+    return;
+  }
+
+  if (navText === MAIN_MENU_BUTTON_HELP) {
+    await showHelpHome(env, chatId);
     return;
   }
 

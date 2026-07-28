@@ -96,6 +96,7 @@ export const CB_PREFIX = {
   LETTER_NOTIF_TOGGLE: "ltnt",
   LETTER_DISABLE: "ltd",
   LETTER_OPEN_PROACTIVE: "ltp",
+  HELP: "hlp",
 };
 
 /** Letters (نامه‌ها) feature limits and retention windows. */
