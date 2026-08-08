@@ -181,3 +181,11 @@ export const QUESTION_PICK_MAX_ATTEMPTS = 15;
 
 /** Number of items per page in admin list views. */
 export const ADMIN_LIST_PAGE_SIZE = 50;
+
+/**
+ * How many words the JSON export pulls from D1 per round-trip. The export
+ * streams, so this only caps how much sits in memory (and how big a single D1
+ * result gets) at a time — not how many words can be exported. Kept modest
+ * because each word may drag several `word_questions` rows along with it.
+ */
+export const WORDS_EXPORT_CHUNK_SIZE = 200;

@@ -4,6 +4,7 @@ import { htmlResponse, redirect, parseForm, escapeHtml } from "../../utils/respo
 import { renderAdminLayout, renderWordForm } from "../views";
 import { insertWordQuestions } from "../../db/word_questions";
 import { parseAndValidateQuestionForm, getQuestionRedirectPath } from "../utils";
+import { streamWordsExport } from "../word-export";
 import { ADMIN_LIST_PAGE_SIZE } from "../../config/constants";
 
 interface WordListRow {
@@ -49,6 +50,16 @@ interface WordQuestionRow {
  * @returns A Response if the route was handled, or null if not a word route
  */
 export async function handleWordRoutes(request: Request, env: Env, url: URL): Promise<Response | null> {
+  // Download the vocabulary as a JSON file. `q` (optional) narrows the export to
+  // the same rows the list view shows for that search; `questions=1` nests each
+  // word's test questions.
+  if (url.pathname === "/admin/words/export") {
+    return streamWordsExport(env, {
+      search: (url.searchParams.get("q") || "").trim(),
+      includeQuestions: url.searchParams.get("questions") === "1"
+    });
+  }
+
   if (url.pathname === "/admin/words") {
     const search = (url.searchParams.get("q") || "").trim();
     let rawPage = parseInt(url.searchParams.get("page") || "1");
@@ -125,6 +136,26 @@ export async function handleWordRoutes(request: Request, env: Env, url: URL): Pr
       </div>
       <div style="text-align: center; margin-top: 5px; font-size: 11px; color: #666;">Total: ${totalCount} words</div>
     `;
+    // Export box: a plain GET form, so the browser downloads the file directly.
+    // When a search is active its checkbox is pre-checked (export what you see);
+    // unchecking it drops the `q` param and exports the whole vocabulary.
+    const exportHtml = `
+      <form method="get" action="/admin/words/export" style="margin:12px 0 0; padding:10px 12px; border:1px solid #e0e0e0; border-radius:8px; background:#fafafa; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <strong style="font-size:13px;">⬇️ خروجی JSON</strong>
+        <label style="font-size:12px; display:flex; align-items:center; gap:5px; margin:0;">
+          <input type="checkbox" name="questions" value="1" style="width:auto; margin:0;" />
+          همراه با سوالات تست
+        </label>
+        ${search ? `
+        <label style="font-size:12px; display:flex; align-items:center; gap:5px; margin:0;">
+          <input type="checkbox" name="q" value="${escapeHtml(search)}" checked style="width:auto; margin:0;" />
+          فقط نتایج جستجوی «${escapeHtml(search)}»
+        </label>` : ""}
+        <button type="submit">دانلود فایل</button>
+        <span style="font-size:11px; color:#666;">${search ? "" : "همه‌ی واژه‌های دیتابیس در یک فایل JSON."}</span>
+      </form>
+    `;
+
     const content = `
       <div class="top-row">
         <form method="get" action="/admin/words" style="flex:1; display:flex; gap:8px;">
@@ -133,6 +164,7 @@ export async function handleWordRoutes(request: Request, env: Env, url: URL): Pr
         </form>
         <div><a href="/admin/words/new"><button type="button">+ واژه‌ی جدید</button></a></div>
       </div>
+      ${exportHtml}
       <table><thead><tr><th>ID</th><th>English</th><th>معنی فارسی</th><th>Level</th><th>درس</th><th>تست</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rowsHtml || "<tr><td colspan='8'>هیچ واژه‌ای پیدا نشد.</td></tr>"}</tbody></table>
       ${paginationHtml}
     `;
