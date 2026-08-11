@@ -1,19 +1,22 @@
 import { Env } from "../../types";
-import { TelegramCallbackQuery, InlineKeyboardButton } from "../types";
+import { TelegramUpdate, TelegramCallbackQuery, InlineKeyboardButton } from "../types";
 import { sendMessage, answerCallbackQuery } from "../telegram-api";
 import { getProfileMenuKeyboard } from "../keyboards";
-import { pe } from "../premium-emojis";
+import { pe, isUserMenuLabel } from "../premium-emojis";
 import { escapeHtml } from "../../utils/html";
-import { getOrCreateUser, DbUser } from "../../db/users";
+import { getOrCreateUser, getUserByTelegramId, DbUser } from "../../db/users";
+import { getAdminState, setAdminState, deleteAdminState } from "../../db/admin_state";
 import {
   getUserProfile,
   updateDisplayName,
+  validateDisplayName,
   setAvatar,
   getUserActivityStats,
   ActivityPeriod,
   ActivityStats
 } from "../../db/profile";
-import { CB_PREFIX } from "../../config/constants";
+import { CB_PREFIX, DISPLAY_NAME } from "../../config/constants";
+import { toPersianDigits } from "../../utils/digits";
 import { iranDateStr, shiftDateStr } from "../../utils/iran_time";
 import { AVATARS, getAvatarEmoji, getAvatarLabel } from "../avatars";
 import { toJalaliString } from "../../utils/jalali";
@@ -46,6 +49,17 @@ export function resolveStreakDisplay(
 }
 
 /**
+ * The name to show for a user: their chosen display name, falling back to the
+ * Telegram first name / username, and finally a generated handle.
+ * @param profileName - The stored display_name (may be null)
+ * @param user - The database user record
+ * @returns The name to render
+ */
+function resolveDisplayName(profileName: string | null | undefined, user: DbUser): string {
+  return profileName || user.first_name || user.username || `user_${user.id}`;
+}
+
+/**
  * Display the user's profile home with name, XP, streak, and avatar.
  * @param env - The worker environment containing the D1 database binding
  * @param user - The database user record
@@ -55,11 +69,7 @@ export function resolveStreakDisplay(
 export async function showProfileHome(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
-  const displayName =
-    profile?.display_name ||
-    user.first_name ||
-    user.username ||
-    `user_${user.id}`;
+  const displayName = resolveDisplayName(profile?.display_name, user);
 
   const xpTotal = profile?.xp_total ?? 0;
   const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
@@ -97,26 +107,21 @@ export async function showProfileHome(env: Env, user: DbUser, chatId: number): P
 export async function showProfileSettings(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
-  const displayName =
-    profile?.display_name ||
-    user.first_name ||
-    user.username ||
-    `user_${user.id}`;
+  const displayName = resolveDisplayName(profile?.display_name, user);
 
-  const remainingChanges = Math.max(0, 3 - (profile?.name_change_count ?? 0));
   const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
   const avatarLabel = getAvatarLabel(profile?.avatar_code);
 
   const text =
     `⚙️ <b>تنظیمات پروفایل</b>\n\n` +
     `✏️ <b>نام نمایشی:</b> ${escapeHtml(displayName)}\n` +
-    `<i>(تغییرات باقی‌مانده: ${remainingChanges} از 3)</i>\n` +
-    `برای تغییر نام، دستور زیر رو بفرست:\n` +
-    `<code>/setname اسم_جدید</code>\n\n` +
+    `<i>هر وقت خواستی می‌تونی عوضش کنی — بدون محدودیت 😊</i>\n\n` +
     `🎭 <b>آواتار فعلی:</b> ${avatarEmoji} (${avatarLabel})\n` +
     `برای تغییر، یکی از گزینه‌های زیر رو انتخاب کن: 👇`;
 
-  const inlineRows: InlineKeyboardButton[][] = [];
+  const inlineRows: InlineKeyboardButton[][] = [
+    [{ text: "✏️ تغییر نام نمایشی", callback_data: `${CB_PREFIX.NAME_EDIT}:1`, style: "primary" }]
+  ];
   for (let i = 0; i < AVATARS.length; i += 4) {
     const slice = AVATARS.slice(i, i + 4);
     inlineRows.push(
@@ -178,8 +183,212 @@ export async function handleAvatarCallback(
   });
 }
 
+// ─────────────────────────── display-name change flow ────────────────────────
+//
+// Tap "✏️ تغییر نام نمایشی" → type the name → confirm. The typed name is parked
+// in `admin_bot_state` (scope "profile") between the two steps, because a Persian
+// name can fill Telegram's whole 64-byte callback_data budget on its own and so
+// can't ride along on the confirm button.
+
+interface ProfileState {
+  action: "await_name" | "confirm_name";
+  pendingName?: string;
+}
+
+/** The confirm / retype / cancel keyboard shown under a typed-in name. */
+function nameConfirmKeyboard(): { inline_keyboard: InlineKeyboardButton[][] } {
+  return {
+    inline_keyboard: [
+      [{ text: "✅ تایید و ثبت", callback_data: `${CB_PREFIX.NAME_SAVE}:1`, style: "success" }],
+      [{ text: "✏️ نوشتن دوباره", callback_data: `${CB_PREFIX.NAME_EDIT}:1`, style: "primary" }],
+      [{ text: "❌ انصراف", callback_data: `${CB_PREFIX.NAME_CANCEL}:1` }]
+    ]
+  };
+}
+
 /**
- * Process the /setname command to update the user's display name.
+ * Ask the user to type a new display name (step 1 of the flow).
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param chatId - The Telegram chat ID to prompt in
+ * @param note - Optional line shown above the prompt (e.g. a validation error)
+ * @returns void
+ */
+export async function startNameChange(
+  env: Env,
+  user: DbUser,
+  chatId: number,
+  note?: string
+): Promise<void> {
+  const profile = await getUserProfile(env, user.id);
+  const current = resolveDisplayName(profile?.display_name, user);
+
+  await setAdminState<ProfileState>(env, user.telegram_id, "profile", { action: "await_name" });
+
+  const text =
+    (note ? `${note}\n\n` : "") +
+    `✏️ <b>تغییر نام نمایشی</b>\n\n` +
+    `اسم فعلیت: <b>${escapeHtml(current)}</b>\n\n` +
+    `حالا اسم جدیدت رو همین‌جا بنویس و بفرست ✍️\n` +
+    `<i>(حداکثر ${toPersianDigits(DISPLAY_NAME.MAX)} حرف — هر وقت خواستی می‌تونی دوباره عوضش کنی)</i>`;
+
+  await sendMessage(env, chatId, text, {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "❌ انصراف", callback_data: `${CB_PREFIX.NAME_CANCEL}:1` }]
+      ]
+    }
+  });
+}
+
+/** Park a validated name and ask for confirmation (step 2 of the flow). */
+async function askNameConfirm(
+  env: Env,
+  user: DbUser,
+  chatId: number,
+  name: string
+): Promise<void> {
+  await setAdminState<ProfileState>(env, user.telegram_id, "profile", {
+    action: "confirm_name",
+    pendingName: name
+  });
+
+  await sendMessage(
+    env,
+    chatId,
+    `اسم جدیدت این می‌شه:\n\n${pe("🏷")} <b>${escapeHtml(name)}</b>\n\n` +
+      `اگه درسته تاییدش کن 👇\n` +
+      `<i>(اگه اشتباهه، کافیه اسم درست رو بنویسی و بفرستی)</i>`,
+    { reply_markup: nameConfirmKeyboard() }
+  );
+}
+
+/** Validate typed text and either re-prompt or move to the confirm step. */
+async function takeTypedName(
+  env: Env,
+  user: DbUser,
+  chatId: number,
+  raw: string
+): Promise<void> {
+  const res = validateDisplayName(raw);
+  if (!res.ok) {
+    await sendMessage(env, chatId, `${res.reason}\n\nدوباره امتحان کن ✍️`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "❌ انصراف", callback_data: `${CB_PREFIX.NAME_CANCEL}:1` }]
+        ]
+      }
+    });
+    return;
+  }
+  await askNameConfirm(env, user, chatId, res.value);
+}
+
+/**
+ * Consume free text belonging to the name-change flow. Returns true if it
+ * handled the message. A tap on a menu button (or any command) cancels the flow
+ * and is handed back to the router.
+ * @param env - The worker environment containing the D1 database binding
+ * @param user - The database user record
+ * @param update - The incoming Telegram update
+ * @returns True if the message was consumed by this flow
+ */
+export async function handleProfileMessage(
+  env: Env,
+  user: DbUser,
+  update: TelegramUpdate
+): Promise<boolean> {
+  const message = update.message;
+  const text = message?.text;
+  if (!text) return false;
+
+  const state = await getAdminState<ProfileState>(env, user.telegram_id, "profile");
+  if (!state) return false;
+
+  // A menu tap or a command means the user moved on — drop the flow and let the
+  // router handle it, so neither can be mistaken for a name.
+  if (isUserMenuLabel(text) || text.startsWith("/")) {
+    await deleteAdminState(env, user.telegram_id, "profile");
+    return false;
+  }
+
+  // In BOTH steps, typed text is the (possibly corrected) new name — retyping is
+  // how the user fixes a typo without having to press anything first.
+  await takeTypedName(env, user, message!.chat.id, text);
+  return true;
+}
+
+/**
+ * Handle the inline buttons of the name-change flow (start / save / cancel).
+ * @param env - The worker environment containing the D1 database binding
+ * @param callbackQuery - The Telegram callback query
+ * @returns void
+ */
+export async function handleNameCallback(
+  env: Env,
+  callbackQuery: TelegramCallbackQuery
+): Promise<void> {
+  const prefix = (callbackQuery.data ?? "").split(":")[0];
+  const chatId = callbackQuery.message?.chat.id;
+
+  if (!callbackQuery.from || chatId === undefined) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    return;
+  }
+
+  const user = await getUserByTelegramId(env, callbackQuery.from.id);
+  if (!user || !user.is_approved || user.is_banned) {
+    await answerCallbackQuery(env, callbackQuery.id, "برای تغییر نام باید اشتراک فعال داشته باشی 🔒");
+    return;
+  }
+
+  if (prefix === CB_PREFIX.NAME_CANCEL) {
+    await deleteAdminState(env, user.telegram_id, "profile");
+    await answerCallbackQuery(env, callbackQuery.id, "تغییر نام لغو شد");
+    await sendMessage(env, chatId, "باشه، اسمت همون که بود موند 🙂", {
+      reply_markup: getProfileMenuKeyboard()
+    });
+    return;
+  }
+
+  if (prefix === CB_PREFIX.NAME_EDIT) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    await startNameChange(env, user, chatId);
+    return;
+  }
+
+  // NAME_SAVE — the pending name lives in the flow state.
+  const state = await getAdminState<ProfileState>(env, user.telegram_id, "profile");
+  const pending = state?.action === "confirm_name" ? state.pendingName ?? "" : "";
+  const res = validateDisplayName(pending);
+  if (!res.ok) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    await startNameChange(env, user, chatId, "این درخواست منقضی شده 🙃");
+    return;
+  }
+
+  const result = await updateDisplayName(env, user.id, res.value);
+  if (!result.ok) {
+    await answerCallbackQuery(env, callbackQuery.id);
+    await sendMessage(env, chatId, "❌ مشکلی در تغییر نام پیش آمد. دوباره امتحان کن.");
+    return;
+  }
+
+  await deleteAdminState(env, user.telegram_id, "profile");
+  await answerCallbackQuery(env, callbackQuery.id, "اسمت ثبت شد ✅");
+  await sendMessage(
+    env,
+    chatId,
+    `${pe("✨")} از این به بعد اسمت اینه: <b>${escapeHtml(res.value)}</b> ✅\n` +
+      `<i>هر وقت خواستی دوباره از ⚙️ تنظیمات پروفایل عوضش کن.</i>`,
+    { reply_markup: getProfileMenuKeyboard() }
+  );
+}
+
+/**
+ * Process the /setname command. Kept as a shortcut for users who know it:
+ * "/setname رضا" jumps straight to the confirm step, a bare "/setname" (or an
+ * invalid name, including the old "اسم_جدید" placeholder) starts the guided flow.
  * @param env - The worker environment containing the D1 database binding
  * @param user - The database user record
  * @param chatId - The Telegram chat ID to respond to
@@ -192,48 +401,20 @@ export async function handleSetDisplayNameCommand(
   chatId: number,
   text: string
 ): Promise<void> {
-  const parts = text.trim().split(" ");
-  const newName = parts.slice(1).join(" ").trim();
+  const arg = text.trim().replace(/^\/setname(?:@\S+)?/i, "").trim();
 
-  if (!newName) {
-    await sendMessage(
-      env,
-      chatId,
-      "⚠️ لطفاً نام جدید رو بعد از دستور بنویس.\nمثال:\n<code>/setname رضا</code>"
-    );
+  if (!arg) {
+    await startNameChange(env, user, chatId);
     return;
   }
 
-  if (newName.length > 32) {
-    await sendMessage(env, chatId, "نام جدید خیلی طولانیه! (حداکثر ۳۲ حرف)");
+  const res = validateDisplayName(arg);
+  if (!res.ok) {
+    await startNameChange(env, user, chatId, res.reason);
     return;
   }
 
-  const result = await updateDisplayName(env, user.id, newName);
-
-  if (!result.ok) {
-    if (result.reason === "limit") {
-      await sendMessage(
-        env,
-        chatId,
-        "⛔️ متاسفانه سقف تغییر نام (۳ بار) پر شده است."
-      );
-    } else {
-      await sendMessage(env, chatId, "❌ مشکلی در تغییر نام پیش آمد.");
-    }
-    return;
-  }
-
-  const remaining = result.remainingChanges ?? 0;
-
-  await sendMessage(
-    env,
-    chatId,
-    `${pe("✨")} نام نمایشی به <b>${escapeHtml(newName)}</b> تغییر کرد ✅\nتعداد تغییرات باقی‌مانده: <b>${remaining}</b>`,
-    {
-      reply_markup: getProfileMenuKeyboard()
-    }
-  );
+  await askNameConfirm(env, user, chatId, res.value);
 }
 
 /**
@@ -349,11 +530,7 @@ export async function handleStatsCallback(
 export async function showProfileSummary(env: Env, user: DbUser, chatId: number): Promise<void> {
   const profile = await getUserProfile(env, user.id);
 
-  const displayName =
-    profile?.display_name ||
-    user.first_name ||
-    user.username ||
-    `user_${user.id}`;
+  const displayName = resolveDisplayName(profile?.display_name, user);
 
   const avatarEmoji = getAvatarEmoji(profile?.avatar_code);
   const xpTotal = profile?.xp_total ?? 0;

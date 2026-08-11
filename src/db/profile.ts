@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { queryOne, execute } from "./client";
-import { TIME_ZONE_OFFSET } from "../config/constants";
+import { TIME_ZONE_OFFSET, DISPLAY_NAME } from "../config/constants";
 
 export type ActivityPeriod = "day" | "week" | "month" | "all";
 
@@ -130,8 +130,106 @@ export interface ActivityStats {
 
 export interface NameChangeResult {
   ok: boolean;
-  reason?: "limit" | "not_found";
-  remainingChanges?: number;
+  reason?: "not_found";
+}
+
+/**
+ * Normalise a name for placeholder matching only: unify the Arabic/Persian
+ * letter variants (ي/ی, ك/ک), turn the separators people copy along with a
+ * placeholder (_ - <> «» …) into spaces, collapse whitespace and lowercase.
+ * Display keeps the user's original text — this form is never stored.
+ */
+function normalizeForPlaceholder(value: string): string {
+  return value
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[_\-<>«»[\](){}"'‹›]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Texts that are obviously the instruction rather than a name. The old settings
+ * screen told users to send "/setname اسم_جدید", and a large number of them sent
+ * it verbatim — so their display name literally became "اسم_جدید". These are
+ * rejected with a message that explains what to type instead.
+ */
+const PLACEHOLDER_NAMES = new Set([
+  "اسم جدید",
+  "اسم جدیدم",
+  "اسم جدیدت",
+  "اسم جدید من",
+  "نام جدید",
+  "نام جدیدم",
+  "نام جدیدت",
+  "نام جدید من",
+  "اسم",
+  "نام",
+  "اسم من",
+  "نام من",
+  "اسمم",
+  "نامم",
+  "اسم نمایشی",
+  "نام نمایشی",
+  "setname",
+  "name",
+  "new name",
+  "newname",
+  "your name",
+  "yourname",
+  "my name",
+  "myname",
+]);
+
+/**
+ * Validate a display name typed by a user. Pure/side-effect-free so the rules are
+ * unit-testable. Returns the cleaned-up value (whitespace collapsed to single
+ * spaces, trimmed) or a ready-to-send Persian reason.
+ * @param raw - The raw text the user sent
+ * @returns Either the accepted value or the reason it was rejected
+ */
+export function validateDisplayName(
+  raw: string
+): { ok: true; value: string } | { ok: false; reason: string } {
+  const value = (raw ?? "").replace(/\s+/g, " ").trim();
+
+  if (value.length === 0) {
+    return { ok: false, reason: "اسمت خالیه 🙂 یه اسم برای خودت بنویس." };
+  }
+  if (value.startsWith("/")) {
+    return {
+      ok: false,
+      reason: "این یه دستوره، نه اسم 🙂 فقط خودِ اسمت رو بنویس، مثلاً: رضا",
+    };
+  }
+  if (PLACEHOLDER_NAMES.has(normalizeForPlaceholder(value))) {
+    return {
+      ok: false,
+      reason:
+        "😅 «اسم جدید» فقط یه نمونه بود، نه اسم واقعی!\nاسم خودت رو بنویس، مثلاً: رضا",
+    };
+  }
+  if (value.length < DISPLAY_NAME.MIN) {
+    return { ok: false, reason: `اسمت خیلی کوتاهه 🙂 حداقل ${DISPLAY_NAME.MIN} حرف بنویس.` };
+  }
+  if (value.length > DISPLAY_NAME.MAX) {
+    return {
+      ok: false,
+      reason: `اسمت خیلی طولانیه 😅 حداکثر ${DISPLAY_NAME.MAX} حرف. یه اسم کوتاه‌تر بنویس.`,
+    };
+  }
+  if (!/\p{L}/u.test(value)) {
+    return { ok: false, reason: "اسمت باید حداقل یه حرف داشته باشه 🙂" };
+  }
+  if (/@\w/.test(value) || /https?:\/\//i.test(value) || /t\.me\//i.test(value)) {
+    return { ok: false, reason: "اسم نباید شامل لینک یا آیدی باشه. یه اسم ساده بنویس 🙂" };
+  }
+  if (/\d{7,}/.test(value.replace(/\D/g, ""))) {
+    return { ok: false, reason: "اسم نباید شماره تماس داشته باشه. یه اسم ساده بنویس 🙂" };
+  }
+
+  return { ok: true, value };
 }
 
 function getSinceExpr(period: ActivityPeriod): string | null {
@@ -170,10 +268,12 @@ export async function getUserProfile(env: Env, userId: number): Promise<UserProf
 }
 
 /**
- * Update a user's display name (subject to a 3-change lifetime limit).
+ * Update a user's display name. There is NO limit on how often a user may rename
+ * themselves — `name_change_count` is still incremented, but purely as history.
+ * One statement, no pre-read: a missing user simply affects zero rows.
  * @param env - The worker environment containing the D1 database binding
  * @param userId - The user ID to update
- * @param newName - The new display name to set
+ * @param newName - The new display name to set (already validated)
  * @returns A NameChangeResult indicating success or the reason for failure
  */
 export async function updateDisplayName(
@@ -181,28 +281,9 @@ export async function updateDisplayName(
   userId: number,
   newName: string
 ): Promise<NameChangeResult> {
-  const row = await queryOne<{ name_change_count: number }>(
-    env,
-    `
-    SELECT name_change_count
-    FROM users
-    WHERE id = ?
-    `,
-    [userId]
-  );
-
-  if (!row) {
-    return { ok: false, reason: "not_found" };
-  }
-
-  const currentCount = row.name_change_count ?? 0;
-  if (currentCount >= 3) {
-    return { ok: false, reason: "limit", remainingChanges: 0 };
-  }
-
   const now = new Date().toISOString();
 
-  await execute(
+  const res = await execute(
     env,
     `
     UPDATE users
@@ -212,12 +293,11 @@ export async function updateDisplayName(
     [newName, now, userId]
   );
 
-  const remaining = Math.max(0, 3 - (currentCount + 1));
+  if (res.meta?.changes === 0) {
+    return { ok: false, reason: "not_found" };
+  }
 
-  return {
-    ok: true,
-    remainingChanges: remaining
-  };
+  return { ok: true };
 }
 
 /**
