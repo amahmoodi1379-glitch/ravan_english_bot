@@ -25,11 +25,19 @@ function getRankEmoji(rank: number): string {
   return `${rank}.`;
 }
 
-function buildLeaderboardText(
+/**
+ * Render a board plus, when the viewer isn't on it, their own "📍 رتبه شما" line.
+ * Presence is decided by USER ID, never by rank number: the two are computed
+ * separately (and ties/eligibility can make a viewer's rank collide with someone
+ * else's row), so matching on rank used to swallow the line for a viewer who was
+ * genuinely absent from the list — leaving them with no idea where they stood.
+ */
+export function buildLeaderboardText(
   title: string,
-  entries: { rank: number; display_name: string; avatar_code: string | null; score: number }[],
+  entries: { rank: number; user_id: number; display_name: string; avatar_code: string | null; score: number }[],
   userRank: { rank: number; score: number } | null,
-  scoreLabel: string
+  scoreLabel: string,
+  userId: number
 ): string {
   let text = `${title}\n\n`;
 
@@ -47,7 +55,7 @@ function buildLeaderboardText(
   }
 
   if (userRank && userRank.score > 0) {
-    const inList = entries.some((e) => e.rank === userRank.rank);
+    const inList = entries.some((e) => e.user_id === userId);
     if (!inList) {
       text += `\n\n📍 <b>رتبه شما:</b> ${userRank.rank} — ${userRank.score.toLocaleString("fa-IR")} ${scoreLabel}`;
     }
@@ -126,7 +134,7 @@ async function showXpLeaderboard(
   const entries = await getLeaderboardXp(env, period, 50, nowMs);
   const userRank = await getUserRankXp(env, userId, period, nowMs);
 
-  const text = buildLeaderboardText(periodLabels[period], entries, userRank, "XP");
+  const text = buildLeaderboardText(periodLabels[period], entries, userRank, "XP", userId);
 
   const replyMarkup = {
     inline_keyboard: [
@@ -161,7 +169,7 @@ async function showStreakLeaderboard(
     getUserRankStreak(env, userId, type),
   ]);
 
-  const text = buildLeaderboardText(typeLabels[type], entries, userRank, "روز");
+  const text = buildLeaderboardText(typeLabels[type], entries, userRank, "روز", userId);
 
   const replyMarkup = {
     inline_keyboard: [

@@ -12,7 +12,7 @@
 -- • When you change the schema: add a new migration in migrations/ AND update
 --   this file to match. They must never disagree. See .kiro/steering/database.md
 --
--- Last consolidated: migration 0038 (activity_log covering index).
+-- Last consolidated: migration 0039 (one answer row per attempt+question).
 -- ============================================================================
 
 
@@ -535,7 +535,11 @@ CREATE TABLE IF NOT EXISTS custom_quiz_answers (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cq_questions_quiz_index ON custom_quiz_questions(quiz_id, question_index);
 CREATE INDEX IF NOT EXISTS idx_cq_attempts_quiz_user ON custom_quiz_attempts(quiz_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_cq_attempts_user ON custom_quiz_attempts(user_id);
-CREATE INDEX IF NOT EXISTS idx_cq_answers_attempt ON custom_quiz_answers(attempt_id);
+-- At most ONE answer row per (attempt, question) (0039). Duplicate rows used to
+-- fan the scoring JOIN out and inflate an attempt's correct count AND its
+-- question total together (a 10-question tournament showing "✅11 out of 11").
+-- Also serves attempt_id-only lookups as the leading column.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cq_answers_attempt_question ON custom_quiz_answers(attempt_id, question_id);
 CREATE INDEX IF NOT EXISTS idx_cq_answers_question ON custom_quiz_answers(question_id);
 
 

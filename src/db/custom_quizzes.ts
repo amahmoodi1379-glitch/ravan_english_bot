@@ -1,5 +1,5 @@
 import { Env } from "../types";
-import { queryAll, queryOne, execute } from "./client";
+import { queryAll, queryOne, execute, batch, prepare } from "./client";
 
 export interface CustomQuiz {
   id: number;
@@ -518,7 +518,23 @@ export async function getFinishedAttemptsWithChatId(
 }
 
 /**
- * Save or update the user's answer for a specific question in an attempt.
+ * Save or update the user's answer for a specific question in an attempt — at most
+ * ONE row per (attempt, question), always.
+ *
+ * This runs as a single atomic D1 batch instead of the SELECT-then-INSERT it used
+ * to be. That read-then-write had a race: two callbacks for the same question
+ * arriving together (an impatient double-tap on an option, or a Telegram webhook
+ * retry) both saw "no row yet" and both INSERTed, leaving two rows for one
+ * question. Those duplicates then fanned the scoring JOIN out, inflating BOTH the
+ * correct count and the attempt's question total — which is how a 10-question
+ * tournament could report an attempt with ✅11 out of 11.
+ *
+ * The UPDATE is a no-op on the very first save; the guarded INSERT is a no-op on
+ * every later one — so exactly one of the two takes effect, and a concurrent batch
+ * can only run before or after this one (D1 serialises write transactions), never
+ * interleaved. Deliberately NOT an `ON CONFLICT` upsert: that would require the
+ * unique index from migration 0039 to already exist, and this must stay correct on
+ * a database where that migration has not been run yet.
  * @param env - The worker environment containing the D1 database binding
  * @param attemptId - The attempt ID the answer belongs to
  * @param questionId - The question ID being answered
@@ -531,24 +547,23 @@ export async function saveAnswer(
   questionId: number,
   chosenOption: string | null
 ): Promise<void> {
-  const existing = await queryOne<{ id: number }>(
-    env,
-    `SELECT id FROM custom_quiz_answers WHERE attempt_id = ? AND question_id = ?`,
-    [attemptId, questionId]
-  );
-  if (existing) {
-    await execute(
+  await batch(env, [
+    prepare(
       env,
-      `UPDATE custom_quiz_answers SET chosen_option = ?, answered_at = datetime('now') WHERE id = ?`,
-      [chosenOption, existing.id]
-    );
-  } else {
-    await execute(
+      `UPDATE custom_quiz_answers SET chosen_option = ?, answered_at = datetime('now')
+       WHERE attempt_id = ? AND question_id = ?`,
+      [chosenOption, attemptId, questionId]
+    ),
+    prepare(
       env,
-      `INSERT INTO custom_quiz_answers (attempt_id, question_id, chosen_option, answered_at) VALUES (?, ?, ?, datetime('now'))`,
-      [attemptId, questionId, chosenOption]
-    );
-  }
+      `INSERT INTO custom_quiz_answers (attempt_id, question_id, chosen_option, answered_at)
+       SELECT ?, ?, ?, datetime('now')
+       WHERE NOT EXISTS (
+         SELECT 1 FROM custom_quiz_answers WHERE attempt_id = ? AND question_id = ?
+       )`,
+      [attemptId, questionId, chosenOption, attemptId, questionId]
+    ),
+  ]);
 }
 
 /**
@@ -582,10 +597,39 @@ export async function getAnsweredCount(
 ): Promise<number> {
   const row = await queryOne<{ cnt: number }>(
     env,
-    `SELECT COUNT(*) as cnt FROM custom_quiz_answers WHERE attempt_id = ? AND chosen_option IS NOT NULL`,
+    `SELECT COUNT(DISTINCT question_id) as cnt FROM custom_quiz_answers WHERE attempt_id = ? AND chosen_option IS NOT NULL`,
     [attemptId]
   );
   return row?.cnt ?? 0;
+}
+
+/**
+ * The scoring buckets, as SQL fragments shared by every board and rank query so
+ * they can never drift apart (the board and the "your rank" line are compared
+ * against each other, so they MUST score identically).
+ *
+ * Each is counted with DISTINCT on the question id, which makes scoring immune to
+ * a duplicate answer row for one question: a question can contribute at most 1 to
+ * a bucket and at most 1 to the total, no matter how many rows the JOIN produces
+ * for it. saveAnswer() is what prevents duplicates being written in the first
+ * place and migration 0039 removes the ones already stored — this is the display
+ * side of the same fix, so historical attempts read correctly too. Without it a
+ * duplicated row inflated `correct` AND `total_q` together, which is why an
+ * attempt on a 10-question tournament could show ✅11 at 100%.
+ *
+ * They expect the attempt aliased `a`, questions `q` and answers `ans`.
+ */
+const SQL_CORRECT = `COUNT(DISTINCT CASE WHEN ans.chosen_option = q.correct_option THEN q.id END)`;
+const SQL_WRONG = `COUNT(DISTINCT CASE WHEN ans.chosen_option IS NOT NULL AND ans.chosen_option != q.correct_option THEN q.id END)`;
+const SQL_TOTAL = `COUNT(DISTINCT q.id)`;
+
+/**
+ * Unanswered is derived, never counted: total minus the two answered buckets. A
+ * counted version could double-count a question that somehow has both an answered
+ * and a cleared row, letting the three buckets sum past the question count.
+ */
+function unansweredOf(total: number, correct: number, wrong: number): number {
+  return Math.max(0, total - correct - wrong);
 }
 
 interface LeaderboardNegativeRow {
@@ -595,7 +639,6 @@ interface LeaderboardNegativeRow {
   avatar_code: string | null;
   correct: number;
   wrong: number;
-  unanswered: number;
   total_q: number;
   total_seconds: number;
 }
@@ -620,10 +663,9 @@ export async function getLeaderboardWithNegative(
       a.user_id,
       COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
       u.avatar_code,
-      COUNT(CASE WHEN ans.chosen_option = q.correct_option THEN 1 END) as correct,
-      COUNT(CASE WHEN ans.chosen_option IS NOT NULL AND ans.chosen_option != q.correct_option THEN 1 END) as wrong,
-      COUNT(CASE WHEN ans.chosen_option IS NULL THEN 1 END) as unanswered,
-      COUNT(q.id) as total_q,
+      ${SQL_CORRECT} as correct,
+      ${SQL_WRONG} as wrong,
+      ${SQL_TOTAL} as total_q,
       (julianday(a.finished_at) - julianday(a.started_at)) * 86400 as total_seconds
     FROM custom_quiz_attempts a
     JOIN users u ON u.id = a.user_id
@@ -640,7 +682,6 @@ export async function getLeaderboardWithNegative(
   return rows.map((r, i) => {
     const correct = r.correct || 0;
     const wrong = r.wrong || 0;
-    const unanswered = r.unanswered || 0;
     const total = r.total_q || 1;
     const score = correct - (wrong / 3);
     const percentage = Math.max(0, (score / total) * 100);
@@ -652,7 +693,7 @@ export async function getLeaderboardWithNegative(
       percentage: Math.round(percentage * 100) / 100,
       correct,
       wrong,
-      unanswered,
+      unanswered: unansweredOf(total, correct, wrong),
       total_seconds: Math.round(r.total_seconds || 0),
     };
   });
@@ -688,8 +729,8 @@ export async function getLeaderboardWithoutNegative(
       a.user_id,
       COALESCE(u.display_name, u.first_name, u.username, 'user_' || u.id) as display_name,
       u.avatar_code,
-      COUNT(CASE WHEN ans.chosen_option = q.correct_option THEN 1 END) as correct,
-      COUNT(q.id) as total_q,
+      ${SQL_CORRECT} as correct,
+      ${SQL_TOTAL} as total_q,
       (julianday(a.finished_at) - julianday(a.started_at)) * 86400 as total_seconds
     FROM custom_quiz_attempts a
     JOIN users u ON u.id = a.user_id
@@ -738,14 +779,13 @@ export async function getUserRankWithNegative(
   );
   if (!userAttempt) return null;
 
-  const stats = await queryOne<{ correct: number; wrong: number; unanswered: number; total_q: number }>(
+  const stats = await queryOne<{ correct: number; wrong: number; total_q: number }>(
     env,
     `
     SELECT
-      COUNT(CASE WHEN ans.chosen_option = q.correct_option THEN 1 END) as correct,
-      COUNT(CASE WHEN ans.chosen_option IS NOT NULL AND ans.chosen_option != q.correct_option THEN 1 END) as wrong,
-      COUNT(CASE WHEN ans.chosen_option IS NULL THEN 1 END) as unanswered,
-      COUNT(q.id) as total_q
+      ${SQL_CORRECT} as correct,
+      ${SQL_WRONG} as wrong,
+      ${SQL_TOTAL} as total_q
     FROM custom_quiz_attempts a
     JOIN custom_quiz_questions q ON q.quiz_id = a.quiz_id
     LEFT JOIN custom_quiz_answers ans ON ans.attempt_id = a.id AND ans.question_id = q.id
@@ -757,7 +797,6 @@ export async function getUserRankWithNegative(
 
   const correct = stats.correct || 0;
   const wrong = stats.wrong || 0;
-  const unanswered = stats.unanswered || 0;
   const total = stats.total_q || 1;
   const score = correct - (wrong / 3);
   const percentage = Math.max(0, (score / total) * 100);
@@ -766,14 +805,14 @@ export async function getUserRankWithNegative(
     env,
     `
     SELECT COUNT(*) as cnt FROM (
-      SELECT a2.id,
-        COUNT(CASE WHEN ans2.chosen_option = q2.correct_option THEN 1 END) - COUNT(CASE WHEN ans2.chosen_option IS NOT NULL AND ans2.chosen_option != q2.correct_option THEN 1 END) * 1.0 / 3 as score2,
-        (julianday(a2.finished_at) - julianday(a2.started_at)) * 86400 as sec2
-      FROM custom_quiz_attempts a2
-      JOIN custom_quiz_questions q2 ON q2.quiz_id = a2.quiz_id
-      LEFT JOIN custom_quiz_answers ans2 ON ans2.attempt_id = a2.id AND ans2.question_id = q2.id
-      WHERE a2.quiz_id = ? AND a2.status IN ('finished', 'auto_ended')
-      GROUP BY a2.id
+      SELECT a.id,
+        ${SQL_CORRECT} - ${SQL_WRONG} * 1.0 / 3 as score2,
+        (julianday(a.finished_at) - julianday(a.started_at)) * 86400 as sec2
+      FROM custom_quiz_attempts a
+      JOIN custom_quiz_questions q ON q.quiz_id = a.quiz_id
+      LEFT JOIN custom_quiz_answers ans ON ans.attempt_id = a.id AND ans.question_id = q.id
+      WHERE a.quiz_id = ? AND a.status IN ('finished', 'auto_ended')
+      GROUP BY a.id
       HAVING score2 > ? OR (score2 = ? AND sec2 < ?)
     )
     `,
@@ -785,7 +824,7 @@ export async function getUserRankWithNegative(
     percentage: Math.round(percentage * 100) / 100,
     correct,
     wrong,
-    unanswered,
+    unanswered: unansweredOf(total, correct, wrong),
   };
 }
 
@@ -812,8 +851,8 @@ export async function getUserRankWithoutNegative(
     env,
     `
     SELECT
-      COUNT(CASE WHEN ans.chosen_option = q.correct_option THEN 1 END) as correct,
-      COUNT(q.id) as total_q,
+      ${SQL_CORRECT} as correct,
+      ${SQL_TOTAL} as total_q,
       (julianday(a.finished_at) - julianday(a.started_at)) * 86400 as total_seconds
     FROM custom_quiz_attempts a
     JOIN custom_quiz_questions q ON q.quiz_id = a.quiz_id
@@ -833,14 +872,14 @@ export async function getUserRankWithoutNegative(
     env,
     `
     SELECT COUNT(*) as cnt FROM (
-      SELECT a2.id,
-        COUNT(CASE WHEN ans2.chosen_option = q2.correct_option THEN 1 END) as correct2,
-        (julianday(a2.finished_at) - julianday(a2.started_at)) * 86400 as sec2
-      FROM custom_quiz_attempts a2
-      JOIN custom_quiz_questions q2 ON q2.quiz_id = a2.quiz_id
-      LEFT JOIN custom_quiz_answers ans2 ON ans2.attempt_id = a2.id AND ans2.question_id = q2.id
-      WHERE a2.quiz_id = ? AND a2.status IN ('finished', 'auto_ended')
-      GROUP BY a2.id
+      SELECT a.id,
+        ${SQL_CORRECT} as correct2,
+        (julianday(a.finished_at) - julianday(a.started_at)) * 86400 as sec2
+      FROM custom_quiz_attempts a
+      JOIN custom_quiz_questions q ON q.quiz_id = a.quiz_id
+      LEFT JOIN custom_quiz_answers ans ON ans.attempt_id = a.id AND ans.question_id = q.id
+      WHERE a.quiz_id = ? AND a.status IN ('finished', 'auto_ended')
+      GROUP BY a.id
       HAVING correct2 > ? OR (correct2 = ? AND sec2 < ?)
     )
     `,

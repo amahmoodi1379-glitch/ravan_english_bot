@@ -219,6 +219,23 @@ export async function getUserRankXp(
 }
 
 /**
+ * A streak is ALIVE while its last streak day is today **or yesterday** (Iran
+ * local): yesterday's streak is not broken yet — you have until the end of today
+ * to extend it. Only a gap of two days or more lapses it.
+ *
+ * This is the same rule resolveStreakDisplay() (bot/handlers/profile.ts) uses for
+ * the number on the profile screen. The live board used to require the last streak
+ * day to be exactly TODAY, which silently disagreed: a user on day 3 who hadn't
+ * done today's questions yet saw "🔥 ۳ روز" on their profile but was missing from
+ * the "استریک فعال" board, while someone who had just started (day 1) and studied
+ * today was on it. Keeping the two rules identical is what fixes that.
+ *
+ * The bound is a date STRING comparison, which is chronological for 'YYYY-MM-DD',
+ * and it takes the same TIME_ZONE_OFFSET parameter the rest of the file binds.
+ */
+const STREAK_ALIVE_SQL = `last_streak_date >= date('now', ?, '-1 day')`;
+
+/**
  * Fetch the streak leaderboard (live streaks or all-time records).
  * @param env - The worker environment containing the D1 database binding
  * @param type - Whether to show "live" current streaks or all-time "record" streaks
@@ -244,7 +261,7 @@ export async function getLeaderboardStreak(
       FROM users u
       WHERE u.is_approved = 1
         AND (u.is_banned IS NULL OR u.is_banned = 0)
-        AND u.last_streak_date = date('now', ?)
+        AND u.${STREAK_ALIVE_SQL}
         AND u.streak_count > 0
       ORDER BY u.streak_count DESC, u.id ASC
       LIMIT ?
@@ -291,10 +308,12 @@ export async function getUserRankStreak(
   userId: number,
   type: StreakType
 ): Promise<UserRank | null> {
-  const user = await queryOne<{ streak_count: number; max_streak_record: number }>(
+  const user = await queryOne<{ streak_count: number; max_streak_record: number; streak_alive: number }>(
     env,
-    `SELECT streak_count, max_streak_record FROM users WHERE id = ? AND is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)`,
-    [userId]
+    `SELECT streak_count, max_streak_record,
+            CASE WHEN ${STREAK_ALIVE_SQL} THEN 1 ELSE 0 END as streak_alive
+     FROM users WHERE id = ? AND is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)`,
+    [TIME_ZONE_OFFSET, userId]
   );
   if (!user) return null;
 
@@ -302,13 +321,17 @@ export async function getUserRankStreak(
   let score = 0;
 
   if (type === "live") {
-    score = user.streak_count;
+    // A lapsed streak scores 0, not its stale stored count — users.streak_count is
+    // only rewritten on the next study day, so someone who stopped a week ago still
+    // carries their old number. Scoring it 0 keeps the "📍 رتبه شما" line off
+    // (the handler only shows it above 0) instead of advertising a dead streak.
+    score = user.streak_alive === 1 ? user.streak_count : 0;
     const result = await queryOne<{ cnt: number }>(
       env,
       `
       SELECT COUNT(*) as cnt FROM users
       WHERE is_approved = 1 AND (is_banned IS NULL OR is_banned = 0)
-        AND last_streak_date = date('now', ?)
+        AND ${STREAK_ALIVE_SQL}
         AND streak_count > ?
       `,
       [TIME_ZONE_OFFSET, score]
