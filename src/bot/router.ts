@@ -56,7 +56,9 @@ import {
   showProfileSummary,
   handleAvatarCallback,
   handleStatsCallback,
-  handleSetDisplayNameCommand
+  handleSetDisplayNameCommand,
+  handleProfileMessage,
+  handleNameCallback
 } from "./handlers/profile";
 import {
   handleAdminCommand
@@ -256,6 +258,13 @@ const leitnerPrefixes = new Set([
   CB_PREFIX.LEITNER_LESSON_STOP,
 ]);
 
+/** Inline buttons of the display-name change flow (see handlers/profile.ts). */
+const namePrefixes = new Set([
+  CB_PREFIX.NAME_EDIT,
+  CB_PREFIX.NAME_SAVE,
+  CB_PREFIX.NAME_CANCEL,
+]);
+
 const lettersPrefixes = new Set([
   CB_PREFIX.LETTERS_HOME,
   CB_PREFIX.LETTER_INBOX,
@@ -309,6 +318,11 @@ async function handleCallback(env: Env, callbackQuery: TelegramCallbackQuery): P
 
   if (data.startsWith(`${CB_PREFIX.AVATAR}:`)) {
     await handleAvatarCallback(env, callbackQuery);
+    return;
+  }
+
+  if (namePrefixes.has(prefix)) {
+    await handleNameCallback(env, callbackQuery);
     return;
   }
 
@@ -454,7 +468,7 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
 
   await touchExistingUser(env, user, tgUser);
 
-  if (text.startsWith("/setname")) {
+  if (/^\/setname(?:@\S+)?(?:\s|$)/i.test(text)) {
     await handleSetDisplayNameCommand(env, user, chatId, text);
     return;
   }
@@ -473,9 +487,11 @@ async function handleMessage(env: Env, update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  // Letters free-text flows (nickname / letter body / reply body). Runs before
-  // nav matching so an in-progress letter body isn't mistaken for a menu tap.
+  // Free-text flows (display name, then letters: nickname / letter / reply). They
+  // run before nav matching so in-progress input isn't mistaken for a menu tap.
   // A tap on a registered menu button cancels the flow and falls through here.
+  if (await handleProfileMessage(env, user, update)) return;
+
   if (await handleLettersMessage(env, user, update)) return;
 
   // A reply-keyboard button we animated arrives emoji-stripped; map it back to

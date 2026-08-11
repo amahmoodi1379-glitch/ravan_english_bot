@@ -3,7 +3,7 @@ import { queryOne, execute } from "./client";
 
 const STATE_TTL_HOURS = 6;
 
-export type AdminStateScope = "admin" | "quiz" | "letters";
+export type AdminStateScope = "admin" | "quiz" | "letters" | "profile";
 
 export async function getAdminState<T>(
   env: Env,
@@ -25,6 +25,15 @@ export async function getAdminState<T>(
   }
 }
 
+/**
+ * The user-facing flows that capture free text (a letter body, a display name…).
+ * Only ONE of them may be armed at a time: while one waits for typed input, a
+ * leftover state from the other would silently swallow that input — a letter
+ * reply becoming someone's display name, say. So arming one disarms the other.
+ * Admin/quiz scopes are deliberately not part of this.
+ */
+const EXCLUSIVE_TEXT_FLOWS: AdminStateScope[] = ["letters", "profile"];
+
 export async function setAdminState<T>(
   env: Env,
   telegramId: number,
@@ -39,6 +48,17 @@ export async function setAdminState<T>(
      DO UPDATE SET state_json = excluded.state_json, updated_at = datetime('now')`,
     [telegramId, scope, JSON.stringify(state)]
   );
+
+  if (EXCLUSIVE_TEXT_FLOWS.includes(scope)) {
+    await execute(
+      env,
+      `DELETE FROM admin_bot_state
+       WHERE telegram_id = ?
+         AND scope IN (${EXCLUSIVE_TEXT_FLOWS.map(() => "?").join(", ")})
+         AND scope <> ?`,
+      [telegramId, ...EXCLUSIVE_TEXT_FLOWS, scope]
+    );
+  }
 }
 
 export async function deleteAdminState(

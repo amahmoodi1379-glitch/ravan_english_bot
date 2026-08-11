@@ -97,7 +97,22 @@ export const CB_PREFIX = {
   LETTER_DISABLE: "ltd",
   LETTER_OPEN_PROACTIVE: "ltp",
   HELP: "hlp",
+  NAME_EDIT: "nme",
+  NAME_SAVE: "nms",
+  NAME_CANCEL: "nmx",
 };
+
+/**
+ * Display-name (نام نمایشی) rules. Changing the name is deliberately UNLIMITED —
+ * the old 3-change cap only produced dead ends, and the accompanying
+ * "/setname اسم_جدید" instruction made a lot of users literally rename
+ * themselves to the placeholder. The flow is now: tap a button → type the name →
+ * confirm. See validateDisplayName() in src/db/profile.ts.
+ */
+export const DISPLAY_NAME = {
+  MIN: 2,
+  MAX: 32,
+} as const;
 
 /** Letters (نامه‌ها) feature limits and retention windows. */
 export const LETTERS = {
