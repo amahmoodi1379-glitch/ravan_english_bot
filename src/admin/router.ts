@@ -8,6 +8,7 @@ import { handleUserRoutes } from "./routes/users";
 import { handleLicenseRoutes } from "./routes/licenses";
 import { handleReportRoutes } from "./routes/reports";
 import { handleReviewRoutes } from "./routes/review";
+import { handleExportRoutes } from "./routes/export";
 
 /**
  * Handle incoming admin panel HTTP requests (CSRF check, auth, route delegation).
@@ -58,6 +59,9 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
 
   const reviewResponse = await handleReviewRoutes(request, env, url);
   if (reviewResponse) return reviewResponse;
+
+  const exportResponse = await handleExportRoutes(request, env, url);
+  if (exportResponse) return exportResponse;
 
   // 5. No route matched
   return htmlResponse("Not Found", 404);
