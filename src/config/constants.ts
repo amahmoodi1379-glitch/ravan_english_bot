@@ -204,3 +204,11 @@ export const ADMIN_LIST_PAGE_SIZE = 50;
  * because each word may drag several `word_questions` rows along with it.
  */
 export const WORDS_EXPORT_CHUNK_SIZE = 200;
+
+/**
+ * Rows per page of the full export for the Zabanyar web app. Each page is its
+ * own request (one D1 query), so this only bounds a single response's size —
+ * the largest rows (letters, reading texts) are a few KB, keeping a page well
+ * under a few MB.
+ */
+export const FULL_EXPORT_PAGE_SIZE = 1000;

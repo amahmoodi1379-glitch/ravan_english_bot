@@ -191,6 +191,9 @@ export function renderAdminLayout(title: string, content: string, section: strin
       <a href="/admin/review" style="margin-right: 8px;${
         section === "review" ? " font-weight:bold;" : ""
       }">بازبینی کیفی</a>
+      <a href="/admin/export" style="margin-right: 8px;${
+        section === "export" ? " font-weight:bold;" : ""
+      }">📦 خروجی زبان‌یار</a>
       <a href="/admin/logout" style="float: left;">خروج</a>
     </nav>
   `;
