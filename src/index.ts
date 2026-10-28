@@ -15,6 +15,7 @@ import { iranDateStr, iranWallClockToUtcStamp } from "./utils/iran_time";
 import { toPersianDigits } from "./utils/digits";
 import { TOURNAMENT_CONFIG, LEAGUE_CONFIG } from "./config/constants";
 import { MAIN_MENU_BUTTON_TOURNAMENT } from "./bot/keyboards";
+import { isTransferMode } from "./bot/handlers/transfer";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -56,6 +57,16 @@ export default {
 
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil((async () => {
+      // Moving to Zabanyar: nothing runs or changes after the final export.
+      try {
+        if (await isTransferMode(env)) {
+          console.log("transfer mode: hourly jobs skipped");
+          return;
+        }
+      } catch (err) {
+        console.error("Transfer mode check error:", err);
+      }
+
       try {
         await execute(env, "DELETE FROM admin_sessions WHERE expires_at < datetime('now')");
       } catch (err) {
