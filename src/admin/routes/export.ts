@@ -2,6 +2,9 @@ import { Env } from "../../types";
 import { htmlResponse } from "../../utils/response";
 import { renderAdminLayout } from "../views";
 import { buildExportManifest, exportTableByName, fetchExportPart, renderExportPage } from "../full-export";
+import { getSetting } from "../../db/settings";
+import { setTransferMode, TRANSFER_MODE_KEY } from "../../bot/handlers/transfer";
+import { renderTransferCard } from "../transfer-view";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -19,11 +22,22 @@ function jsonResponse(body: unknown, status: number = 200): Response {
  * @returns A Response if the route was handled, or null if not an export route
  */
 export async function handleExportRoutes(request: Request, env: Env, url: URL): Promise<Response | null> {
+  // POST /admin/export/transfer — turn transfer mode on or off (bot/handlers/transfer.ts)
+  if (request.method === "POST" && url.pathname === "/admin/export/transfer") {
+    const form = await request.formData();
+    const mode = form.get("mode");
+    if (mode !== "on" && mode !== "off") return new Response("Bad Request", { status: 400 });
+    await setTransferMode(env, mode === "on");
+    console.log(`transfer mode turned ${mode} from the admin panel`);
+    return new Response(null, { status: 303, headers: { Location: "/admin/export" } });
+  }
+
   if (request.method !== "GET") return null;
 
-  // GET /admin/export — the page with the «build export file» button
+  // GET /admin/export — the transfer switch and the page with the «build export file» button
   if (url.pathname === "/admin/export") {
-    return htmlResponse(renderAdminLayout("📦 خروجی کامل برای زبان‌یار", renderExportPage(), "export"));
+    const on = (await getSetting(env, TRANSFER_MODE_KEY)) === "on";
+    return htmlResponse(renderAdminLayout("📦 خروجی کامل برای زبان‌یار", renderTransferCard(on) + renderExportPage(), "export"));
   }
 
   // GET /admin/export/manifest — table list with row counts (progress bar)

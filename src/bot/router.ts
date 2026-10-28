@@ -1,4 +1,5 @@
 import { Env } from "../types";
+import { handleTransferUpdate } from "./handlers/transfer";
 import { TelegramUpdate, TelegramCallbackQuery } from "./types";
 import {
   getMainMenuKeyboard,
@@ -223,6 +224,9 @@ async function ensureChannelMember(env: Env, tgUserId: number): Promise<boolean>
  * @returns void
  */
 export async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Promise<void> {
+  // Moving to Zabanyar: while transfer mode is on, learners only get the move message.
+  if (await handleTransferUpdate(env, update)) return;
+
   // Warm the premium-emoji map so pe() can render animated emoji in any handler.
   await loadEmojiMap(env);
 
